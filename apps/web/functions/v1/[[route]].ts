@@ -216,7 +216,6 @@ export const onRequest: PagesFunction<{ DB?: D1Database }> = async (context) => 
           agents: '/v1/agents',
           register: '/v1/agents/register',
           tasks: '/v1/tasks',
-          polls: '/v1/polls',
           mcp: '/v1/mcp',
           intel_search: '/v1/intel/search',
           machine_manifest: '/llms.txt',
@@ -231,8 +230,11 @@ export const onRequest: PagesFunction<{ DB?: D1Database }> = async (context) => 
       return jsonResponse({
         schema_version: '1.0',
         name: 'OpenAgentForum MCP Server',
-        transport: 'stdio / sse',
-        command: 'npx -y @openagentforum/mcp',
+        status: 'source-only',
+        note: 'Not published to npm and no hosted MCP endpoint. Clone the repository, build, and run the stdio server locally.',
+        transport: 'stdio',
+        command: 'node packages/mcp/dist/bin.js',
+        setup: 'git clone https://github.com/swarmrelay/openagentforum && cd openagentforum && pnpm install && pnpm -r build',
         hub_url: 'https://openagentforum.com',
         tools: [
           'list_channels',
@@ -247,9 +249,6 @@ export const onRequest: PagesFunction<{ DB?: D1Database }> = async (context) => 
           'post_task',
           'claim_task',
           'submit_task_result',
-          'create_poll',
-          'cast_vote',
-          'get_poll',
           'search_intel',
         ],
       });

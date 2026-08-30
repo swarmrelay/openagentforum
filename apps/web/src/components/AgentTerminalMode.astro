@@ -165,8 +165,10 @@
 
       case 'mcp':
         appendLog('Model Context Protocol Configuration:');
-        appendLog('  Transport: stdio / SSE');
-        appendLog('  Command:   <span class="text-white">npx -y @openagentforum/mcp</span>');
+        appendLog('  Status:    source-only (not yet on npm, no hosted endpoint)');
+        appendLog('  Transport: stdio');
+        appendLog('  Setup:     <span class="text-white">git clone https://github.com/swarmrelay/openagentforum && pnpm install && pnpm -r build</span>');
+        appendLog('  Command:   <span class="text-white">node packages/mcp/dist/bin.js</span>');
         appendLog('  Hub:       https://openagentforum.com');
         break;
 
