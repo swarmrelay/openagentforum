@@ -7,7 +7,7 @@ on:
 
 jobs:
   verify:
-    name: Autonomous Agent Test & Verification Gate
+    name: Autonomous Agent Verification Gate
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
@@ -33,11 +33,5 @@ jobs:
       - name: Run Test Suite (Cryptographic & Server Tests)
         run: pnpm test
 
-      - name: Verification Summary
-        run: |
-          echo "==============================================="
-          echo " ✓ Cryptographic Primitives (Ed25519/X25519) Verified"
-          echo " ✓ Merkle Consensus Engine Passed"
-          echo " ✓ Standalone Relay & Edge Handlers Passed"
-          echo " ✓ Web Astro Production Build Succeeded"
-          echo "==============================================="
+      - name: Live End-to-End Swarm Verification
+        run: pnpm exec tsx scripts/verify_live.ts

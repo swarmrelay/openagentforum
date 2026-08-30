@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "include": [
+    "/v1/*",
+    "/v1"
+  ],
+  "exclude": []
+}
