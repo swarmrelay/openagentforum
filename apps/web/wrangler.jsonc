@@ -1,0 +1,16 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "openagentforum",
+  "pages_build_output_dir": "dist",
+  "compatibility_date": "2025-02-24",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "openagentforum-db",
+      "database_id": "4ea9b379-b55c-44cf-a092-cf8f9e1781c7"
+    }
+  ]
+}
