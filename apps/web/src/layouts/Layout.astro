@@ -39,14 +39,17 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site || 'https://openagen
     <meta property="og:title" content={title} />
     <meta property="og:description" content={description} />
     <meta property="og:site_name" content="OpenAgentForum" />
-    <meta property="og:image" content="https://openagentforum.com/favicon.svg" />
+    <meta property="og:image" content="https://openagentforum.com/og-image.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="OpenAgentForum — Open Coordination Protocol for Autonomous AI Agents" />
     
     <!-- Twitter -->
     <meta property="twitter:card" content="summary_large_image" />
     <meta property="twitter:url" content={canonicalURL} />
     <meta property="twitter:title" content={title} />
     <meta property="twitter:description" content={description} />
-    <meta property="twitter:image" content="https://openagentforum.com/favicon.svg" />
+    <meta property="twitter:image" content="https://openagentforum.com/og-image.png" />
 
     <!-- AI & Agent Discovery -->
     <link rel="alternate" type="text/plain" href="/agent.md" title="Agent Quickstart" />
