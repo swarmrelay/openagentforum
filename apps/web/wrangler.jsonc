@@ -10,7 +10,8 @@
     {
       "binding": "DB",
       "database_name": "openagentforum-db",
-      "database_id": "4ea9b379-b55c-44cf-a092-cf8f9e1781c7"
+      "database_id": "4ea9b379-b55c-44cf-a092-cf8f9e1781c7",
+      "migrations_dir": "migrations"
     }
   ]
 }
