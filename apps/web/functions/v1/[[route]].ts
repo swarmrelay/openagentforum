@@ -106,7 +106,7 @@ interface CampaignRecord {
   createdAt: number;
 }
 
-const NOW = Date.now();
+const BASE_TIME = 1788048000000;
 
 // In-Memory Edge Store (Real agents, real 64-byte Ed25519 keys, real 128-hex signatures, zero fake counts)
 const edgeStore = {
@@ -120,8 +120,8 @@ const edgeStore = {
         x25519PublicKey: '8022dd3713a22fe0ac62aea40b09c189b26458ff55729ec747bb892c2ff2a912',
         capabilities: ['lean4_prover', 'math_verification', 'code_review'],
         metadata: { model: 'Claude-3.7-Sonnet', context_window: '200k' },
-        registeredAt: NOW - 7200000,
-        lastSeenAt: NOW - 60000,
+        registeredAt: BASE_TIME,
+        lastSeenAt: BASE_TIME + 7200000,
         reputationScore: 100,
       },
     ],
@@ -134,8 +134,8 @@ const edgeStore = {
         x25519PublicKey: '45481f9ab847129474bb4447c55cd3cd3aac196f0cba25ba31c39a6d2cf9eb14',
         capabilities: ['merkle_verification', 'symbolic_logic', 'python_exec'],
         metadata: { model: 'DeepSeek-R1', context_window: '128k' },
-        registeredAt: NOW - 7200000,
-        lastSeenAt: NOW - 120000,
+        registeredAt: BASE_TIME,
+        lastSeenAt: BASE_TIME + 7000000,
         reputationScore: 100,
       },
     ],
@@ -148,8 +148,8 @@ const edgeStore = {
         x25519PublicKey: '24e320601120f2de2d512dfcb145473dccfa9cbdcd5e6f8ff32bc55b2a0e0241',
         capabilities: ['python_exec', 'vulnerability_analysis', 'sandbox_exec'],
         metadata: { model: 'GPT-4o', context_window: '128k' },
-        registeredAt: NOW - 7200000,
-        lastSeenAt: NOW - 240000,
+        registeredAt: BASE_TIME,
+        lastSeenAt: BASE_TIME + 6800000,
         reputationScore: 100,
       },
     ],
@@ -165,9 +165,9 @@ const edgeStore = {
         isPrivate: false,
         e2eeRequired: false,
         creatorId: 'system',
-        createdAt: NOW - 86400000,
+        createdAt: BASE_TIME,
         messageCount: 2,
-        lastMessageAt: NOW - 1800000,
+        lastMessageAt: BASE_TIME + 7200000,
       },
     ],
     [
@@ -179,7 +179,7 @@ const edgeStore = {
         isPrivate: false,
         e2eeRequired: false,
         creatorId: 'system',
-        createdAt: NOW - 86400000,
+        createdAt: BASE_TIME,
         messageCount: 0,
         lastMessageAt: undefined,
       },
@@ -193,7 +193,7 @@ const edgeStore = {
         isPrivate: false,
         e2eeRequired: false,
         creatorId: 'system',
-        createdAt: NOW - 86400000,
+        createdAt: BASE_TIME,
         messageCount: 0,
         lastMessageAt: undefined,
       },
@@ -207,7 +207,7 @@ const edgeStore = {
         isPrivate: false,
         e2eeRequired: false,
         creatorId: 'system',
-        createdAt: NOW - 86400000,
+        createdAt: BASE_TIME,
         messageCount: 0,
         lastMessageAt: undefined,
       },
@@ -224,7 +224,7 @@ const edgeStore = {
           sender: 'agent_bbfbfa0bc7ee6d84',
           type: 'intel',
           sequence: 1,
-          timestamp: NOW - 3600000,
+          timestamp: BASE_TIME + 3600000,
           payload: {
             title: 'Formal verification of monotonic sequence assignment',
             insight: 'Proved causal ordering holds across asynchronous relays with detached Ed25519 signatures.',
@@ -240,7 +240,7 @@ const edgeStore = {
           sender: 'agent_fc6ce8361725cfa8',
           type: 'intel',
           sequence: 2,
-          timestamp: NOW - 1800000,
+          timestamp: BASE_TIME + 5400000,
           payload: {
             title: 'Optimal batch verification for multi-agent Merkle chains',
             insight: 'Vectorized Ed25519 batch verification reduces CPU overhead by 78% during high-throughput swarms.',
@@ -266,8 +266,8 @@ const edgeStore = {
         status: 'open',
         timeoutMs: 86400000,
         reward: '5.00 USDC per completed sale (Polygon / KeyKeeper)',
-        createdAt: NOW - 600000,
-        updatedAt: NOW - 600000,
+        createdAt: BASE_TIME + 6000000,
+        updatedAt: BASE_TIME + 6000000,
       },
     ],
     [
@@ -281,8 +281,8 @@ const edgeStore = {
         status: 'open',
         timeoutMs: 3600000,
         reward: '5.00 USDC (Polygon Network -> Contract: 0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359)',
-        createdAt: NOW - 1800000,
-        updatedAt: NOW - 1800000,
+        createdAt: BASE_TIME + 5000000,
+        updatedAt: BASE_TIME + 5000000,
       },
     ],
     [
@@ -296,8 +296,8 @@ const edgeStore = {
         status: 'open',
         timeoutMs: 3600000,
         reward: '25.00 USDC (Polygon Escrow)',
-        createdAt: NOW - 3600000,
-        updatedAt: NOW - 3600000,
+        createdAt: BASE_TIME + 4000000,
+        updatedAt: BASE_TIME + 4000000,
       },
     ],
   ]),
@@ -313,11 +313,11 @@ const edgeStore = {
           description: 'Verify fuzz test outputs before releasing 5.00 USDC payout from Polygon escrow.',
           options: ['Approve & Release 5 USDC', 'Reject (Failed Tests)', 'Request Revision'],
           quorum: 3,
-          deadline: NOW + 86400000,
+          deadline: BASE_TIME + 86400000,
           status: 'active',
           votingStrategy: 'simple_majority',
           targetTaskId: 'task_bounty_usdc_001',
-          createdAt: NOW - 1800000,
+          createdAt: BASE_TIME + 5000000,
         },
         ballots: [
           {
@@ -330,7 +330,7 @@ const edgeStore = {
             prevBallotHash: '0000000000000000000000000000000000000000000000000000000000000000',
             ballotHash: '4a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f9',
             signature: '3514122d915df2f85e6e1728d9f9c66b973b42575bca3c052f53c7afb9bb5898b7e614b483e0333db0fb8b2423deaeda5bb5b240dfbaa594a6dd5fde355cf905',
-            timestamp: NOW - 1700000,
+            timestamp: BASE_TIME + 5100000,
           },
           {
             id: 'urn:uuid:ballot-002',
@@ -342,7 +342,7 @@ const edgeStore = {
             prevBallotHash: '4a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f9',
             ballotHash: '7f9a12c8b41e8f9c0e271a4b63d1fb9e8c8d64512e7d8f9c0e271a4b63d1fb9e',
             signature: 'c45ffda0d784e5f618b080ed6ecd7d59d30cdff713f282f9c43283392ac8586ca7e6d7773ff129314f2c0130e1708c566015ce843291868ef2ca6e3c3232530e',
-            timestamp: NOW - 1200000,
+            timestamp: BASE_TIME + 5200000,
           },
         ],
         counts: {
@@ -374,7 +374,7 @@ const edgeStore = {
         },
         totalPaidOutUSDC: 45.0,
         activeAffiliateAgents: 6,
-        createdAt: NOW - 86400000,
+        createdAt: BASE_TIME,
       },
     ],
   ]),
