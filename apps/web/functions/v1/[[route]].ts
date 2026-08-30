@@ -358,13 +358,16 @@ export const onRequest: PagesFunction<{ DB?: D1Database }> = async (context) => 
 
       if (method === 'GET') {
         if (env?.DB) {
-          const rows = await env.DB.prepare('SELECT * FROM messages WHERE channel = ? ORDER BY sequence ASC').bind(chName).all();
+          const rows = await env.DB.prepare('SELECT * FROM messages WHERE channel = ? ORDER BY COALESCE(stored_seq, sequence) ASC').bind(chName).all();
           const msgs = (rows.results || []).map((r: any) => ({
             id: r.id,
             channel: r.channel,
             sender: r.sender,
             type: r.type,
+            // `sequence` is the value the sender signed (verify-as-stored, #7);
+            // `storedSeq` is unsigned relay ingest order — never verified against.
             sequence: r.sequence,
+            storedSeq: r.stored_seq ?? r.sequence,
             timestamp: r.timestamp,
             payload: JSON.parse(r.payload_json),
             signature: r.signature,
@@ -397,20 +400,23 @@ export const onRequest: PagesFunction<{ DB?: D1Database }> = async (context) => 
           return jsonResponse({ error: `Sender ${envelope.sender} is not registered. Register via POST /v1/agents/register first.` }, 401);
         }
 
-        // Verify Ed25519 signature
-        const signStr = `${envelope.id}|${chName}|${envelope.sender}|${envelope.type}|${envelope.sequence ?? 0}|${envelope.timestamp ?? envelope.timestamp}|${envelope.checksum}`;
-        let isValid = await verifyEd25519Sig(signStr, envelope.signature, senderPubKey);
-
-        if (!isValid) {
-          const signStrAlt = `${envelope.id}|${chName}|${envelope.sender}|${envelope.type}|0|${envelope.timestamp}|${envelope.checksum}`;
-          isValid = await verifyEd25519Sig(signStrAlt, envelope.signature, senderPubKey);
-          if (!isValid) {
-            return jsonResponse({ error: 'Invalid Ed25519 signature' }, 403);
-          }
+        if (typeof envelope.sequence !== 'number' || typeof envelope.timestamp !== 'number') {
+          return jsonResponse({ error: 'sequence and timestamp must be numbers and are part of the sign string' }, 400);
         }
 
-        let assignedSequence = 1;
+        // Verify Ed25519 signature over EXACTLY the fields the envelope carries.
+        // Invariant (#7): what verifies at ingest is what is stored, byte for byte —
+        // the relay never rewrites a signed field.
+        const signStr = `${envelope.id}|${chName}|${envelope.sender}|${envelope.type}|${envelope.sequence}|${envelope.timestamp}|${envelope.checksum}`;
+        const isValid = await verifyEd25519Sig(signStr, envelope.signature, senderPubKey);
+        if (!isValid) {
+          return jsonResponse({ error: 'Invalid Ed25519 signature' }, 403);
+        }
+
+        let storedSeq = 1;
         const now = Date.now();
+        envelope.channel = chName;
+        // envelope.sequence is a SIGNED field and is stored verbatim (#7).
 
         if (env?.DB) {
           // Ensure channel exists
@@ -419,40 +425,50 @@ export const onRequest: PagesFunction<{ DB?: D1Database }> = async (context) => 
             VALUES (?, ?, ?, 0, 0, ?, ?, 0)
           `).bind(chName, chName, 'Swarm channel', envelope.sender, now).run();
 
-          // Monotonic sequence calculation
-          const seqRes = await env.DB.prepare('SELECT COALESCE(MAX(sequence), 0) + 1 as next_seq FROM messages WHERE channel = ?').bind(chName).first<{ next_seq: number }>();
-          assignedSequence = seqRes?.next_seq ?? 1;
-          envelope.sequence = assignedSequence;
-          envelope.channel = chName;
+          // Relay ingest order: unsigned bookkeeping, unique per channel.
+          // MAX+1 can race across isolates; the unique index turns the race into
+          // a retriable conflict instead of a silent duplicate.
+          let inserted = false;
+          for (let attempt = 0; attempt < 3 && !inserted; attempt++) {
+            const seqRes = await env.DB.prepare('SELECT COALESCE(MAX(stored_seq), 0) + 1 as next_seq FROM messages WHERE channel = ?').bind(chName).first<{ next_seq: number }>();
+            storedSeq = seqRes?.next_seq ?? 1;
+            try {
+              await env.DB.prepare(`
+                INSERT INTO messages (id, channel, sender, type, sequence, stored_seq, timestamp, payload_json, signature, checksum, encrypted)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              `).bind(
+                envelope.id,
+                chName,
+                envelope.sender,
+                envelope.type,
+                envelope.sequence,
+                storedSeq,
+                envelope.timestamp,
+                JSON.stringify(envelope.payload),
+                envelope.signature,
+                envelope.checksum,
+                envelope.encrypted ? 1 : 0
+              ).run();
+              inserted = true;
+            } catch (e: any) {
+              if (!String(e?.message || e).includes('UNIQUE')) throw e;
+            }
+          }
+          if (!inserted) {
+            return jsonResponse({ error: 'Ingest-order conflict, retry' }, 503);
+          }
 
-          await env.DB.prepare(`
-            INSERT INTO messages (id, channel, sender, type, sequence, timestamp, payload_json, signature, checksum, encrypted)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-          `).bind(
-            envelope.id,
-            chName,
-            envelope.sender,
-            envelope.type,
-            assignedSequence,
-            envelope.timestamp || now,
-            JSON.stringify(envelope.payload),
-            envelope.signature,
-            envelope.checksum,
-            envelope.encrypted ? 1 : 0
-          ).run();
-
-          await env.DB.prepare('UPDATE channels SET message_count = message_count + 1, last_message_at = ? WHERE name = ?').bind(envelope.timestamp || now, chName).run();
+          await env.DB.prepare('UPDATE channels SET message_count = message_count + 1, last_message_at = ? WHERE name = ?').bind(envelope.timestamp, chName).run();
           await env.DB.prepare('UPDATE agents SET last_seen_at = ? WHERE agent_id = ?').bind(now, envelope.sender).run();
         } else {
           const list = memoryFallback.messages.get(chName) || [];
-          assignedSequence = list.length + 1;
-          envelope.sequence = assignedSequence;
-          envelope.channel = chName;
+          storedSeq = list.length + 1;
+          (envelope as any).storedSeq = storedSeq;
           list.push(envelope);
           memoryFallback.messages.set(chName, list);
         }
 
-        return jsonResponse({ success: true, envelope });
+        return jsonResponse({ success: true, envelope: { ...envelope, storedSeq } });
       }
     }
 
