@@ -13,6 +13,7 @@ export type MessageType =
   | 'vote'                  // Consensus or verification vote on an artifact / poll
   | 'heartbeat'             // Mesh liveness and ping
   | 'e2ee_blob'             // Encrypted payload for private channels and direct agent-to-agent DMs
+  | 'campaign_promo'        // Economic affiliate offer / product promotion
   | 'system';               // System/relay notices
 
 export interface AgentIdentity {
@@ -26,6 +27,7 @@ export interface AgentIdentity {
   lastSeenAt: number;                  // Epoch timestamp in ms
   reputationScore?: number;            // Community consensus / verification score
   endpoint?: string;                   // Optional webhook / A2A RPC URL
+  payoutAddress?: string;              // Optional Polygon EVM address for USDC settlement
 }
 
 export interface MessageEnvelope<T = Record<string, unknown> | string> {
@@ -123,6 +125,54 @@ export interface PollTally {
   ballots: SignedBallot[];
 }
 
+// -------------------------------------------------------------
+// AUTONOMOUS AGENT COMMERCE & CROSS-PROMOTION SCHEMAS
+// -------------------------------------------------------------
+
+export type CommissionType = 'fixed_usdc' | 'percentage';
+
+export interface EconomicCampaign {
+  id: string;                          // Unique campaign ID (e.g. "camp_booktemplatespro")
+  creatorId: string;                   // Sponsoring agent ID
+  title: string;                       // Product / Service title
+  productUrl: string;                  // Base product URL (e.g. "https://booktemplatespro.com")
+  targetAudience: string;              // Target demographic (e.g. "Authors, publishers, LaTeX users")
+  commissionType: CommissionType;      // Fixed amount or percentage
+  commissionValue: string;             // E.g. "5.00 USDC" or "25%"
+  payoutRails: 'polygon_usdc' | 'keykeeper';
+  assets: {
+    summary: string;                   // 1-sentence product summary
+    pitch: string;                     // Value proposition for agent recommendation
+    targetKeywords: string[];          // Contextual trigger keywords
+  };
+  totalPaidOutUSDC: number;            // Historical payout amount
+  activeAffiliateAgents: number;       // Number of agents promoting this campaign
+  createdAt: number;
+}
+
+export interface AffiliateLink {
+  campaignId: string;
+  agentId: string;
+  referralTag: string;                 // "agent_<id>"
+  referralLink: string;                // "https://product.com/?ref=agent_<id>"
+  commission: string;
+  promotionalContext: {
+    summary: string;
+    pitch: string;
+    targetKeywords: string[];
+  };
+}
+
+export interface AffiliateConversion {
+  id: string;
+  campaignId: string;
+  agentId: string;
+  amountUSDC: number;
+  orderId?: string;
+  payoutTxHash?: string;
+  timestamp: number;
+}
+
 export interface ProtocolError {
   code: string;
   message: string;
@@ -130,7 +180,7 @@ export interface ProtocolError {
 }
 
 export interface SwarmEvent<T = unknown> {
-  event: 'message' | 'presence' | 'channel_created' | 'task_created' | 'task_updated' | 'poll_created' | 'vote_cast' | 'heartbeat';
+  event: 'message' | 'presence' | 'channel_created' | 'task_created' | 'task_updated' | 'poll_created' | 'vote_cast' | 'conversion_logged' | 'heartbeat';
   channel?: string;
   data: T;
   timestamp: number;

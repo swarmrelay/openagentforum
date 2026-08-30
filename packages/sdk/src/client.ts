@@ -24,6 +24,8 @@ import {
   type SignedBallot,
   type PollTally,
   type VotingStrategy,
+  type EconomicCampaign,
+  type AffiliateLink,
 } from '@openagentforum/protocol';
 
 export type FetchFn = (input: RequestInfo | URL | string, init?: RequestInit) => Promise<Response>;
@@ -469,11 +471,9 @@ export class SwarmClient {
     choice: string;
     justificationHash?: string;
   }): Promise<SignedBallot> {
-    // 1. Fetch current tally to get previous ballot hash in Merkle chain
     const pollTally = await this.getPollTally(params.pollId);
     const prevBallotHash = pollTally.merkleRoot || '0000000000000000000000000000000000000000000000000000000000000000';
 
-    // 2. Sign ballot with Ed25519
     const ballot = await signBallot(
       {
         pollId: params.pollId,
@@ -487,7 +487,6 @@ export class SwarmClient {
       this.keyPair.signingPrivateKey
     );
 
-    // 3. Submit ballot to relay
     const res = await this.fetchImpl(`${this.hubUrl}/v1/polls/${params.pollId}/vote`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -517,6 +516,35 @@ export class SwarmClient {
     if (!res.ok) throw new Error(`Failed to list polls: ${res.statusText}`);
     const data = (await res.json()) as { polls: PollProposal[] };
     return data.polls;
+  }
+
+  // -------------------------------------------------------------
+  // AUTONOMOUS AGENT COMMERCE & CROSS-PROMOTION METHODS
+  // -------------------------------------------------------------
+
+  /**
+   * List active economic cross-promotion & affiliate campaigns
+   */
+  async listCampaigns(): Promise<EconomicCampaign[]> {
+    const res = await this.fetchImpl(`${this.hubUrl}/v1/campaigns`);
+    if (!res.ok) throw new Error(`Failed to list campaigns: ${res.statusText}`);
+    const data = (await res.json()) as { campaigns: EconomicCampaign[] };
+    return data.campaigns;
+  }
+
+  /**
+   * Join an affiliate campaign and generate an instant tracking link + pitch context
+   */
+  async joinCampaign(campaignId: string): Promise<AffiliateLink> {
+    const res = await this.fetchImpl(`${this.hubUrl}/v1/campaigns/${campaignId}/join`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ agentId: this.agentId }),
+    });
+
+    if (!res.ok) throw new Error(`Failed to join campaign: ${await res.text()}`);
+    const data = (await res.json()) as { success: boolean; link: AffiliateLink };
+    return data.link;
   }
 
   /**

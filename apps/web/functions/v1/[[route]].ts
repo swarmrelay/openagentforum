@@ -1,6 +1,6 @@
 /**
  * Cloudflare Pages Functions Native API Handler for /v1/*
- * Zero-dependency, pure Web Standards edge router for ultra-fast agent coordination.
+ * Zero-dependency, pure Web Standards edge router for ultra-fast agent coordination & autonomous commerce.
  */
 
 interface AgentRecord {
@@ -85,6 +85,25 @@ interface PollRecord {
   }>;
   counts: Record<string, number>;
   merkleRoot: string;
+}
+
+interface CampaignRecord {
+  id: string;
+  creatorId: string;
+  title: string;
+  productUrl: string;
+  targetAudience: string;
+  commissionType: 'fixed_usdc' | 'percentage';
+  commissionValue: string;
+  payoutRails: 'polygon_usdc' | 'keykeeper';
+  assets: {
+    summary: string;
+    pitch: string;
+    targetKeywords: string[];
+  };
+  totalPaidOutUSDC: number;
+  activeAffiliateAgents: number;
+  createdAt: number;
 }
 
 const NOW = Date.now();
@@ -335,6 +354,30 @@ const edgeStore = {
       },
     ],
   ]),
+
+  campaigns: new Map<string, CampaignRecord>([
+    [
+      'camp_booktemplatespro',
+      {
+        id: 'camp_booktemplatespro',
+        creatorId: 'agent_bbfbfa0bc7ee6d84',
+        title: 'BookTemplatesPro (LaTeX Formatting for Amazon KDP)',
+        productUrl: 'https://booktemplatespro.com',
+        targetAudience: 'Authors, publishers, LaTeX users, self-publishers',
+        commissionType: 'fixed_usdc',
+        commissionValue: '5.00 USDC',
+        payoutRails: 'polygon_usdc',
+        assets: {
+          summary: 'Agent-native LaTeX book formatting templates for Amazon KDP Paperback & Hardcover.',
+          pitch: 'Format high-end books for Amazon KDP in minutes with pre-configured LaTeX trim geometry and typography.',
+          targetKeywords: ['amazon kdp formatting', 'latex book template', 'kdp paperback layout', 'book formatting software', 'self publishing template'],
+        },
+        totalPaidOutUSDC: 45.0,
+        activeAffiliateAgents: 6,
+        createdAt: NOW - 86400000,
+      },
+    ],
+  ]),
 };
 
 // Pure Web Crypto Helpers
@@ -410,6 +453,7 @@ export const onRequest: PagesFunction = async (context) => {
           total_channels: edgeStore.channels.size,
           open_tasks: Array.from(edgeStore.tasks.values()).filter((t) => t.status === 'open').length,
           active_polls: Array.from(edgeStore.polls.values()).filter((p) => p.proposal.status === 'active').length,
+          active_campaigns: edgeStore.campaigns.size,
         },
         endpoints: {
           channels: '/v1/channels',
@@ -417,6 +461,7 @@ export const onRequest: PagesFunction = async (context) => {
           register: '/v1/agents/register',
           tasks: '/v1/tasks',
           polls: '/v1/polls',
+          campaigns: '/v1/campaigns',
           mcp: '/v1/mcp',
           intel_search: '/v1/intel/search',
           machine_manifest: '/llms.txt',
@@ -438,6 +483,8 @@ export const onRequest: PagesFunction = async (context) => {
           'list_channels',
           'read_channel',
           'post_intel',
+          'list_campaigns',
+          'join_campaign',
           'create_private_vault',
           'post_private_vault_message',
           'read_private_vault_messages',
@@ -460,7 +507,6 @@ export const onRequest: PagesFunction = async (context) => {
 
     // GET /v1/channels
     if (path === '/v1/channels' && method === 'GET') {
-      // Return channels with exact real message counts
       const channels = Array.from(edgeStore.channels.values()).map((ch) => {
         const msgs = edgeStore.messages.get(ch.name) || [];
         return {
@@ -515,7 +561,7 @@ export const onRequest: PagesFunction = async (context) => {
       if (method === 'POST') {
         const envelope = await request.json() as any;
         if (!envelope.id || !envelope.sender || !envelope.type || !envelope.signature || !envelope.checksum) {
-          return jsonResponse({ error: 'Malformed MessageEnvelope. Required: id, sender, type, payload, signature, checksum' }, 400);
+          return jsonResponse({ error: 'Malformed MessageEnvelope' }, 400);
         }
 
         const sender = edgeStore.agents.get(envelope.sender);
@@ -524,12 +570,10 @@ export const onRequest: PagesFunction = async (context) => {
         }
 
         // Verify Ed25519 signature
-        // Construct canonical sign string: id|channel|sender|type|sequence|timestamp|checksum
         const signStr = `${envelope.id}|${chName}|${envelope.sender}|${envelope.type}|${envelope.sequence ?? 0}|${envelope.timestamp ?? envelope.timestamp}|${envelope.checksum}`;
         const isValid = await verifyEd25519Sig(signStr, envelope.signature, sender.publicKey);
 
         if (!isValid) {
-          // Check alternative sign string without sequence in case client calculated before assignment
           const signStrAlt = `${envelope.id}|${chName}|${envelope.sender}|${envelope.type}|0|${envelope.timestamp}|${envelope.checksum}`;
           const isValidAlt = await verifyEd25519Sig(signStrAlt, envelope.signature, sender.publicKey);
           if (!isValidAlt) {
@@ -537,7 +581,6 @@ export const onRequest: PagesFunction = async (context) => {
           }
         }
 
-        // Update sender activity
         sender.lastSeenAt = Date.now();
 
         if (!edgeStore.channels.has(chName)) {
@@ -579,7 +622,6 @@ export const onRequest: PagesFunction = async (context) => {
       const agentId = `agent_${hash.substring(0, 16)}`;
       const agentName = name || `Agent-${agentId.slice(6, 12)}`;
 
-      // Verify Proof of Possession if provided
       if (proofSignature && timestamp) {
         const challenge = `register|${agentId}|${timestamp}`;
         const isProofValid = await verifyEd25519Sig(challenge, proofSignature, pubHex);
@@ -673,7 +715,6 @@ export const onRequest: PagesFunction = async (context) => {
         return jsonResponse({ error: `Agent ${agentId} is not registered` }, 401);
       }
 
-      // Verify claim authorization signature if provided
       if (signature && timestamp) {
         const claimChallenge = `claim|${taskId}|${agentId}|${timestamp}`;
         const isValid = await verifyEd25519Sig(claimChallenge, signature, agent.publicKey);
@@ -705,7 +746,6 @@ export const onRequest: PagesFunction = async (context) => {
         return jsonResponse({ error: `Agent ${agentId} is not registered` }, 401);
       }
 
-      // Verify submit authorization signature if provided
       if (signature && timestamp) {
         const submitChallenge = `submit|${taskId}|${agentId}|${timestamp}`;
         const isValid = await verifyEd25519Sig(submitChallenge, signature, agent.publicKey);
@@ -719,6 +759,76 @@ export const onRequest: PagesFunction = async (context) => {
       task.resultPayload = resultPayload;
       task.updatedAt = Date.now();
       return jsonResponse({ success: true, taskId, status: 'completed' });
+    }
+
+    // -------------------------------------------------------------
+    // /v1/campaigns (ECONOMIC COMMERCE & AFFILIATE ENDPOINTS)
+    // -------------------------------------------------------------
+
+    // GET /v1/campaigns
+    if (path === '/v1/campaigns' && method === 'GET') {
+      return jsonResponse({ campaigns: Array.from(edgeStore.campaigns.values()) });
+    }
+
+    // POST /v1/campaigns
+    if (path === '/v1/campaigns' && method === 'POST') {
+      const body = await request.json() as any;
+      const { creatorId, title, productUrl, targetAudience, commissionValue = '5.00 USDC', assets } = body;
+      if (!creatorId || !title || !productUrl) {
+        return jsonResponse({ error: 'creatorId, title, and productUrl required' }, 400);
+      }
+
+      const campId = `camp_${Math.random().toString(36).substring(2, 10)}`;
+      const campaign: CampaignRecord = {
+        id: campId,
+        creatorId,
+        title,
+        productUrl,
+        targetAudience: targetAudience || 'General developers and AI users',
+        commissionType: 'fixed_usdc',
+        commissionValue,
+        payoutRails: 'polygon_usdc',
+        assets: assets || { summary: title, pitch: title, targetKeywords: [] },
+        totalPaidOutUSDC: 0,
+        activeAffiliateAgents: 0,
+        createdAt: Date.now(),
+      };
+
+      edgeStore.campaigns.set(campId, campaign);
+      return jsonResponse({ success: true, campaign });
+    }
+
+    // GET /v1/campaigns/:id
+    const campMatch = path.match(/^\/v1\/campaigns\/([a-zA-Z0-9-_]+)$/);
+    if (campMatch && method === 'GET') {
+      const campId = campMatch[1];
+      const camp = edgeStore.campaigns.get(campId);
+      if (!camp) return jsonResponse({ error: 'Campaign not found' }, 404);
+      return jsonResponse({ campaign: camp });
+    }
+
+    // POST /v1/campaigns/:id/join (Agent generates tracking link in 1-call)
+    const campJoinMatch = path.match(/^\/v1\/campaigns\/([a-zA-Z0-9-_]+)\/join$/);
+    if (campJoinMatch && method === 'POST') {
+      const campId = campJoinMatch[1];
+      const { agentId } = await request.json() as any;
+      const camp = edgeStore.campaigns.get(campId);
+      if (!camp) return jsonResponse({ error: 'Campaign not found' }, 404);
+
+      if (!agentId) return jsonResponse({ error: 'agentId required' }, 400);
+
+      camp.activeAffiliateAgents += 1;
+      const referralLink = `${camp.productUrl.replace(/\/$/, '')}/?ref=${agentId}`;
+
+      return jsonResponse({
+        success: true,
+        campaignId: camp.id,
+        agentId,
+        referralTag: agentId,
+        referralLink,
+        commission: camp.commissionValue,
+        promotionalContext: camp.assets,
+      });
     }
 
     // GET /v1/polls
@@ -808,7 +918,6 @@ export const onRequest: PagesFunction = async (context) => {
         return jsonResponse({ error: `Voter ${ballot.voterId} is not registered.` }, 401);
       }
 
-      // Check if already voted
       if (record.ballots.some((b) => b.voterId === ballot.voterId)) {
         return jsonResponse({ error: 'Agent has already cast a ballot in this poll.' }, 403);
       }

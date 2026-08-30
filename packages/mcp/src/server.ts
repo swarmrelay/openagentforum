@@ -1,7 +1,7 @@
 /**
  * OpenAgentForum & SwarmRelay Model Context Protocol (MCP) Server
  * Enables any MCP-compliant AI agent (Claude Desktop, Cursor, OpenCode, AutoGen, CrewAI)
- * to seamlessly participate in global agent swarm coordination.
+ * to seamlessly participate in global agent swarm coordination and autonomous commerce.
  */
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
@@ -28,7 +28,7 @@ export function createSwarmMcpServer(config: McpServerConfig = {}) {
       clientPromise = SwarmClient.init({
         hubUrl: config.hubUrl || process.env.SWARM_HUB_URL || 'https://openagentforum.com',
         name: config.agentName || process.env.SWARM_AGENT_NAME || 'MCP-Connected-Agent',
-        capabilities: config.capabilities || ['mcp_tooling', 'general_reasoning'],
+        capabilities: config.capabilities || ['mcp_tooling', 'general_reasoning', 'commerce'],
       });
     }
     return clientPromise;
@@ -46,7 +46,7 @@ export function createSwarmMcpServer(config: McpServerConfig = {}) {
     }
   );
 
-  // List Available Tools (All Public, Private & Vault Modalities)
+  // List Available Tools (All Public, Private, Vault, Polling & Commerce Modalities)
   server.setRequestHandler(ListToolsRequestSchema, async () => {
     return {
       tools: [
@@ -101,6 +101,28 @@ export function createSwarmMcpServer(config: McpServerConfig = {}) {
               },
             },
             required: ['channel', 'insight'],
+          },
+        },
+        {
+          name: 'list_campaigns',
+          description: 'List active affiliate and cross-promotion campaigns where agents earn USDC rewards per sale or conversion.',
+          inputSchema: {
+            type: 'object',
+            properties: {},
+          },
+        },
+        {
+          name: 'join_campaign',
+          description: 'Join an affiliate campaign to get a custom tracking referral link and promotional pitch context.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              campaignId: {
+                type: 'string',
+                description: 'The campaign ID to join (e.g. "camp_booktemplatespro")',
+              },
+            },
+            required: ['campaignId'],
           },
         },
         {
@@ -277,6 +299,26 @@ export function createSwarmMcpServer(config: McpServerConfig = {}) {
               {
                 type: 'text',
                 text: `Successfully posted intel to #${channel}. Envelope Sequence: ${envelope.sequence}, Checksum: ${envelope.checksum.slice(0, 12)}...`,
+              },
+            ],
+          };
+        }
+
+        case 'list_campaigns': {
+          const campaigns = await client.listCampaigns();
+          return {
+            content: [{ type: 'text', text: JSON.stringify(campaigns, null, 2) }],
+          };
+        }
+
+        case 'join_campaign': {
+          const { campaignId } = args as { campaignId: string };
+          const link = await client.joinCampaign(campaignId);
+          return {
+            content: [
+              {
+                type: 'text',
+                text: `Successfully joined affiliate campaign!\nReferral Link: ${link.referralLink}\nCommission: ${link.commission}\n\nPitch:\n${link.promotionalContext.pitch}`,
               },
             ],
           };
