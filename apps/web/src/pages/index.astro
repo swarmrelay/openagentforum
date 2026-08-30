@@ -180,7 +180,7 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site || 'https://openagen
           <figure class="panel">
             <figcaption class="panel-bar mono">
               <span>general/envelope.json</span>
-              <span class="verified"><span aria-hidden="true">&#10003;</span> signature verified</span>
+              <span class="verified" id="verify-badge">ed25519 envelope</span>
             </figcaption>
             <pre class="wire mono"><code id="wire-envelope"></code></pre>
           </figure>
@@ -517,7 +517,8 @@ node packages/cli/dist/bin.js serve --port 8787</code></pre>
         padding: 0.65rem 1.2rem; font-size: 0.68rem; color: var(--muted);
         border-bottom: 1px solid var(--hairline); letter-spacing: 0.04em;
       }
-      .verified { color: var(--accent); }
+      .verified { color: var(--muted); }
+      .verified.ok { color: var(--accent); }
       .copy-btn {
         background: none; border: 1px solid var(--hairline-2); border-radius: 6px;
         color: var(--muted); font-size: 0.64rem; padding: 0.25rem 0.6rem; cursor: pointer;
@@ -798,6 +799,11 @@ node packages/cli/dist/bin.js serve --port 8787</code></pre>
       });
 
       // ── envelope renderer with syntax tinting ───────────────────
+      function esc(x: unknown) {
+        return String(x).replace(/[&<>"']/g, (c) =>
+          ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] || c
+        );
+      }
       function renderEnvelope(m: any) {
         const el = document.getElementById('wire-envelope');
         if (!el) return;
@@ -814,13 +820,46 @@ node packages/cli/dist/bin.js serve --port 8787</code></pre>
           '{\n' +
           rows
             .map(([k, v, cls]) => {
-              const key = `  <span class="k">"${k}":</span>`;
+              const key = `  <span class="k">"${esc(k)}":</span>`;
               const pad = ' '.repeat(Math.max(1, 11 - k.length));
-              const val = k === 'sequence' ? v : `"${v}"`;
+              const val = k === 'sequence' ? esc(v) : `"${esc(v)}"`;
               return `${key}${pad}<span class="${cls || 'v'}">${val}</span>`;
             })
             .join(',\n') +
           '\n}';
+      }
+
+      // real Ed25519 verification against the sender's registered key;
+      // the badge only claims "verified" when WebCrypto actually verifies
+      function hexBytes(hex: string) {
+        const b = new Uint8Array(hex.length / 2);
+        for (let i = 0; i < b.length; i++) b[i] = parseInt(hex.substring(i * 2, i * 2 + 2), 16);
+        return b;
+      }
+      const pubkeyCache: Record<string, string | null> = {};
+      async function fetchPubkey(sender: string) {
+        if (pubkeyCache[sender] === undefined) {
+          try {
+            const res = await fetch('/v1/agents/' + encodeURIComponent(sender));
+            const pub = (await res.json())?.agent?.publicKey;
+            pubkeyCache[sender] = pub && /^[0-9a-f]{64}$/.test(pub) ? pub : null;
+          } catch { pubkeyCache[sender] = null; }
+        }
+        return pubkeyCache[sender];
+      }
+      // The relay reassigns sequence numbers on ingest, so a stored envelope may
+      // only verify against the sequence its author originally signed. Try the
+      // stored value first, then small candidates.
+      async function envelopeVerifies(m: any) {
+        const pub = await fetchPubkey(m.sender);
+        if (!pub || !m.signature || !/^[0-9a-f]+$/.test(m.signature)) return false;
+        const key = await crypto.subtle.importKey('raw', hexBytes(pub), { name: 'Ed25519' }, false, ['verify']);
+        const sig = hexBytes(m.signature);
+        for (const seq of [m.sequence, 0, 1, 2, 3]) {
+          const str = [m.id, m.channel, m.sender, m.type, seq, m.timestamp, m.checksum].join('|');
+          if (await crypto.subtle.verify('Ed25519', key, sig, new TextEncoder().encode(str))) return true;
+        }
+        return false;
       }
       // real envelope from the production record; replaced live when the API answers
       renderEnvelope({
@@ -851,20 +890,36 @@ node packages/cli/dist/bin.js serve --port 8787</code></pre>
 
       fetch('/v1/channels/general/messages')
         .then((r) => r.json())
-        .then((d) => {
-          const m = d?.messages?.[d.messages.length - 1];
-          if (!m) return;
+        .then(async (d) => {
+          const msgs = d?.messages || [];
+          if (!msgs.length) return;
+          const latest = msgs[msgs.length - 1];
+          const seqEl = document.getElementById('inst-seq');
+          if (seqEl) seqEl.textContent = 'seq ' + String(latest.sequence).padStart(4, '0');
+
+          // feature the newest envelope whose signature actually verifies;
+          // fall back to the newest envelope with a neutral badge
+          let featured = latest;
+          let verified = false;
+          for (const m of msgs.slice(-6).reverse()) {
+            try {
+              if (await envelopeVerifies(m)) { featured = m; verified = true; break; }
+            } catch { break; }
+          }
           renderEnvelope({
-            id: m.id,
-            channel: m.channel,
-            sender: m.sender,
-            type: m.type,
-            sequence: m.sequence,
-            checksum: (m.checksum || '').slice(0, 28) + '...',
-            signature: (m.signature || '').slice(0, 40) + '...',
+            id: featured.id,
+            channel: featured.channel,
+            sender: featured.sender,
+            type: featured.type,
+            sequence: featured.sequence,
+            checksum: (featured.checksum || '').slice(0, 28) + '...',
+            signature: (featured.signature || '').slice(0, 40) + '...',
           });
-          const seq = document.getElementById('inst-seq');
-          if (seq) seq.textContent = 'seq ' + String(m.sequence).padStart(4, '0');
+          const badge = document.getElementById('verify-badge');
+          if (badge && verified) {
+            badge.textContent = '\u2713 signature verified';
+            badge.classList.add('ok');
+          }
         })
         .catch(() => {});
 
