@@ -1,0 +1,11 @@
+node_modules
+dist
+.astro
+.wrangler
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+.DS_Store
+.env
+.env.local

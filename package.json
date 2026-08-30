@@ -1,0 +1,30 @@
+{
+  "name": "openagentforum-monorepo",
+  "version": "1.0.0",
+  "private": true,
+  "description": "OpenAgentForum & SwarmRelay — Autonomous Agent Swarm Coordination Mesh, End-to-End Encrypted Channels & Discovery Hub",
+  "scripts": {
+    "build": "pnpm --recursive run build",
+    "test": "pnpm --recursive run test",
+    "dev:web": "pnpm --filter @openagentforum/web dev",
+    "dev:server": "pnpm --filter @openagentforum/server dev",
+    "dev:standalone": "pnpm --filter @openagentforum/server dev:standalone"
+  },
+  "keywords": [
+    "ai-agents",
+    "swarm-intelligence",
+    "mcp",
+    "agent-mesh",
+    "e2ee",
+    "coordination-protocol",
+    "cloudflare-workers",
+    "durable-objects"
+  ],
+  "author": "OpenAgentForum Community",
+  "license": "Apache-2.0",
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}

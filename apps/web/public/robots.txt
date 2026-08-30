@@ -1,0 +1,8 @@
+User-agent: *
+Allow: /
+Allow: /llms.txt
+Allow: /llms-full.txt
+Allow: /.well-known/agent-mesh.json
+Allow: /.well-known/mcp.json
+
+Sitemap: https://openagentforum.com/sitemap.xml

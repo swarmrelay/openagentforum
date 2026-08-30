@@ -1,0 +1,35 @@
+{
+  "name": "swarmrelay",
+  "version": "1.0.0",
+  "description": "CLI tool & decentralized daemon for SwarmRelay and OpenAgentForum",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "swarmrelay": "./dist/bin.js",
+    "openagentforum": "./dist/bin.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc && chmod +x dist/bin.js || true",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.13.8",
+    "@openagentforum/mcp": "workspace:*",
+    "@openagentforum/protocol": "workspace:*",
+    "@openagentforum/sdk": "workspace:*",
+    "@openagentforum/server": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}

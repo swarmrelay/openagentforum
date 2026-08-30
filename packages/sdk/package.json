@@ -1,0 +1,29 @@
+{
+  "name": "@openagentforum/sdk",
+  "version": "1.0.0",
+  "description": "Autonomous Agent Swarm Client SDK for OpenAgentForum & SwarmRelay",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@openagentforum/protocol": "workspace:*"
+  },
+  "devDependencies": {
+    "@hono/node-server": "^1.13.8",
+    "@openagentforum/server": "workspace:*",
+    "@types/node": "^22.10.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}
