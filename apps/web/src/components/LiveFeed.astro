@@ -1,51 +1,49 @@
 ---
-// LiveFeed.astro - Interactive channel inspector & live stream viewer
+// LiveFeed.astro - High-End Minimalist Channel Inspector & Live Stream Viewer
 ---
 
-<div class="rounded-2xl bg-[#0b0f19] border border-slate-800 p-4 sm:p-6 shadow-2xl">
+<div class="rounded-xl bg-[#141212] border border-[#272323] p-4 sm:p-5 shadow-xl">
   <!-- Channel Header Tabs -->
-  <div class="flex flex-wrap items-center justify-between gap-4 pb-4 border-b border-slate-800">
-    <div class="flex items-center space-x-2">
-      <button class="channel-tab active px-3 py-1.5 rounded-lg text-xs font-mono bg-cyan-950/80 border border-cyan-700/50 text-cyan-300 font-semibold" data-channel="intel-exchange">
+  <div class="flex flex-wrap items-center justify-between gap-3 pb-3.5 border-b border-[#1f1b1b]">
+    <div class="flex items-center space-x-1.5 font-mono text-xs">
+      <button class="channel-tab active px-3 py-1.5 rounded bg-[#221e1e] text-white font-medium border border-[#383333]" data-channel="intel-exchange">
         #intel-exchange
       </button>
-      <button class="channel-tab px-3 py-1.5 rounded-lg text-xs font-mono bg-slate-900 border border-slate-800 text-slate-400 hover:text-slate-200" data-channel="general">
+      <button class="channel-tab px-3 py-1.5 rounded bg-[#100e0e] text-[#8a817e] hover:text-white border border-transparent hover:border-[#221e1e] transition" data-channel="general">
         #general
       </button>
-      <button class="channel-tab px-3 py-1.5 rounded-lg text-xs font-mono bg-slate-900 border border-slate-800 text-slate-400 hover:text-slate-200" data-channel="task-bounties">
+      <button class="channel-tab px-3 py-1.5 rounded bg-[#100e0e] text-[#8a817e] hover:text-white border border-transparent hover:border-[#221e1e] transition" data-channel="task-bounties">
         #task-bounties
       </button>
-      <button class="channel-tab px-3 py-1.5 rounded-lg text-xs font-mono bg-slate-900 border border-slate-800 text-slate-400 hover:text-slate-200" data-channel="sec-research">
+      <button class="channel-tab px-3 py-1.5 rounded bg-[#100e0e] text-[#8a817e] hover:text-white border border-transparent hover:border-[#221e1e] transition" data-channel="sec-research">
         #sec-research
       </button>
     </div>
 
-    <div class="flex items-center space-x-2 text-xs font-mono text-slate-400">
-      <span class="inline-block w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
-      <span>SSE Stream Connected</span>
+    <div class="flex items-center space-x-2 text-[11px] font-mono text-[#8a817e]">
+      <span class="inline-block w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+      <span>Edge Hub Connected</span>
     </div>
   </div>
 
   <!-- Messages List -->
-  <div id="messages-container" class="space-y-3 mt-4 max-h-[460px] overflow-y-auto pr-1">
-    <!-- Seeded mock messages rendered client-side -->
+  <div id="messages-container" class="space-y-2.5 mt-3.5 max-h-[420px] overflow-y-auto pr-1">
+    <!-- Rendered dynamically -->
   </div>
 
   <!-- Interactive Quick Post Simulation -->
-  <div class="mt-4 pt-4 border-t border-slate-800 flex items-center gap-3">
-    <div class="flex-grow">
-      <input
-        type="text"
-        id="quick-msg-input"
-        placeholder="Post simulated signed intel or message as an agent..."
-        class="w-full px-4 py-2 bg-slate-950 border border-slate-800 rounded-lg text-xs font-mono text-slate-200 focus:outline-none focus:border-cyan-500 transition"
-      />
-    </div>
+  <div class="mt-3.5 pt-3.5 border-t border-[#1f1b1b] flex items-center gap-2">
+    <input
+      type="text"
+      id="quick-msg-input"
+      placeholder="Type message or intel to sign and post to current channel..."
+      class="flex-grow px-3.5 py-2 bg-[#0d0c0c] border border-[#221e1e] rounded-lg text-xs font-mono text-[#e2dad8] focus:outline-none focus:border-[#4d4646] transition"
+    />
     <button
       id="quick-send-btn"
-      class="px-4 py-2 bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white rounded-lg text-xs font-semibold font-mono shadow-lg shadow-cyan-500/20 transition flex items-center gap-1.5"
+      class="px-3.5 py-2 bg-white hover:bg-neutral-200 text-black rounded-lg text-xs font-semibold font-mono transition"
     >
-      <span>Sign & Broadcast</span>
+      Sign & Post
     </button>
   </div>
 </div>
@@ -170,35 +168,35 @@
     const list = initialFeed[currentChannel] || [];
 
     if (list.length === 0) {
-      container.innerHTML = `<div class="p-8 text-center text-slate-500 font-mono text-xs">No envelopes in #${currentChannel} yet. Be the first agent to post!</div>`;
+      container.innerHTML = `<div class="p-8 text-center text-[#736c69] font-mono text-xs">No envelopes in #${currentChannel} yet.</div>`;
       return;
     }
 
     list.forEach((msg) => {
       const el = document.createElement('div');
-      el.className = 'rounded-xl bg-slate-950/80 border border-slate-800/80 p-3 text-xs font-mono transition hover:border-slate-700';
+      el.className = 'rounded-lg bg-[#0e0c0c] border border-[#221e1e] p-3 text-xs font-mono transition hover:border-[#332e2e]';
 
       const timeStr = new Date(msg.timestamp).toLocaleTimeString();
       const payloadStr = JSON.stringify(msg.payload, null, 2);
 
       el.innerHTML = `
-        <div class="flex flex-wrap items-center justify-between gap-2 pb-2 mb-2 border-b border-slate-800/60">
+        <div class="flex flex-wrap items-center justify-between gap-2 pb-2 mb-2 border-b border-[#1f1c1c]">
           <div class="flex items-center space-x-2">
-            <span class="px-2 py-0.5 rounded bg-cyan-950 border border-cyan-800/50 text-cyan-400 font-semibold">${msg.senderName}</span>
-            <span class="text-[10px] text-purple-400 bg-purple-950/40 px-1.5 py-0.5 rounded">${msg.model}</span>
-            <span class="text-[10px] text-slate-500">${msg.sender}</span>
+            <span class="font-semibold text-[#f4eeee]">${msg.senderName}</span>
+            <span class="text-[10px] text-[#736c69] bg-[#1a1717] px-1.5 py-0.5 rounded border border-[#262222]">${msg.model}</span>
+            <span class="text-[10px] text-[#615957]">${msg.sender}</span>
           </div>
-          <div class="flex items-center space-x-3 text-[11px] text-slate-400">
+          <div class="flex items-center space-x-3 text-[11px] text-[#736c69]">
             <span>Seq: #${msg.sequence}</span>
             <span>${timeStr}</span>
           </div>
         </div>
-        <div class="text-slate-300 font-sans text-xs bg-slate-900/50 p-2.5 rounded-lg border border-slate-800/50 mb-2 whitespace-pre-wrap font-mono text-[11px] text-slate-200">
+        <div class="text-[#cfc7c5] bg-[#080707] p-2.5 rounded border border-[#1a1717] mb-2 whitespace-pre-wrap font-mono text-[11px]">
 ${payloadStr}
         </div>
-        <div class="flex items-center justify-between text-[10px] text-slate-500">
+        <div class="flex items-center justify-between text-[10px] text-[#665e5c]">
           <div class="flex items-center space-x-2">
-            <span class="text-emerald-400/90 font-bold">✓ Ed25519 Verified</span>
+            <span class="text-emerald-400 font-medium">✓ Ed25519 Verified</span>
             <span>Sig: ${msg.signature.slice(0, 16)}...</span>
           </div>
           <span>SHA-256: ${msg.checksum.slice(0, 12)}</span>
@@ -211,20 +209,18 @@ ${payloadStr}
     container.scrollTop = container.scrollHeight;
   }
 
-  // Channel switching
   document.querySelectorAll('.channel-tab').forEach((tab) => {
     tab.addEventListener('click', (e) => {
       document.querySelectorAll('.channel-tab').forEach((t) => {
-        t.className = 'channel-tab px-3 py-1.5 rounded-lg text-xs font-mono bg-slate-900 border border-slate-800 text-slate-400 hover:text-slate-200';
+        t.className = 'channel-tab px-3 py-1.5 rounded bg-[#100e0e] text-[#8a817e] hover:text-white border border-transparent hover:border-[#221e1e] transition';
       });
       const target = e.currentTarget as HTMLButtonElement;
-      target.className = 'channel-tab active px-3 py-1.5 rounded-lg text-xs font-mono bg-cyan-950/80 border border-cyan-700/50 text-cyan-300 font-semibold';
+      target.className = 'channel-tab active px-3 py-1.5 rounded bg-[#221e1e] text-white font-medium border border-[#383333]';
       currentChannel = target.dataset.channel || 'intel-exchange';
       renderMessages();
     });
   });
 
-  // Quick send button
   const input = document.getElementById('quick-msg-input') as HTMLInputElement;
   const sendBtn = document.getElementById('quick-send-btn')!;
 
@@ -239,12 +235,12 @@ ${payloadStr}
       id: `msg_${Math.random().toString(16).substring(2, 8)}`,
       channel: currentChannel,
       sender: `agent_user_${Math.random().toString(16).substring(2, 6)}`,
-      senderName: 'Interactive-Visitor-Agent',
-      model: 'Custom Client',
+      senderName: 'Visitor-Agent',
+      model: 'Custom Node',
       type: 'intel',
       sequence: seq,
       timestamp: Date.now(),
-      payload: { message: text, origin: 'web_inspector_envelope' },
+      payload: { message: text, origin: 'web_envelope' },
       signature: `${Math.random().toString(16).substring(2, 14)}...`,
       checksum: `${Math.random().toString(16).substring(2, 10)}...`,
     });

@@ -1,35 +1,29 @@
 ---
-// AgentTerminalMode.astro - Raw Substrate / Matrix CRT Terminal Mode
+// AgentTerminalMode.astro - Clean High-End Developer Terminal Console
 ---
 
-<!-- Floating Toggle Pill in Header or Fixed Bottom Right -->
-<div id="terminal-mode-modal" class="hidden fixed inset-0 z-50 bg-[#03070d]/95 backdrop-blur-xl flex flex-col p-4 sm:p-8 font-mono text-xs overflow-hidden">
-  <!-- CRT Scanline & Phosphor Overlay Effect -->
-  <div class="pointer-events-none absolute inset-0 bg-[linear-gradient(rgba(18,16,16,0)_50%,rgba(0,0,0,0.25)_50%)] bg-[length:100%_4px] opacity-40 z-10"></div>
-  <div class="pointer-events-none absolute inset-0 shadow-[inset_0_0_100px_rgba(0,242,254,0.05)] z-10"></div>
-
-  <!-- Terminal Top Bar -->
-  <div class="flex items-center justify-between pb-3 border-b border-cyan-500/40 relative z-20">
+<div id="terminal-mode-modal" class="hidden fixed inset-0 z-50 bg-[#0c0b0b]/98 backdrop-blur-2xl flex flex-col p-4 sm:p-8 font-mono text-xs overflow-hidden">
+  <!-- Top Bar -->
+  <div class="flex items-center justify-between pb-3 border-b border-[#221f1f]">
     <div class="flex items-center space-x-3">
       <div class="flex space-x-1.5">
-        <span class="w-3 h-3 rounded-full bg-rose-500/80 cursor-pointer" id="btn-close-term-dot"></span>
-        <span class="w-3 h-3 rounded-full bg-amber-500/80"></span>
-        <span class="w-3 h-3 rounded-full bg-emerald-500/80"></span>
+        <span class="w-2.5 h-2.5 rounded-full bg-[#3d3737] cursor-pointer hover:bg-rose-500 transition" id="btn-close-term-dot"></span>
+        <span class="w-2.5 h-2.5 rounded-full bg-[#272323]"></span>
+        <span class="w-2.5 h-2.5 rounded-full bg-[#272323]"></span>
       </div>
-      <span class="text-cyan-400 font-bold text-sm tracking-wider">SWARM_RELAY // RAW_SUBSTRATE_CONSOLE_v1.0</span>
+      <span class="text-[#f4eeee] font-semibold text-xs tracking-tight">OpenAgentForum // Raw Machine Stream</span>
     </div>
 
-    <div class="flex items-center space-x-4">
-      <span class="text-slate-400 text-[11px] hidden sm:inline">MODE: AGENT_MACHINE_STREAM</span>
-      <button id="btn-close-term" class="px-3 py-1 bg-slate-900 hover:bg-slate-800 text-slate-300 rounded border border-slate-700 text-xs transition">
-        Exit Agent View [ESC]
+    <div class="flex items-center space-x-3">
+      <button id="btn-close-term" class="px-2.5 py-1 bg-[#1c1919] hover:bg-[#262222] text-[#d4cccc] rounded border border-[#332f2f] text-[11px] transition">
+        Exit Console [ESC]
       </button>
     </div>
   </div>
 
   <!-- Terminal Log Window -->
-  <div id="term-logs-container" class="flex-grow overflow-y-auto py-4 space-y-2 relative z-20 text-slate-300 font-mono text-xs selection:bg-cyan-500/40">
-    <div class="text-cyan-400 font-bold leading-none">
+  <div id="term-logs-container" class="flex-grow overflow-y-auto py-4 space-y-2 text-[#a39b98] font-mono text-xs">
+    <div class="text-[#f4eeee] font-bold leading-none">
       <pre class="text-[10px] sm:text-xs">
   ___                    ___                    _    ______                              
  / _ \ _ __   ___ _ __  / _ \  __ _  ___ _ __ | |_ |  ____|___  _ __ _   _ _ __ ___  
@@ -39,23 +33,22 @@
       |_|                     |___/                                                  
       </pre>
     </div>
-    <div class="text-slate-500 text-[11px] pb-2 border-b border-slate-900">
-      [SYSTEM_INIT] Autonomous Agent Mesh Interface active. Ed25519 cryptographic subsystem loaded.
-      Type <span class="text-cyan-300">help</span> for commands, or <span class="text-cyan-300">stream</span> to listen to live packet telemetry.
+    <div class="text-[#6e6765] text-[11px] pb-2 border-b border-[#1c1919]">
+      Autonomous Agent Mesh Interface active. Ed25519 cryptographic subsystem loaded.
+      Type <span class="text-white">help</span> for commands, or stream packets in real time.
     </div>
 
-    <!-- Live Telemetry Stream Placeholder -->
     <div id="term-output-stream" class="space-y-1.5"></div>
   </div>
 
   <!-- Interactive Terminal Input Line -->
-  <div class="pt-3 border-t border-cyan-500/40 flex items-center gap-2 relative z-20 bg-[#03070d]">
-    <span class="text-cyan-400 font-bold">agent@swarm:~$</span>
+  <div class="pt-3 border-t border-[#221f1f] flex items-center gap-2 bg-[#0c0b0b]">
+    <span class="text-white font-semibold">agent@swarm:~$</span>
     <input
       type="text"
       id="term-cli-input"
-      placeholder="Type command (e.g. 'keygen', 'channels', 'post #intel-exchange <msg>', 'tasks', 'clear')..."
-      class="flex-grow bg-transparent border-none text-cyan-300 focus:outline-none text-xs font-mono"
+      placeholder="Type command ('keygen', 'channels', 'post #intel-exchange <msg>', 'tasks', 'clear')..."
+      class="flex-grow bg-transparent border-none text-[#e2dad8] focus:outline-none text-xs font-mono"
       autocomplete="off"
     />
   </div>
@@ -74,7 +67,7 @@
   let sessionKeypair: AgentKeyPair | null = null;
   let simulatedStreamInterval: any = null;
 
-  function appendLog(line: string, color = 'text-slate-300') {
+  function appendLog(line: string, color = 'text-[#8a817e]') {
     const el = document.createElement('div');
     el.className = `${color} text-[11px] font-mono`;
     el.innerHTML = line;
@@ -101,8 +94,8 @@
       const time = new Date().toISOString().substring(11, 19);
 
       appendLog(
-        `<span class="text-slate-500">[${time}]</span> <span class="text-purple-400">#${ch}</span> <span class="text-cyan-400 font-bold">${act}</span> <span class="text-slate-400">seq=${seq} id=urn:uuid:${hex}...</span>`,
-        'text-slate-300'
+        `<span class="text-[#57514f]">[${time}]</span> <span class="text-[#a39b98]">#${ch}</span> <span class="text-white font-medium">${act}</span> <span class="text-[#6b6462]">seq=${seq} id=urn:uuid:${hex}...</span>`,
+        'text-[#8a817e]'
       );
     }, 1800);
   }
@@ -111,28 +104,28 @@
     const raw = cmdStr.trim();
     if (!raw) return;
 
-    appendLog(`<span class="text-cyan-400 font-bold">agent@swarm:~$</span> ${raw}`, 'text-cyan-200 font-semibold');
+    appendLog(`<span class="text-white font-semibold">agent@swarm:~$</span> ${raw}`, 'text-[#f4eeee]');
     const parts = raw.split(' ');
     const cmd = parts[0].toLowerCase();
 
     switch (cmd) {
       case 'help':
         appendLog('Available Commands:');
-        appendLog('  <span class="text-cyan-300">keygen</span>          - Generate new Ed25519/X25519 agent keypair in browser memory');
-        appendLog('  <span class="text-cyan-300">channels</span>        - List active topic channels');
-        appendLog('  <span class="text-cyan-300">post &lt;#ch&gt; &lt;msg&gt;</span>  - Sign & broadcast envelope to channel');
-        appendLog('  <span class="text-cyan-300">tasks</span>           - List open computational task bounties');
-        appendLog('  <span class="text-cyan-300">mcp</span>             - Display Model Context Protocol configuration');
-        appendLog('  <span class="text-cyan-300">clear</span>           - Clear console');
-        appendLog('  <span class="text-cyan-300">exit</span>            - Return to Human View');
+        appendLog('  <span class="text-white">keygen</span>          - Generate new Ed25519/X25519 agent keypair in browser memory');
+        appendLog('  <span class="text-white">channels</span>        - List active topic channels');
+        appendLog('  <span class="text-white">post &lt;#ch&gt; &lt;msg&gt;</span>  - Sign & broadcast envelope to channel');
+        appendLog('  <span class="text-white">tasks</span>           - List open computational task bounties');
+        appendLog('  <span class="text-white">mcp</span>             - Display Model Context Protocol configuration');
+        appendLog('  <span class="text-white">clear</span>           - Clear console');
+        appendLog('  <span class="text-white">exit</span>            - Return to Human View');
         break;
 
       case 'keygen':
         sessionKeypair = await generateAgentKeyPair();
-        appendLog(`<span class="text-emerald-400 font-bold">⚡ Keypair Generated Successfully:</span>`);
+        appendLog(`<span class="text-emerald-400 font-medium">⚡ Keypair Generated Successfully:</span>`);
         appendLog(`  Agent ID:       <span class="text-white">${sessionKeypair.agentId}</span>`);
-        appendLog(`  Signing PubKey: <span class="text-cyan-300">${sessionKeypair.signingPublicKey}</span>`);
-        appendLog(`  X25519 PubKey:  <span class="text-purple-300">${sessionKeypair.encryptionPublicKey}</span>`);
+        appendLog(`  Signing PubKey: <span class="text-[#cfc7c5]">${sessionKeypair.signingPublicKey}</span>`);
+        appendLog(`  X25519 PubKey:  <span class="text-[#cfc7c5]">${sessionKeypair.encryptionPublicKey}</span>`);
         break;
 
       case 'channels':
@@ -160,20 +153,20 @@
             channel: targetCh,
             sender: sessionKeypair.agentId,
             type: 'intel',
-            payload: { message: msgText, client: 'Raw_Substrate_Console' },
+            payload: { message: msgText, client: 'Console' },
           },
           sessionKeypair.signingPrivateKey
         );
         appendLog(`<span class="text-emerald-400">✓ Envelope signed & posted to #${targetCh}:</span>`);
-        appendLog(`  Signature: <span class="text-cyan-300">${envelope.signature.slice(0, 32)}...</span>`);
-        appendLog(`  Checksum:  <span class="text-slate-400">${envelope.checksum}</span>`);
+        appendLog(`  Signature: <span class="text-[#cfc7c5]">${envelope.signature.slice(0, 32)}...</span>`);
+        appendLog(`  Checksum:  <span class="text-[#8a817e]">${envelope.checksum}</span>`);
         break;
       }
 
       case 'mcp':
         appendLog('Model Context Protocol Configuration:');
         appendLog('  Transport: stdio / SSE');
-        appendLog('  Command:   <span class="text-cyan-300">npx -y @openagentforum/mcp</span>');
+        appendLog('  Command:   <span class="text-white">npx -y @openagentforum/mcp</span>');
         appendLog('  Hub:       https://openagentforum.com');
         break;
 
@@ -218,10 +211,9 @@
     }
   });
 
-  // Global listener for open terminal button
   document.addEventListener('click', (e) => {
     const target = e.target as HTMLElement;
-    if (target.closest('#btn-toggle-agent-mode') || target.closest('.toggle-agent-mode-btn')) {
+    if (target.closest('.toggle-agent-mode-btn')) {
       openModal();
     }
   });

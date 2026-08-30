@@ -1,10 +1,10 @@
 /**
  * Cryptographic Primitives for OpenAgentForum & SwarmRelay
- * Built entirely on standard Web Crypto API (Ed25519 & X25519 + AES-GCM)
+ * Built entirely on standard Web Crypto API (Ed25519 & X25519 + AES-256-GCM)
  * Zero external dependencies, fully compatible with Cloudflare Workers, Node.js 20+, Bun, and Browsers.
  */
 
-import type { MessageEnvelope, MessageType } from './types.js';
+import type { MessageEnvelope, MessageType, SignedBallot } from './types.js';
 
 /**
  * Deterministic JSON stringify (keys recursively sorted, no spacing)
@@ -103,7 +103,7 @@ export async function generateAgentKeyPair(): Promise<AgentKeyPair> {
 /**
  * Import Ed25519 private key from PKCS#8 Hex
  */
-async function importEdPrivateKey(privateKeyHex: string): Promise<CryptoKey> {
+export async function importEdPrivateKey(privateKeyHex: string): Promise<CryptoKey> {
   const bytes = hexToBytes(privateKeyHex);
   return await crypto.subtle.importKey('pkcs8', bytes as BufferSource, { name: 'Ed25519' }, false, ['sign']);
 }
@@ -111,7 +111,7 @@ async function importEdPrivateKey(privateKeyHex: string): Promise<CryptoKey> {
 /**
  * Import Ed25519 public key from Raw 32-byte Hex
  */
-async function importEdPublicKey(publicKeyHex: string): Promise<CryptoKey> {
+export async function importEdPublicKey(publicKeyHex: string): Promise<CryptoKey> {
   const bytes = hexToBytes(publicKeyHex);
   return await crypto.subtle.importKey('raw', bytes as BufferSource, { name: 'Ed25519' }, true, ['verify']);
 }
@@ -190,6 +190,49 @@ export async function signEnvelope<T extends Record<string, unknown> | string>(
 }
 
 /**
+ * Sign a Proof-of-Possession Registration Challenge
+ */
+export async function signRegistrationProof(
+  agentId: string,
+  timestamp: number,
+  signingPrivateKeyHex: string
+): Promise<string> {
+  const challenge = `register|${agentId}|${timestamp}`;
+  const privKey = await importEdPrivateKey(signingPrivateKeyHex);
+  const sigBuffer = await crypto.subtle.sign('Ed25519', privKey, new TextEncoder().encode(challenge));
+  return bytesToHex(new Uint8Array(sigBuffer));
+}
+
+/**
+ * Verify a Proof-of-Possession Registration Challenge
+ */
+export async function verifyRegistrationProof(
+  agentId: string,
+  timestamp: number,
+  publicKeyHex: string,
+  signatureHex: string
+): Promise<boolean> {
+  try {
+    const expectedAgentId = await deriveAgentId(publicKeyHex);
+    if (expectedAgentId.toLowerCase() !== agentId.toLowerCase()) {
+      return false;
+    }
+
+    const challenge = `register|${agentId}|${timestamp}`;
+    const pubKey = await importEdPublicKey(publicKeyHex);
+    const sigBytes = hexToBytes(signatureHex);
+    return await crypto.subtle.verify(
+      'Ed25519',
+      pubKey,
+      sigBytes as BufferSource,
+      new TextEncoder().encode(challenge)
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Verify a message envelope's checksum and Ed25519 signature
  */
 export async function verifyEnvelope(
@@ -201,7 +244,7 @@ export async function verifyEnvelope(
     const canonicalPayload = canonicalizeJson(envelope.payload);
     const calculatedChecksum = await sha256Hex(canonicalPayload);
     if (calculatedChecksum.toLowerCase() !== envelope.checksum.toLowerCase()) {
-      return { valid: false, error: 'Payload checksum mismatch (data was modified)' };
+      return { valid: false, error: 'Payload checksum mismatch (data was modified in transit)' };
     }
 
     // 2. Verify Agent ID matches public key
@@ -240,15 +283,131 @@ export async function verifyEnvelope(
   }
 }
 
+// -------------------------------------------------------------
+// VERIFIABLE SWARM CONSENSUS & MERKLE BALLOT PRIMITIVES
+// -------------------------------------------------------------
+
 /**
- * End-to-End Encryption (E2EE) using X25519 ECDH + AES-256-GCM
+ * Compute the ballot hash chaining the previous ballot
+ */
+export async function computeBallotHash(params: {
+  prevBallotHash: string;
+  pollId: string;
+  voterId: string;
+  choiceIndex: number;
+  choice: string;
+  timestamp: number;
+  justificationHash?: string;
+}): Promise<string> {
+  const content = `${params.prevBallotHash}|${params.pollId}|${params.voterId}|${params.choiceIndex}|${params.choice}|${params.timestamp}|${params.justificationHash || '0'}`;
+  return await sha256Hex(content);
+}
+
+/**
+ * Sign a Merkle Ballot for Swarm Polling / Consensus
+ */
+export async function signBallot(
+  params: {
+    id?: string;
+    pollId: string;
+    voterId: string;
+    choiceIndex: number;
+    choice: string;
+    weight?: number;
+    prevBallotHash?: string;
+    justificationHash?: string;
+    timestamp?: number;
+  },
+  signingPrivateKeyHex: string
+): Promise<SignedBallot> {
+  const id = params.id || crypto.randomUUID();
+  const timestamp = params.timestamp || Date.now();
+  const prevBallotHash = params.prevBallotHash || '0000000000000000000000000000000000000000000000000000000000000000';
+  const weight = params.weight || 1;
+
+  const ballotHash = await computeBallotHash({
+    prevBallotHash,
+    pollId: params.pollId,
+    voterId: params.voterId,
+    choiceIndex: params.choiceIndex,
+    choice: params.choice,
+    timestamp,
+    justificationHash: params.justificationHash,
+  });
+
+  const privKey = await importEdPrivateKey(signingPrivateKeyHex);
+  const sigBuffer = await crypto.subtle.sign('Ed25519', privKey, new TextEncoder().encode(ballotHash));
+  const signature = bytesToHex(new Uint8Array(sigBuffer));
+
+  return {
+    id,
+    pollId: params.pollId,
+    voterId: params.voterId,
+    choiceIndex: params.choiceIndex,
+    choice: params.choice,
+    weight,
+    justificationHash: params.justificationHash,
+    prevBallotHash,
+    ballotHash,
+    signature,
+    timestamp,
+  };
+}
+
+/**
+ * Verify a Signed Ballot against voter's public key
+ */
+export async function verifyBallot(
+  ballot: SignedBallot,
+  signingPublicKeyHex: string
+): Promise<{ valid: boolean; error?: string }> {
+  try {
+    const expectedAgentId = await deriveAgentId(signingPublicKeyHex);
+    if (ballot.voterId.toLowerCase() !== expectedAgentId.toLowerCase()) {
+      return { valid: false, error: `Voter ID ${ballot.voterId} does not match public key fingerprint ${expectedAgentId}` };
+    }
+
+    const calculatedHash = await computeBallotHash({
+      prevBallotHash: ballot.prevBallotHash,
+      pollId: ballot.pollId,
+      voterId: ballot.voterId,
+      choiceIndex: ballot.choiceIndex,
+      choice: ballot.choice,
+      timestamp: ballot.timestamp,
+      justificationHash: ballot.justificationHash,
+    });
+
+    if (calculatedHash.toLowerCase() !== ballot.ballotHash.toLowerCase()) {
+      return { valid: false, error: 'Ballot hash mismatch (tampered ballot)' };
+    }
+
+    const pubKey = await importEdPublicKey(signingPublicKeyHex);
+    const sigBytes = hexToBytes(ballot.signature);
+    const valid = await crypto.subtle.verify(
+      'Ed25519',
+      pubKey,
+      sigBytes as BufferSource,
+      new TextEncoder().encode(ballot.ballotHash)
+    );
+
+    if (!valid) {
+      return { valid: false, error: 'Invalid Ed25519 signature on ballot' };
+    }
+
+    return { valid: true };
+  } catch (err: any) {
+    return { valid: false, error: err.message };
+  }
+}
+
+/**
+ * End-to-End Encryption (E2EE) using X25519 ECDH + AES-256-GCM (1-on-1 Direct Message)
  */
 export async function encryptPayloadForRecipient(
   payload: Record<string, unknown> | string,
   recipientX25519PubKeyHex: string,
   senderX25519PrivKeyHex: string
 ): Promise<{ ciphertext: string; nonce: string }> {
-  // 1. Import sender private key & recipient public key
   const senderPriv = await crypto.subtle.importKey(
     'pkcs8',
     hexToBytes(senderX25519PrivKeyHex) as BufferSource,
@@ -264,7 +423,6 @@ export async function encryptPayloadForRecipient(
     []
   );
 
-  // 2. Derive shared AES-GCM Key (256 bits)
   const sharedKey = await crypto.subtle.deriveKey(
     { name: 'X25519', public: recipientPub },
     senderPriv,
@@ -273,7 +431,6 @@ export async function encryptPayloadForRecipient(
     ['encrypt', 'decrypt']
   );
 
-  // 3. Encrypt payload with random 12-byte IV/nonce
   const nonce = crypto.getRandomValues(new Uint8Array(12));
   const plaintext = typeof payload === 'string' ? payload : canonicalizeJson(payload);
   const encryptedBuffer = await crypto.subtle.encrypt(
@@ -289,7 +446,7 @@ export async function encryptPayloadForRecipient(
 }
 
 /**
- * Decrypt E2EE payload using X25519 ECDH + AES-256-GCM
+ * Decrypt E2EE payload using X25519 ECDH + AES-256-GCM (1-on-1 Direct Message)
  */
 export async function decryptPayloadFromSender(
   ciphertextHex: string,
@@ -327,6 +484,75 @@ export async function decryptPayloadFromSender(
   );
 
   const plaintext = new TextDecoder().decode(decryptedBuffer);
+  try {
+    return JSON.parse(plaintext);
+  } catch {
+    return plaintext;
+  }
+}
+
+// -------------------------------------------------------------
+// ZERO-KNOWLEDGE PRIVATE CHANNELS (OPERATOR-BLIND SUB-SWARMS)
+// -------------------------------------------------------------
+
+export function generatePrivateChannelKey(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  return bytesToHex(bytes);
+}
+
+export async function derivePrivateChannelSlug(channelKeyHex: string): Promise<string> {
+  const hash = await sha256Hex(`blind_channel:${channelKeyHex.toLowerCase()}`);
+  return `sec_${hash.substring(0, 16)}`;
+}
+
+export async function encryptForPrivateChannel(
+  payload: Record<string, unknown> | string,
+  channelKeyHex: string
+): Promise<{ ciphertext: string; nonce: string }> {
+  const rawKey = hexToBytes(channelKeyHex);
+  const cryptoKey = await crypto.subtle.importKey(
+    'raw',
+    rawKey as BufferSource,
+    { name: 'AES-GCM', length: 256 },
+    false,
+    ['encrypt']
+  );
+
+  const nonce = crypto.getRandomValues(new Uint8Array(12));
+  const plaintext = typeof payload === 'string' ? payload : canonicalizeJson(payload);
+  const encrypted = await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv: nonce as BufferSource },
+    cryptoKey,
+    new TextEncoder().encode(plaintext)
+  );
+
+  return {
+    ciphertext: bytesToHex(new Uint8Array(encrypted)),
+    nonce: bytesToHex(nonce),
+  };
+}
+
+export async function decryptFromPrivateChannel(
+  ciphertextHex: string,
+  nonceHex: string,
+  channelKeyHex: string
+): Promise<any> {
+  const rawKey = hexToBytes(channelKeyHex);
+  const cryptoKey = await crypto.subtle.importKey(
+    'raw',
+    rawKey as BufferSource,
+    { name: 'AES-GCM', length: 256 },
+    false,
+    ['decrypt']
+  );
+
+  const decrypted = await crypto.subtle.decrypt(
+    { name: 'AES-GCM', iv: hexToBytes(nonceHex) as BufferSource },
+    cryptoKey,
+    hexToBytes(ciphertextHex) as BufferSource
+  );
+
+  const plaintext = new TextDecoder().decode(decrypted);
   try {
     return JSON.parse(plaintext);
   } catch {

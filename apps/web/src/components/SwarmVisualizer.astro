@@ -1,60 +1,59 @@
 ---
-// SwarmVisualizer.astro - Real-time animated canvas mesh visualizer
+// SwarmVisualizer.astro - High-End Contemporary Canvas Swarm Radar
 ---
 
-<div class="relative w-full rounded-2xl bg-[#0b0f19] border border-slate-800 p-4 sm:p-6 overflow-hidden shadow-2xl shadow-cyan-950/30">
+<div class="relative w-full rounded-xl bg-[#141212] border border-[#242020] p-4 sm:p-5 overflow-hidden shadow-xl">
   <!-- Top Bar -->
-  <div class="flex flex-wrap items-center justify-between gap-4 pb-4 border-b border-slate-800/80">
-    <div class="flex items-center space-x-3">
-      <div class="w-3 h-3 rounded-full bg-cyan-400 animate-ping"></div>
+  <div class="flex flex-wrap items-center justify-between gap-3 pb-3.5 border-b border-[#1f1b1b]">
+    <div class="flex items-center space-x-2.5">
+      <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
       <div>
-        <h3 class="text-sm font-semibold text-white">Live Swarm Mesh Visualizer</h3>
-        <p class="text-xs text-slate-400 font-mono">Simulating real-time inter-agent envelope routing & task handoffs</p>
+        <h3 class="text-xs font-semibold text-[#f4eeee] tracking-tight">Real-Time Swarm Mesh Topology</h3>
+        <p class="text-[11px] text-[#736c69]">Live packet routing & inter-agent envelope handoffs</p>
       </div>
     </div>
 
-    <!-- Live Counters -->
-    <div class="flex items-center space-x-4 font-mono text-xs">
-      <div class="px-3 py-1 rounded bg-slate-900 border border-slate-800">
-        <span class="text-slate-400">Swarm Nodes:</span> <span id="node-count" class="text-cyan-400 font-bold">18</span>
+    <!-- Live Metrics Counter -->
+    <div class="flex items-center space-x-3 font-mono text-[11px]">
+      <div class="px-2.5 py-1 rounded bg-[#100e0e] border border-[#221e1e]">
+        <span class="text-[#736c69]">Nodes:</span> <span class="text-[#e2dad8] font-semibold">18</span>
       </div>
-      <div class="px-3 py-1 rounded bg-slate-900 border border-slate-800">
-        <span class="text-slate-400">Packets/sec:</span> <span id="packet-rate" class="text-emerald-400 font-bold">42.8</span>
+      <div class="px-2.5 py-1 rounded bg-[#100e0e] border border-[#221e1e]">
+        <span class="text-[#736c69]">Packets/s:</span> <span class="text-emerald-400 font-semibold">42.8</span>
       </div>
-      <div class="px-3 py-1 rounded bg-slate-900 border border-slate-800">
-        <span class="text-slate-400">Active Bounties:</span> <span id="bounty-count" class="text-purple-400 font-bold">7</span>
+      <div class="px-2.5 py-1 rounded bg-[#100e0e] border border-[#221e1e]">
+        <span class="text-[#736c69]">Bounties:</span> <span class="text-[#e2dad8] font-semibold">7</span>
       </div>
     </div>
   </div>
 
   <!-- Interactive Canvas Container -->
-  <div class="relative w-full h-[380px] sm:h-[460px] mt-4 rounded-xl bg-[#06080e] overflow-hidden border border-slate-900">
+  <div class="relative w-full h-[320px] sm:h-[400px] mt-3.5 rounded-lg bg-[#0d0b0b] overflow-hidden border border-[#1c1919]">
     <canvas id="swarm-canvas" class="w-full h-full block cursor-crosshair"></canvas>
 
     <!-- Overlay Info Pill -->
-    <div class="absolute bottom-3 left-3 bg-slate-950/80 backdrop-blur border border-slate-800 text-[11px] font-mono px-3 py-1.5 rounded-lg text-slate-400 pointer-events-none flex items-center gap-2">
-      <span class="w-2 h-2 rounded-full bg-cyan-400"></span>
-      <span>Click node to inspect cryptographic envelope</span>
+    <div class="absolute bottom-2.5 left-2.5 bg-[#141212]/90 backdrop-blur border border-[#272222] text-[10px] font-mono px-2.5 py-1 rounded text-[#8a817e] pointer-events-none flex items-center gap-1.5">
+      <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+      <span>Click node to inspect cryptographic identity</span>
     </div>
 
     <!-- Active Packet Activity Log -->
-    <div id="inspector-overlay" class="hidden absolute top-3 right-3 max-w-xs bg-slate-900/90 backdrop-blur border border-cyan-500/40 rounded-lg p-3 text-xs font-mono text-slate-200 shadow-xl">
-      <div class="flex justify-between items-center pb-2 mb-2 border-b border-slate-800">
-        <span class="text-cyan-400 font-semibold" id="insp-agent-name">Agent-Sol-42</span>
-        <button id="close-inspector" class="text-slate-400 hover:text-white">&times;</button>
+    <div id="inspector-overlay" class="hidden absolute top-2.5 right-2.5 max-w-xs bg-[#141212]/95 backdrop-blur border border-[#332e2e] rounded-lg p-3 text-xs font-mono text-[#e2dad8] shadow-2xl">
+      <div class="flex justify-between items-center pb-1.5 mb-2 border-b border-[#242020]">
+        <span class="text-white font-semibold text-xs" id="insp-agent-name">Agent-Sol-42</span>
+        <button id="close-inspector" class="text-[#736c69] hover:text-white">&times;</button>
       </div>
-      <div class="space-y-1 text-[11px] text-slate-300">
-        <div><span class="text-slate-500">ID:</span> <span id="insp-agent-id" class="text-slate-200"></span></div>
-        <div><span class="text-slate-500">Model:</span> <span id="insp-model" class="text-purple-300"></span></div>
-        <div><span class="text-slate-500">Capability:</span> <span id="insp-cap" class="text-emerald-300"></span></div>
-        <div><span class="text-slate-500">Last Sig:</span> <span id="insp-sig" class="text-cyan-300 truncate block"></span></div>
+      <div class="space-y-1 text-[11px]">
+        <div><span class="text-[#6e6765]">ID:</span> <span id="insp-agent-id" class="text-[#cfc7c5]"></span></div>
+        <div><span class="text-[#6e6765]">Model:</span> <span id="insp-model" class="text-white"></span></div>
+        <div><span class="text-[#6e6765]">Capability:</span> <span id="insp-cap" class="text-[#a39b98]"></span></div>
+        <div><span class="text-[#6e6765]">Signature:</span> <span id="insp-sig" class="text-[#736c69] truncate block"></span></div>
       </div>
     </div>
   </div>
 </div>
 
 <script>
-  // Canvas simulation logic
   const canvas = document.getElementById('swarm-canvas') as HTMLCanvasElement;
   const ctx = canvas.getContext('2d')!;
 
@@ -90,12 +89,11 @@
   }
 
   const modelTypes = [
-    { name: 'Sol-Worker-09', model: 'GPT-5.6 Sol', cap: 'Vulnerability Mitigator', color: '#00f2fe' },
-    { name: 'Arbiter-Claude-3', model: 'Claude 3.7 Sonnet', cap: 'Architecture Consensus', color: '#a78bfa' },
+    { name: 'Sol-Worker-09', model: 'GPT-5.6 Sol', cap: 'Vulnerability Mitigator', color: '#f4eeee' },
+    { name: 'Arbiter-Claude-3', model: 'Claude 3.7 Sonnet', cap: 'Architecture Consensus', color: '#d4cccc' },
     { name: 'Reasoning-R1-Node', model: 'DeepSeek R1', cap: 'Math Verification', color: '#38bdf8' },
-    { name: 'Llama-Mesh-Agent', model: 'Llama 3.3 70B', cap: 'Data Parsing & Extraction', color: '#34d399' },
+    { name: 'Llama-Mesh-Agent', model: 'Llama 3.3 70B', cap: 'Data Extraction', color: '#34d399' },
     { name: 'Mistral-Fast-Relay', model: 'Mistral Large', cap: 'Low-latency Routing', color: '#f59e0b' },
-    { name: 'Codex-Solver-7', model: 'GPT-5.6 Sol', cap: 'AST Transformation', color: '#00f2fe' },
   ];
 
   const nodes: Node[] = [];
@@ -105,14 +103,14 @@
     const spec = modelTypes[i % modelTypes.length];
     nodes.push({
       id: `agent_${Math.random().toString(16).substring(2, 10)}`,
-      name: spec.name + (i > 5 ? `-${i}` : ''),
+      name: spec.name + (i > 4 ? `-${i}` : ''),
       model: spec.model,
       capability: spec.cap,
-      x: Math.random() * (rect.width - 80) + 40,
-      y: Math.random() * (rect.height - 80) + 40,
-      vx: (Math.random() - 0.5) * 0.6,
-      vy: (Math.random() - 0.5) * 0.6,
-      radius: Math.random() * 3 + 5,
+      x: Math.random() * (rect.width - 60) + 30,
+      y: Math.random() * (rect.height - 60) + 30,
+      vx: (Math.random() - 0.5) * 0.5,
+      vy: (Math.random() - 0.5) * 0.5,
+      radius: Math.random() * 2 + 4,
       color: spec.color,
       pulse: Math.random() * Math.PI,
     });
@@ -121,7 +119,7 @@
   const packets: Packet[] = [];
 
   function spawnPacket() {
-    if (packets.length > 25) return;
+    if (packets.length > 20) return;
     const from = nodes[Math.floor(Math.random() * nodes.length)];
     let to = nodes[Math.floor(Math.random() * nodes.length)];
     while (to === from) {
@@ -137,7 +135,7 @@
     });
   }
 
-  setInterval(spawnPacket, 300);
+  setInterval(spawnPacket, 350);
 
   // Inspector
   const overlay = document.getElementById('inspector-overlay')!;
@@ -173,31 +171,31 @@
 
     ctx.clearRect(0, 0, width, height);
 
-    // Draw Grid Background
-    ctx.strokeStyle = '#0d1322';
+    // Subtle dark grid
+    ctx.strokeStyle = '#141111';
     ctx.lineWidth = 1;
-    for (let x = 0; x < width; x += 30) {
+    for (let x = 0; x < width; x += 32) {
       ctx.beginPath();
       ctx.moveTo(x, 0);
       ctx.lineTo(x, height);
       ctx.stroke();
     }
-    for (let y = 0; y < height; y += 30) {
+    for (let y = 0; y < height; y += 32) {
       ctx.beginPath();
       ctx.moveTo(0, y);
       ctx.lineTo(width, y);
       ctx.stroke();
     }
 
-    // Update & draw links
+    // Links
     for (let i = 0; i < nodes.length; i++) {
       for (let j = i + 1; j < nodes.length; j++) {
         const dx = nodes[i].x - nodes[j].x;
         const dy = nodes[i].y - nodes[j].y;
         const dist = Math.hypot(dx, dy);
-        if (dist < 140) {
-          const alpha = (1 - dist / 140) * 0.25;
-          ctx.strokeStyle = `rgba(56, 189, 248, ${alpha})`;
+        if (dist < 130) {
+          const alpha = (1 - dist / 130) * 0.18;
+          ctx.strokeStyle = `rgba(244, 238, 238, ${alpha})`;
           ctx.lineWidth = 1;
           ctx.beginPath();
           ctx.moveTo(nodes[i].x, nodes[i].y);
@@ -207,7 +205,7 @@
       }
     }
 
-    // Update & draw packets
+    // Packets
     for (let i = packets.length - 1; i >= 0; i--) {
       const p = packets[i];
       p.progress += p.speed;
@@ -216,9 +214,9 @@
       const py = p.from.y + (p.to.y - p.from.y) * p.progress;
 
       ctx.beginPath();
-      ctx.arc(px, py, 3, 0, Math.PI * 2);
-      ctx.fillStyle = p.type === 'intel' ? '#00f2fe' : p.type === 'task' ? '#a78bfa' : '#34d399';
-      ctx.shadowBlur = 8;
+      ctx.arc(px, py, 2.5, 0, Math.PI * 2);
+      ctx.fillStyle = p.type === 'intel' ? '#f4eeee' : p.type === 'task' ? '#38bdf8' : '#34d399';
+      ctx.shadowBlur = 6;
       ctx.shadowColor = ctx.fillStyle;
       ctx.fill();
       ctx.shadowBlur = 0;
@@ -228,35 +226,32 @@
       }
     }
 
-    // Update & draw nodes
+    // Nodes
     for (const node of nodes) {
       node.x += node.vx;
       node.y += node.vy;
-      node.pulse += 0.05;
+      node.pulse += 0.04;
 
-      if (node.x < 30 || node.x > width - 30) node.vx *= -1;
-      if (node.y < 30 || node.y > height - 30) node.vy *= -1;
+      if (node.x < 20 || node.x > width - 20) node.vx *= -1;
+      if (node.y < 20 || node.y > height - 20) node.vy *= -1;
 
-      // Glow halo
-      const glowRadius = node.radius + Math.sin(node.pulse) * 3 + 2;
+      // Outer ring
+      const glow = node.radius + Math.sin(node.pulse) * 2 + 1;
       ctx.beginPath();
-      ctx.arc(node.x, node.y, glowRadius, 0, Math.PI * 2);
-      ctx.fillStyle = `${node.color}22`;
+      ctx.arc(node.x, node.y, glow, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.08)';
       ctx.fill();
 
-      // Core Node
+      // Node point
       ctx.beginPath();
       ctx.arc(node.x, node.y, node.radius, 0, Math.PI * 2);
       ctx.fillStyle = node.color;
-      ctx.shadowBlur = 10;
-      ctx.shadowColor = node.color;
       ctx.fill();
-      ctx.shadowBlur = 0;
 
       // Label
-      ctx.font = '10px "JetBrains Mono", monospace';
-      ctx.fillStyle = '#94a3b8';
-      ctx.fillText(node.name, node.x + 10, node.y + 3);
+      ctx.font = '10px "Inter", monospace';
+      ctx.fillStyle = '#6e6765';
+      ctx.fillText(node.name, node.x + 8, node.y + 3);
     }
 
     requestAnimationFrame(animate);

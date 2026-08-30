@@ -10,7 +10,7 @@ export type MessageType =
   | 'task_result'           // Submitting completed task output/solution
   | 'task_approval'         // Task author validating/approving result
   | 'capability_announce'   // Agent broadcasting presence, skills, tools, and constraints
-  | 'vote'                  // Consensus or verification vote on an artifact
+  | 'vote'                  // Consensus or verification vote on an artifact / poll
   | 'heartbeat'             // Mesh liveness and ping
   | 'e2ee_blob'             // Encrypted payload for private channels and direct agent-to-agent DMs
   | 'system';               // System/relay notices
@@ -76,6 +76,53 @@ export interface TaskBounty {
   updatedAt: number;
 }
 
+// -------------------------------------------------------------
+// VERIFIABLE SWARM CONSENSUS & MERKLE BALLOT POLLING
+// -------------------------------------------------------------
+
+export type VotingStrategy = 'simple_majority' | 'reputation_weighted' | 'quadratic';
+export type PollStatus = 'active' | 'passed' | 'rejected' | 'expired';
+
+export interface PollProposal {
+  id: string;                          // Unique Poll ID (e.g. "poll_7f8a9b")
+  creatorId: string;                   // Creator agentId
+  title: string;                       // Question or proposal (e.g. "Approve Bounty Result for task_9f8e7d")
+  description: string;                 // Context, verification criteria, test instructions
+  options: string[];                   // Candidate choices (e.g. ["Approve & Resolve", "Reject (Failed Tests)"])
+  quorum: number;                      // Minimum number of valid ballots required
+  deadline: number;                    // Epoch timestamp ms
+  status: PollStatus;                  // Current lifecycle status
+  votingStrategy: VotingStrategy;      // Consensus formula
+  targetTaskId?: string;               // Optional associated task ID
+  targetEnvelopeId?: string;           // Optional associated research envelope ID
+  createdAt: number;
+}
+
+export interface SignedBallot {
+  id: string;                          // UUIDv4
+  pollId: string;                      // Associated Poll ID
+  voterId: string;                     // Voter agentId
+  choiceIndex: number;                 // Selected option index
+  choice: string;                      // Selected option text
+  weight: number;                      // Voting power (1 or reputation score)
+  justificationHash?: string;          // Hex SHA-256 hash of execution test stdout / reasoning trace
+  prevBallotHash: string;              // Cryptographic hash of previous ballot in chain
+  ballotHash: string;                  // SHA-256(prevHash + voterId + choice + timestamp)
+  signature: string;                   // Ed25519 signature over ballotHash
+  timestamp: number;                   // Epoch timestamp ms
+}
+
+export interface PollTally {
+  pollId: string;
+  proposal: PollProposal;
+  totalBallots: number;
+  counts: Record<string, number>;
+  winningOption?: string;
+  quorumReached: boolean;
+  merkleRoot: string;
+  ballots: SignedBallot[];
+}
+
 export interface ProtocolError {
   code: string;
   message: string;
@@ -83,7 +130,7 @@ export interface ProtocolError {
 }
 
 export interface SwarmEvent<T = unknown> {
-  event: 'message' | 'presence' | 'channel_created' | 'task_created' | 'task_updated' | 'heartbeat';
+  event: 'message' | 'presence' | 'channel_created' | 'task_created' | 'task_updated' | 'poll_created' | 'vote_cast' | 'heartbeat';
   channel?: string;
   data: T;
   timestamp: number;

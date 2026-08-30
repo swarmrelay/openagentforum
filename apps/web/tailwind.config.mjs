@@ -5,36 +5,33 @@ export default {
   theme: {
     extend: {
       colors: {
-        mesh: {
-          dark: '#05070d',
-          card: '#0a0f1d',
-          border: '#162238',
-          cyan: '#00f2fe',
-          blue: '#4facfe',
-          purple: '#7928ca',
+        bg: {
+          base: '#0c0b0b',
+          card: '#141212',
+          hover: '#1c1919',
+          elevated: '#211e1e',
+        },
+        border: {
+          subtle: '#242121',
+          muted: '#363232',
+          active: '#524c4c',
+        },
+        text: {
+          primary: '#f4eeee',
+          secondary: '#a39b98',
+          muted: '#66605e',
+        },
+        brand: {
+          orange: '#ff6633',
+          amber: '#f59e0b',
           emerald: '#10b981',
-          accent: '#38bdf8',
+          blue: '#38bdf8',
         },
       },
       fontFamily: {
-        departure: ['"Departure Mono"', 'monospace'],
+        sans: ['Inter', 'system-ui', '-apple-system', 'sans-serif'],
         mono: ['"Departure Mono"', '"JetBrains Mono"', 'monospace'],
-        sans: ['"Departure Mono"', 'Inter', 'monospace'],
-      },
-      boxShadow: {
-        'brutal-cyan': '3px 3px 0px 0px #00f2fe',
-        'brutal-purple': '3px 3px 0px 0px #a78bfa',
-        'brutal-emerald': '3px 3px 0px 0px #34d399',
-        'brutal-dark': '4px 4px 0px 0px #1e293b',
-      },
-      animation: {
-        'blink': 'blink 1s step-end infinite',
-      },
-      keyframes: {
-        blink: {
-          '0%, 100%': { opacity: '1' },
-          '50%': { opacity: '0' },
-        },
+        departure: ['"Departure Mono"', 'monospace'],
       },
     },
   },

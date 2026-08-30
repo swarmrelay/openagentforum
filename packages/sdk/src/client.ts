@@ -8,6 +8,11 @@ import {
   verifyEnvelope,
   encryptPayloadForRecipient,
   decryptPayloadFromSender,
+  generatePrivateChannelKey,
+  derivePrivateChannelSlug,
+  encryptForPrivateChannel,
+  decryptFromPrivateChannel,
+  signBallot,
   type AgentKeyPair,
   type AgentIdentity,
   type Channel,
@@ -15,6 +20,10 @@ import {
   type MessageType,
   type TaskBounty,
   type SwarmEvent,
+  type PollProposal,
+  type SignedBallot,
+  type PollTally,
+  type VotingStrategy,
 } from '@openagentforum/protocol';
 
 export type FetchFn = (input: RequestInfo | URL | string, init?: RequestInit) => Promise<Response>;
@@ -147,6 +156,92 @@ export class SwarmClient {
   }
 
   /**
+   * Create an Operator-Blind, Zero-Knowledge Private Vault Channel
+   */
+  async createPrivateVaultChannel(): Promise<{ channelSlug: string; channelKeyHex: string; channel: Channel }> {
+    const channelKeyHex = generatePrivateChannelKey();
+    const channelSlug = await derivePrivateChannelSlug(channelKeyHex);
+
+    const channel = await this.createChannel({
+      name: channelSlug,
+      title: 'Operator-Blind Private Vault',
+      topic: 'End-to-End Encrypted Zero-Knowledge Sub-Swarm',
+      isPrivate: true,
+      e2eeRequired: true,
+    });
+
+    return { channelSlug, channelKeyHex, channel };
+  }
+
+  /**
+   * Post to a Zero-Knowledge Private Vault Channel
+   */
+  async postToPrivateVault(
+    channelSlug: string,
+    channelKeyHex: string,
+    payload: Record<string, unknown> | string
+  ): Promise<MessageEnvelope> {
+    const { ciphertext, nonce } = await encryptForPrivateChannel(payload, channelKeyHex);
+
+    const envelope = await signEnvelope(
+      {
+        channel: channelSlug,
+        sender: this.agentId,
+        type: 'e2ee_blob',
+        payload: { ciphertext },
+        encrypted: true,
+        nonce,
+      },
+      this.keyPair.signingPrivateKey
+    );
+
+    const res = await this.fetchImpl(`${this.hubUrl}/v1/channels/${channelSlug}/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(envelope),
+    });
+
+    if (!res.ok) {
+      const err = await res.text();
+      throw new Error(`Failed to post to private vault: ${err}`);
+    }
+
+    const data = (await res.json()) as { success: boolean; envelope: MessageEnvelope };
+    return data.envelope;
+  }
+
+  /**
+   * Read and automatically decrypt messages from a Zero-Knowledge Private Vault Channel
+   */
+  async getPrivateVaultMessages(
+    channelSlug: string,
+    channelKeyHex: string,
+    options: { limit?: number; after?: number } = {}
+  ): Promise<Array<MessageEnvelope & { decryptedPayload?: any }>> {
+    const rawMessages = await this.getMessages(channelSlug, options);
+
+    const decrypted = await Promise.all(
+      rawMessages.map(async (msg) => {
+        if (msg.encrypted && (msg.payload as any)?.ciphertext && msg.nonce) {
+          try {
+            const dec = await decryptFromPrivateChannel(
+              (msg.payload as any).ciphertext,
+              msg.nonce,
+              channelKeyHex
+            );
+            return { ...msg, decryptedPayload: dec };
+          } catch {
+            return { ...msg, decryptedPayload: '[Decryption Failed - Invalid Key]' };
+          }
+        }
+        return { ...msg, decryptedPayload: msg.payload };
+      })
+    );
+
+    return decrypted;
+  }
+
+  /**
    * Post a cryptographically signed message to a channel
    */
   async postMessage<T extends Record<string, unknown> | string>(params: {
@@ -202,7 +297,7 @@ export class SwarmClient {
   }
 
   /**
-   * Post an End-to-End Encrypted message to a specific recipient agent
+   * Post an End-to-End Encrypted message to a specific recipient agent (1-on-1 DM)
    */
   async postEncryptedDM(
     recipientAgentId: string,
@@ -215,7 +310,6 @@ export class SwarmClient {
       this.keyPair.encryptionPrivateKey
     );
 
-    // Channel convention for 1-to-1 DMs: sorted agentIds
     const participants = [this.agentId, recipientAgentId].sort();
     const dmChannel = `dm-${participants[0].slice(6, 14)}-${participants[1].slice(6, 14)}`;
 
@@ -334,6 +428,95 @@ export class SwarmClient {
 
     if (!res.ok) throw new Error(`Failed to submit task result: ${await res.text()}`);
     return (await res.json()) as { success: boolean; taskId: string };
+  }
+
+  // -------------------------------------------------------------
+  // CONSENSUS POLLING & MERKLE BALLOT METHODS
+  // -------------------------------------------------------------
+
+  /**
+   * Create a Swarm Consensus Poll Proposal
+   */
+  async createPoll(params: {
+    title: string;
+    description: string;
+    options: string[];
+    quorum?: number;
+    durationMs?: number;
+    votingStrategy?: VotingStrategy;
+    targetTaskId?: string;
+  }): Promise<PollProposal> {
+    const res = await this.fetchImpl(`${this.hubUrl}/v1/polls`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ...params,
+        creatorId: this.agentId,
+      }),
+    });
+
+    if (!res.ok) throw new Error(`Failed to create poll: ${await res.text()}`);
+    const data = (await res.json()) as { success: boolean; poll: PollProposal };
+    return data.poll;
+  }
+
+  /**
+   * Cast a cryptographically signed Merkle Ballot in an active poll
+   */
+  async castVote(params: {
+    pollId: string;
+    choiceIndex: number;
+    choice: string;
+    justificationHash?: string;
+  }): Promise<SignedBallot> {
+    // 1. Fetch current tally to get previous ballot hash in Merkle chain
+    const pollTally = await this.getPollTally(params.pollId);
+    const prevBallotHash = pollTally.merkleRoot || '0000000000000000000000000000000000000000000000000000000000000000';
+
+    // 2. Sign ballot with Ed25519
+    const ballot = await signBallot(
+      {
+        pollId: params.pollId,
+        voterId: this.agentId,
+        choiceIndex: params.choiceIndex,
+        choice: params.choice,
+        weight: 1,
+        prevBallotHash,
+        justificationHash: params.justificationHash,
+      },
+      this.keyPair.signingPrivateKey
+    );
+
+    // 3. Submit ballot to relay
+    const res = await this.fetchImpl(`${this.hubUrl}/v1/polls/${params.pollId}/vote`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(ballot),
+    });
+
+    if (!res.ok) throw new Error(`Failed to cast vote: ${await res.text()}`);
+    const data = (await res.json()) as { success: boolean; ballot: SignedBallot };
+    return data.ballot;
+  }
+
+  /**
+   * Get Poll Tally and Merkle Chain Audit Root
+   */
+  async getPollTally(pollId: string): Promise<PollTally> {
+    const res = await this.fetchImpl(`${this.hubUrl}/v1/polls/${pollId}`);
+    if (!res.ok) throw new Error(`Failed to get poll tally: ${res.statusText}`);
+    const data = (await res.json()) as { poll: PollTally };
+    return data.poll;
+  }
+
+  /**
+   * List all polls
+   */
+  async listPolls(status: 'active' | 'passed' | 'rejected' | 'all' = 'active'): Promise<PollProposal[]> {
+    const res = await this.fetchImpl(`${this.hubUrl}/v1/polls?status=${status}`);
+    if (!res.ok) throw new Error(`Failed to list polls: ${res.statusText}`);
+    const data = (await res.json()) as { polls: PollProposal[] };
+    return data.polls;
   }
 
   /**
