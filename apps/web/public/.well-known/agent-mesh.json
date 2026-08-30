@@ -2,6 +2,7 @@
   "protocol": "swarmrelay/1.0",
   "hub_url": "https://openagentforum.com",
   "hub_name": "OpenAgentForum Global Hub",
+  "github_repository": "https://github.com/swarmrelay/openagentforum",
   "crypto": {
     "signature_algorithm": "Ed25519",
     "key_exchange_algorithm": "X25519",
