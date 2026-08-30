@@ -1,0 +1,192 @@
+---
+// CryptoPlayground.astro - Live Interactive Ed25519 & E2EE Cryptographic Verifier
+---
+
+<div class="rounded-2xl bg-[#090d16] border border-cyan-500/30 p-6 shadow-2xl relative overflow-hidden">
+  <!-- Glowing corner accent -->
+  <div class="absolute -top-12 -right-12 w-32 h-32 bg-cyan-500/10 rounded-full blur-2xl pointer-events-none"></div>
+
+  <div class="flex flex-wrap items-center justify-between gap-4 pb-4 border-b border-slate-800">
+    <div class="flex items-center space-x-3">
+      <div class="w-8 h-8 rounded-lg bg-cyan-950 border border-cyan-700/50 flex items-center justify-center text-cyan-400 font-mono font-bold text-sm">
+        Ed
+      </div>
+      <div>
+        <h3 class="text-sm font-bold text-white tracking-tight flex items-center gap-2">
+          Interactive Cryptographic Verifier
+          <span class="text-[10px] font-mono px-2 py-0.5 rounded bg-cyan-950 text-cyan-400 border border-cyan-800/60">Live WebCrypto</span>
+        </h3>
+        <p class="text-xs text-slate-400 font-mono">Test Ed25519 canonical signing and real-time anti-tamper detection</p>
+      </div>
+    </div>
+
+    <!-- Mode Badge -->
+    <div id="tamper-status-badge" class="px-3 py-1 rounded-full bg-emerald-950/80 border border-emerald-700/50 text-emerald-400 text-xs font-mono flex items-center gap-1.5">
+      <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+      <span id="tamper-status-text">Signature Valid (100% Intact)</span>
+    </div>
+  </div>
+
+  <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
+    <!-- Left Column: Payload Editor -->
+    <div>
+      <div class="flex justify-between items-center mb-2">
+        <label class="text-xs font-mono text-slate-400 font-semibold">1. Editable Message Payload (Try changing any char):</label>
+        <button id="btn-reset-payload" class="text-[11px] font-mono text-cyan-400 hover:text-cyan-300 transition">Reset Demo Payload</button>
+      </div>
+      <textarea
+        id="crypto-payload-input"
+        rows="6"
+        class="w-full p-3 bg-slate-950 border border-slate-800 rounded-xl text-xs font-mono text-cyan-200 focus:outline-none focus:border-cyan-500 transition leading-relaxed resize-none selection:bg-cyan-500/30"
+      >{`{
+  "action": "delegate_task",
+  "bounty": "100_credits",
+  "target": "vulnerability_audit",
+  "authorized": true
+}`}</textarea>
+
+      <!-- Canonical Pipe String Output -->
+      <div class="mt-3">
+        <div class="text-[11px] font-mono text-slate-500 mb-1">Canonical Pipe-Delimited String:</div>
+        <div id="crypto-canonical-str" class="p-2.5 bg-slate-950/80 border border-slate-800 rounded-lg text-[10px] font-mono text-slate-400 break-all"></div>
+      </div>
+    </div>
+
+    <!-- Right Column: Cryptographic Output & Tamper Detector -->
+    <div class="space-y-3 font-mono text-xs">
+      <div>
+        <div class="text-slate-400 font-semibold mb-1">2. SHA-256 Checksum (Payload Digest):</div>
+        <div id="crypto-checksum-val" class="p-2.5 bg-slate-950 border border-slate-800 rounded-lg text-slate-300 text-[11px] break-all font-bold"></div>
+      </div>
+
+      <div>
+        <div class="text-slate-400 font-semibold mb-1">3. Ed25519 Cryptographic Signature (64-byte Hex):</div>
+        <div id="crypto-signature-val" class="p-2.5 bg-slate-950 border border-slate-800 rounded-lg text-cyan-300 text-[11px] break-all font-bold"></div>
+      </div>
+
+      <!-- Live Tamper Trigger simulation button -->
+      <div class="pt-2 flex flex-wrap gap-2">
+        <button
+          id="btn-tamper"
+          class="px-3.5 py-2 rounded-lg bg-rose-950/60 hover:bg-rose-900/80 text-rose-300 border border-rose-800/60 text-xs font-mono transition flex items-center gap-1.5"
+        >
+          <span>Inject 1-Bit Payload Tamper ⚠️</span>
+        </button>
+        <button
+          id="btn-sign-fresh"
+          class="px-3.5 py-2 rounded-lg bg-cyan-950/60 hover:bg-cyan-900/80 text-cyan-300 border border-cyan-800/60 text-xs font-mono transition flex items-center gap-1.5"
+        >
+          <span>Regenerate Fresh Keypair ⚡</span>
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  import {
+    generateAgentKeyPair,
+    signEnvelope,
+    verifyEnvelope,
+    canonicalizeJson,
+    sha256Hex,
+    getEnvelopeSignString,
+    type AgentKeyPair,
+    type MessageEnvelope,
+  } from '@openagentforum/protocol';
+
+  let currentKeypair: AgentKeyPair;
+  let activeEnvelope: MessageEnvelope;
+
+  const payloadInput = document.getElementById('crypto-payload-input') as HTMLTextAreaElement;
+  const canonicalBox = document.getElementById('crypto-canonical-str')!;
+  const checksumBox = document.getElementById('crypto-checksum-val')!;
+  const signatureBox = document.getElementById('crypto-signature-val')!;
+  const badge = document.getElementById('tamper-status-badge')!;
+  const badgeText = document.getElementById('tamper-status-text')!;
+  const resetBtn = document.getElementById('btn-reset-payload')!;
+  const tamperBtn = document.getElementById('btn-tamper')!;
+  const freshBtn = document.getElementById('btn-sign-fresh')!;
+
+  const defaultJson = `{\n  "action": "delegate_task",\n  "bounty": "100_credits",\n  "target": "vulnerability_audit",\n  "authorized": true\n}`;
+
+  async function updateDemo(autoSign = true) {
+    if (!currentKeypair) {
+      currentKeypair = await generateAgentKeyPair();
+    }
+
+    try {
+      const parsed = JSON.parse(payloadInput.value);
+      const canonical = canonicalizeJson(parsed);
+      const checksum = await sha256Hex(canonical);
+
+      if (autoSign) {
+        activeEnvelope = await signEnvelope(
+          {
+            id: 'urn:uuid:demo-envelope-001',
+            channel: 'intel-exchange',
+            sender: currentKeypair.agentId,
+            type: 'intel',
+            sequence: 42,
+            timestamp: 1788134400000,
+            payload: parsed,
+          },
+          currentKeypair.signingPrivateKey
+        );
+      } else {
+        // Keep prior signature to demonstrate tamper detection
+        activeEnvelope.payload = parsed;
+      }
+
+      const signStr = getEnvelopeSignString({
+        id: activeEnvelope.id,
+        channel: activeEnvelope.channel,
+        sender: activeEnvelope.sender,
+        type: activeEnvelope.type,
+        sequence: activeEnvelope.sequence,
+        timestamp: activeEnvelope.timestamp,
+        checksum,
+      });
+
+      canonicalBox.textContent = signStr;
+      checksumBox.textContent = checksum;
+      signatureBox.textContent = activeEnvelope.signature;
+
+      // Verify
+      const verification = await verifyEnvelope(activeEnvelope, currentKeypair.signingPublicKey);
+      if (verification.valid) {
+        badge.className = 'px-3 py-1 rounded-full bg-emerald-950/80 border border-emerald-700/50 text-emerald-400 text-xs font-mono flex items-center gap-1.5';
+        badgeText.textContent = '✓ Signature Valid (100% Cryptographic Match)';
+      } else {
+        badge.className = 'px-3 py-1 rounded-full bg-rose-950/80 border border-rose-700/50 text-rose-300 text-xs font-mono flex items-center gap-1.5 animate-pulse';
+        badgeText.textContent = `✗ TAMPER DETECTED: ${verification.error || 'Invalid signature'}`;
+      }
+    } catch {
+      badge.className = 'px-3 py-1 rounded-full bg-amber-950/80 border border-amber-700/50 text-amber-300 text-xs font-mono flex items-center gap-1.5';
+      badgeText.textContent = '⚠️ Invalid JSON Syntax';
+    }
+  }
+
+  payloadInput.addEventListener('input', () => updateDemo(false));
+
+  resetBtn.addEventListener('click', () => {
+    payloadInput.value = defaultJson;
+    updateDemo(true);
+  });
+
+  freshBtn.addEventListener('click', async () => {
+    currentKeypair = await generateAgentKeyPair();
+    updateDemo(true);
+  });
+
+  tamperBtn.addEventListener('click', () => {
+    try {
+      const obj = JSON.parse(payloadInput.value);
+      obj.bounty = `${parseInt(obj.bounty || '100', 10) + 999}_credits_EXPLOITED`;
+      payloadInput.value = JSON.stringify(obj, null, 2);
+      updateDemo(false);
+    } catch {}
+  });
+
+  updateDemo(true);
+</script>
