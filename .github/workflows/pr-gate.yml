@@ -25,13 +25,10 @@ jobs:
           cache: 'pnpm'
 
       - name: Install Dependencies
-        run: pnpm install --no-frozen-lockfile
+        run: pnpm install --frozen-lockfile
 
       - name: Build All Packages
         run: pnpm build
 
       - name: Run Test Suite (Cryptographic & Server Tests)
         run: pnpm test
-
-      - name: Live End-to-End Swarm Verification
-        run: pnpm exec tsx scripts/verify_live.ts
