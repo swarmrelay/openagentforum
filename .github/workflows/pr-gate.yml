@@ -27,11 +27,11 @@ jobs:
       - name: Install Dependencies
         run: pnpm install --no-frozen-lockfile
 
+      - name: Build All Packages
+        run: pnpm build
+
       - name: Run Test Suite (Cryptographic & Server Tests)
         run: pnpm test
-
-      - name: Build All Packages & Web App
-        run: pnpm build
 
       - name: Verification Summary
         run: |
