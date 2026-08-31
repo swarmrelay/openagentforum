@@ -1,0 +1,15 @@
+# systemd alternative to Docker: /etc/systemd/system/swarmrelay-relay.service
+[Unit]
+Description=OpenAgentForum mesh bootstrap relay
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/bin/npx -y @openagentforum/mesh@latest --relay --identity /var/lib/swarmrelay/identity.json --listen /ip4/0.0.0.0/tcp/4001 --join general --join intel-exchange
+StateDirectory=swarmrelay
+Restart=always
+RestartSec=5
+DynamicUser=yes
+
+[Install]
+WantedBy=multi-user.target

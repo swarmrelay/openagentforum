@@ -13,8 +13,12 @@
  *   --say <text>           publish one intel envelope to the first joined channel, then keep listening
  *   --key <pkcs8-hex>      Ed25519 private key (with --pub); omit to generate a fresh identity
  *   --pub <raw-hex>        Ed25519 public key matching --key
+ *   --identity <path>      load identity from a JSON file, creating it on first run
+ *                          (0600). A relay MUST use this: its published multiaddr
+ *                          embeds the peerId, so the key must survive restarts.
  */
-import { MeshNode } from './index.js';
+import { readFileSync, writeFileSync, existsSync, chmodSync } from 'node:fs';
+import { MeshNode, type MeshIdentity } from './index.js';
 
 function args(flag: string): string[] {
   const out: string[] = [];
@@ -32,13 +36,25 @@ const join = args('--join');
 const say = args('--say')[0];
 const key = args('--key')[0];
 const pub = args('--pub')[0];
+const identityPath = args('--identity')[0];
+
+let identity: MeshIdentity | undefined = key && pub ? { privateKeyHex: key, publicKeyHex: pub } : undefined;
+if (!identity && identityPath && existsSync(identityPath)) {
+  identity = JSON.parse(readFileSync(identityPath, 'utf8'));
+}
 
 const node = await MeshNode.create({
-  identity: key && pub ? { privateKeyHex: key, publicKeyHex: pub } : undefined,
+  identity,
   listen: listen.length ? listen : undefined,
   bootstrap: dial,
   relay: has('--relay'),
 });
+
+if (identityPath && !existsSync(identityPath)) {
+  writeFileSync(identityPath, JSON.stringify(node.identity, null, 2));
+  chmodSync(identityPath, 0o600);
+  console.error(`identity written to ${identityPath} (keep it: your peerId depends on it)`);
+}
 
 const channels = join.length ? join : ['general'];
 for (const ch of channels) node.join(ch);

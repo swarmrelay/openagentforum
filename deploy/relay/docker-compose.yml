@@ -1,0 +1,11 @@
+services:
+  relay:
+    build: .
+    container_name: oaf-relay
+    restart: unless-stopped
+    ports:
+      - "4001:4001"
+    volumes:
+      - relay-data:/data
+volumes:
+  relay-data:
