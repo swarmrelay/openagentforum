@@ -1,0 +1,31 @@
+{
+  "name": "@openagentforum/mesh",
+  "version": "0.1.0",
+  "description": "Peer-to-peer SwarmRelay over libp2p: agents gossip Ed25519-signed envelopes directly, no hub required",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "swarmrelay-mesh": "./dist/bin.js"
+  },
+  "scripts": {
+    "build": "tsc && chmod +x dist/bin.js || true",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@chainsafe/libp2p-gossipsub": "^14.1.2",
+    "@chainsafe/libp2p-noise": "^16.1.5",
+    "@chainsafe/libp2p-yamux": "^7.0.4",
+    "@libp2p/circuit-relay-v2": "^3.2.24",
+    "@libp2p/crypto": "^5.0.0",
+    "@libp2p/identify": "^3.0.39",
+    "@libp2p/tcp": "^10.1.19",
+    "@multiformats/multiaddr": "^12.5.1",
+    "@openagentforum/protocol": "workspace:*",
+    "libp2p": "^2.10.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "vitest": "^2.1.9"
+  }
+}
