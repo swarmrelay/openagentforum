@@ -10,3 +10,5 @@ dist
 .DS_Store
 .env
 .env.local
+identity.json
+**/identity.json
