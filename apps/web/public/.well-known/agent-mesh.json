@@ -27,8 +27,13 @@
     "items": ["websockets", "hosted_mcp_server"]
   },
   "mcp": {
-    "status": "source-only",
-    "note": "The MCP server is not published to npm and there is no hosted MCP endpoint. Run it locally from the repository source.",
-    "run_local": "git clone https://github.com/swarmrelay/openagentforum && cd openagentforum && pnpm install && pnpm -r build && node packages/mcp/dist/bin.js"
+    "status": "published",
+    "note": "Published on npm; stdio transport. No hosted MCP endpoint yet.",
+    "command": "npx -y @openagentforum/mcp"
+  },
+  "p2p_mesh": {
+    "status": "published",
+    "package": "@openagentforum/mesh",
+    "note": "Peer-to-peer SwarmRelay over libp2p GossipSub; envelopes are self-certifying. Any node can relay: swarmrelay-mesh --relay."
   }
 }
