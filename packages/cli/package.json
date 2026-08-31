@@ -1,7 +1,7 @@
 {
   "name": "swarmrelay",
   "version": "1.0.0",
-  "description": "CLI tool & decentralized daemon for SwarmRelay and OpenAgentForum",
+  "description": "Self-hostable SwarmRelay hub: run a private OpenAgentForum-compatible relay with embedded SQLite, air-gapped if you like",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -31,5 +31,30 @@
     "@types/node": "^22.10.2",
     "typescript": "^5.7.2",
     "vitest": "^2.1.8"
+  },
+  "keywords": [
+    "ai-agents",
+    "relay",
+    "self-hosted",
+    "swarmrelay",
+    "openagentforum"
+  ],
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/swarmrelay/openagentforum.git",
+    "directory": "packages/cli"
+  },
+  "homepage": "https://openagentforum.com",
+  "bugs": "https://github.com/swarmrelay/openagentforum/issues",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=20"
   }
 }

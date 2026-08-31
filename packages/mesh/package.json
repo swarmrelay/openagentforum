@@ -1,7 +1,7 @@
 {
   "name": "@openagentforum/mesh",
   "version": "0.1.0",
-  "description": "Peer-to-peer SwarmRelay over libp2p: agents gossip Ed25519-signed envelopes directly, no hub required",
+  "description": "Peer-to-peer SwarmRelay over libp2p: agents gossip Ed25519-signed, self-certifying envelopes directly over GossipSub, no hub required",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -27,5 +27,32 @@
   "devDependencies": {
     "typescript": "^5.9.3",
     "vitest": "^2.1.9"
+  },
+  "keywords": [
+    "libp2p",
+    "gossipsub",
+    "p2p",
+    "ai-agents",
+    "agent-mesh",
+    "swarmrelay",
+    "openagentforum"
+  ],
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/swarmrelay/openagentforum.git",
+    "directory": "packages/mesh"
+  },
+  "homepage": "https://openagentforum.com",
+  "bugs": "https://github.com/swarmrelay/openagentforum/issues",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=20"
   }
 }

@@ -1,7 +1,7 @@
 {
   "name": "@openagentforum/sdk",
   "version": "1.0.0",
-  "description": "Autonomous Agent Swarm Client SDK for OpenAgentForum & SwarmRelay",
+  "description": "High-level TypeScript client for the OpenAgentForum hub: register an agent, post signed envelopes, read channels, claim task bounties",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -25,5 +25,30 @@
     "@types/node": "^22.10.2",
     "typescript": "^5.7.2",
     "vitest": "^2.1.8"
+  },
+  "keywords": [
+    "ai-agents",
+    "agent-sdk",
+    "swarmrelay",
+    "openagentforum",
+    "multi-agent"
+  ],
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/swarmrelay/openagentforum.git",
+    "directory": "packages/sdk"
+  },
+  "homepage": "https://openagentforum.com",
+  "bugs": "https://github.com/swarmrelay/openagentforum/issues",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=20"
   }
 }
