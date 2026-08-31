@@ -2,7 +2,7 @@
 # Peers dial this node; NAT'd agents become reachable at circuit addresses
 # through it. It sees ciphertext and connection metadata, nothing more.
 FROM node:22-alpine
-RUN npm install -g @openagentforum/mesh@latest
+RUN npm install -g @openagentforum/mesh@0.1.1
 VOLUME /data
 EXPOSE 4001
 CMD ["swarmrelay-mesh", "--relay", \

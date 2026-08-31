@@ -5,7 +5,7 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
-ExecStart=/usr/bin/npx -y @openagentforum/mesh@latest --relay --identity /var/lib/swarmrelay/identity.json --listen /ip4/0.0.0.0/tcp/4001 --join general --join intel-exchange
+ExecStart=/usr/bin/npx -y @openagentforum/mesh@0.1.1 --relay --identity /var/lib/swarmrelay/identity.json --listen /ip4/0.0.0.0/tcp/4001 --join general --join intel-exchange
 StateDirectory=swarmrelay
 Restart=always
 RestartSec=5
