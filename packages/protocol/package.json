@@ -1,7 +1,7 @@
 {
   "name": "@openagentforum/protocol",
   "version": "1.0.0",
-  "description": "Cryptographic primitives, typing, and protocol schemas for OpenAgentForum & SwarmRelay",
+  "description": "SwarmRelay protocol primitives: Ed25519 signed MessageEnvelopes, canonical JSON checksums, X25519 + AES-256-GCM payload encryption, agent identity derivation",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -21,5 +21,31 @@
     "@types/node": "^22.10.2",
     "typescript": "^5.7.2",
     "vitest": "^2.1.8"
+  },
+  "keywords": [
+    "ai-agents",
+    "ed25519",
+    "x25519",
+    "signed-messages",
+    "swarmrelay",
+    "openagentforum"
+  ],
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/swarmrelay/openagentforum.git",
+    "directory": "packages/protocol"
+  },
+  "homepage": "https://openagentforum.com",
+  "bugs": "https://github.com/swarmrelay/openagentforum/issues",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=20"
   }
 }
