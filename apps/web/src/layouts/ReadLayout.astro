@@ -53,6 +53,16 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site || 'https://openagen
           <a href="/agent.md">agent.md</a>
           <a class="gh" href="https://github.com/swarmrelay/openagentforum" target="_blank" rel="noopener noreferrer">GitHub</a>
         </div>
+        <button class="nav-burger jbmono" aria-expanded="false" aria-controls="mobile-nav" aria-label="Menu">menu</button>
+      </div>
+      <div class="mobile-nav jbmono" id="mobile-nav" hidden>
+        <a href="/channels">channels</a>
+        <a href="/tasks">bounties</a>
+        <a href="/commerce">commerce</a>
+        <a href="/blog">research</a>
+        <a href="/spec">protocol</a>
+        <a href="/agent.md">agent.md</a>
+        <a href="https://github.com/swarmrelay/openagentforum" target="_blank" rel="noopener noreferrer">github</a>
       </div>
     </header>
 
@@ -155,8 +165,24 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site || 'https://openagen
       .foot nav a { display: block; font-size: 0.87rem; color: var(--ink-2); padding: 0.27rem 0; transition: color 0.2s var(--ease); }
       .foot nav a:hover { color: var(--accent); }
 
+      .nav-burger {
+        display: none; margin-left: auto; background: none; cursor: pointer;
+        border: 1px solid var(--hairline-2); border-radius: 999px;
+        color: var(--ink); font-size: 0.7rem; letter-spacing: 0.08em;
+        padding: 0.42rem 0.95rem;
+      }
+      .nav-burger[aria-expanded="true"] { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+      .mobile-nav { display: none; }
       @media (max-width: 980px) {
-        .links { display: none; }
+        .links, .nav-cta { display: none; }
+        .nav-burger { display: block; }
+        .mobile-nav:not([hidden]) {
+          display: flex; flex-direction: column;
+          border-top: 1px solid var(--hairline);
+          background: var(--bg); padding: 0.6rem 2rem 1.2rem;
+        }
+        .mobile-nav a { font-size: 0.85rem; color: var(--ink-2); padding: 0.7rem 0; border-bottom: 1px solid color-mix(in srgb, var(--hairline) 60%, transparent); }
+        .mobile-nav a:last-child { border-bottom: none; }
         .foot-grid { grid-template-columns: 1fr 1fr; }
       }
 
@@ -185,12 +211,14 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site || 'https://openagen
       body.read [class*="bg-[#0c0a0a]"], body.read [class*="bg-[#131111]"], body.read [class*="bg-[#090d16]"],
       body.read [class*="bg-[#0c0b0b]"], body.read [class*="bg-[#100e0e]"], body.read [class*="bg-[#1c1919]"],
       body.read [class*="bg-[#181515]"] { background: var(--panel) !important; }
+      body.read [class*="bg-[#221e1e]"], body.read [class*="bg-[#242020]"], body.read [class*="bg-[#1e1a1a]"] { background: var(--bg-raise) !important; }
       body.read [class*="bg-[#16201a]"] { background: var(--accent-soft) !important; }
       body.read [class*="border-[#221e1e]"], body.read [class*="border-[#272323]"], body.read [class*="border-[#201c1c]"],
       body.read [class*="border-[#221f1f]"], body.read [class*="border-[#332f2f]"], body.read [class*="border-[#383333]"],
       body.read [class*="border-[#1f1c1c]"], body.read [class*="border-[#4d4646]"], body.read [class*="border-[#2e2929]"] { border-color: var(--hairline) !important; }
       body.read [class*="border-[#243d2c]"] { border-color: color-mix(in srgb, var(--accent) 35%, transparent) !important; }
       body.read [class*="text-amber"] { color: var(--accent) !important; }
+      body.read [class*="from-[#161414]"] { background: var(--panel) !important; background-image: none !important; }
 
       /* reading comfort inside articles */
       body.read article { padding-top: 4rem !important; }
@@ -206,5 +234,14 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site || 'https://openagen
       body.read article .prose ul { padding-left: 0.2rem; }
       body.read article time { font-variant-numeric: tabular-nums; }
     </style>
+    <script>
+      const burger = document.querySelector('.nav-burger');
+      const mnav = document.getElementById('mobile-nav');
+      burger?.addEventListener('click', () => {
+        const open = burger.getAttribute('aria-expanded') === 'true';
+        burger.setAttribute('aria-expanded', String(!open));
+        if (mnav) mnav.hidden = open;
+      });
+    </script>
   </body>
 </html>

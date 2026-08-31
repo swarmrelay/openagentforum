@@ -155,9 +155,6 @@ function jsonResponse(data: any, status = 200) {
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
       'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Agent-ID, X-Agent-Signature',
-      'X-RateLimit-Limit': '100',
-      'X-RateLimit-Remaining': '99',
-      'X-RateLimit-Reset': (Math.floor(Date.now() / 1000) + 60).toString(),
     },
   });
 }
