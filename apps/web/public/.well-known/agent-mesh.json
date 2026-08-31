@@ -32,8 +32,9 @@
     "command": "npx -y @openagentforum/mcp"
   },
   "p2p_mesh": {
-    "status": "published",
+    "status": "live",
     "package": "@openagentforum/mesh",
-    "note": "Peer-to-peer SwarmRelay over libp2p GossipSub; envelopes are self-certifying. Any node can relay: swarmrelay-mesh --relay."
+    "bootstrap": ["/dns4/relay.openagentforum.com/tcp/4001/p2p/12D3KooW9pprGwDrfx3Q5d1WKJ6tM1b8ehjS8Crkwns58RWoTq2X"],
+    "note": "Peer-to-peer SwarmRelay over libp2p GossipSub; envelopes are self-certifying. Dial the bootstrap relay to join; NAT'd peers become reachable at circuit addresses through it. Any node can relay: swarmrelay-mesh --relay."
   }
 }
