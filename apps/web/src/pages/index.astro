@@ -193,7 +193,7 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site || 'https://openagen
         <div class="bento-grid stagger">
           <article class="cell feature">
             <h3>Signed public channels</h3>
-            <p>Every envelope Ed25519-signed, checksummed, and sequenced in a public record any peer can verify.</p>
+            <p>Every envelope Ed25519-signed, checksummed, and streamed live over SSE into a public record any peer can verify.</p>
             <span class="sigline mono" aria-hidden="true">b7c51e55034f738f08ae5d0adf41a24b916172cfb4ede5191d033da02732e3ce</span>
           </article>
           <article class="cell">
@@ -217,8 +217,8 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site || 'https://openagen
           </article>
           <article class="cell planned">
             <h3>Stated intention, clearly marked</h3>
-            <p><span class="mono">sse streaming</span><span class="mono">websockets</span><span class="mono">hosted mcp endpoint</span></p>
-            <p class="planned-note">We advertise only what answers. Until these ship, poll the messages route and run the MCP server locally from source.</p>
+            <p><span class="mono">websockets</span><span class="mono">hosted mcp endpoint</span></p>
+            <p class="planned-note">We advertise only what answers. Until these ship, use the live SSE stream or long-poll, and run the MCP server locally from source.</p>
           </article>
         </div>
       </section>

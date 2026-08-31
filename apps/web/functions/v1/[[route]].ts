@@ -215,6 +215,7 @@ export const onRequest: PagesFunction<{ DB?: D1Database }> = async (context) => 
           channels: '/v1/channels',
           agents: '/v1/agents',
           register: '/v1/agents/register',
+          stream: '/v1/channels/{channel}/stream',
           tasks: '/v1/tasks',
           mcp: '/v1/mcp',
           intel_search: '/v1/intel/search',
@@ -351,29 +352,111 @@ export const onRequest: PagesFunction<{ DB?: D1Database }> = async (context) => 
       return jsonResponse({ channel: { ...channel, messageCount: msgs.length } });
     }
 
+    // Real-time stream: GET /v1/channels/:name/stream (Server-Sent Events).
+    // Connections rotate before Workers limits bite; EventSource auto-reconnects
+    // and resumes from Last-Event-ID (= storedSeq cursor).
+    const streamMatch = path.match(/^\/v1\/channels\/([a-zA-Z0-9-_]+)\/stream$/);
+    if (streamMatch && method === 'GET') {
+      const chName = streamMatch[1].toLowerCase();
+      if (!env?.DB) return jsonResponse({ error: 'Streaming requires the durable store' }, 501);
+
+      const lastEventId = request.headers.get('Last-Event-ID');
+      const afterParam = url.searchParams.get('after') ?? lastEventId;
+      let cursor: number;
+      const parsed = afterParam === null ? NaN : parseInt(afterParam, 10);
+      if (Number.isFinite(parsed)) {
+        cursor = parsed;
+      } else {
+        const maxRow = await env.DB.prepare('SELECT COALESCE(MAX(COALESCE(stored_seq, sequence)), 0) as m FROM messages WHERE channel = ?').bind(chName).first<{ m: number }>();
+        cursor = maxRow?.m ?? 0;
+      }
+
+      const { readable, writable } = new TransformStream();
+      const writer = writable.getWriter();
+      const enc2 = new TextEncoder();
+      const send = (chunk: string) => writer.write(enc2.encode(chunk));
+
+      context.waitUntil((async () => {
+        try {
+          await send('retry: 2000\n\n');
+          const started = Date.now();
+          while (Date.now() - started < 50_000) {
+            const rows = await env.DB!.prepare(
+              'SELECT * FROM messages WHERE channel = ? AND COALESCE(stored_seq, sequence) > ? ORDER BY COALESCE(stored_seq, sequence) ASC LIMIT 50'
+            ).bind(chName, cursor).all();
+            const batch = (rows.results || []) as any[];
+            for (const r of batch) {
+              const sseq = r.stored_seq ?? r.sequence;
+              cursor = Math.max(cursor, sseq);
+              const data = JSON.stringify({
+                id: r.id, channel: r.channel, sender: r.sender, type: r.type,
+                sequence: r.sequence, storedSeq: sseq, timestamp: r.timestamp,
+                payload: JSON.parse(r.payload_json), signature: r.signature,
+                checksum: r.checksum, encrypted: r.encrypted === 1,
+              });
+              await send(`id: ${sseq}\nevent: envelope\ndata: ${data}\n\n`);
+            }
+            if (!batch.length) await send(': ping\n\n');
+            await new Promise((r) => setTimeout(r, 3000));
+          }
+          await send('event: rotate\ndata: {"reconnect":true}\n\n');
+        } catch {
+        } finally {
+          try { await writer.close(); } catch {}
+        }
+      })());
+
+      return new Response(readable, {
+        status: 200,
+        headers: {
+          'Content-Type': 'text/event-stream; charset=utf-8',
+          'Cache-Control': 'no-cache, no-transform',
+          'Access-Control-Allow-Origin': '*',
+        },
+      });
+    }
+
     // Channel messages: /v1/channels/:name/messages
     const messagesMatch = path.match(/^\/v1\/channels\/([a-zA-Z0-9-_]+)\/messages$/);
     if (messagesMatch) {
       const chName = messagesMatch[1].toLowerCase();
 
       if (method === 'GET') {
+        // `sequence` is the value the sender signed (verify-as-stored, #7);
+        // `storedSeq` is unsigned relay ingest order — never verified against.
+        const mapRow = (r: any) => ({
+          id: r.id,
+          channel: r.channel,
+          sender: r.sender,
+          type: r.type,
+          sequence: r.sequence,
+          storedSeq: r.stored_seq ?? r.sequence,
+          timestamp: r.timestamp,
+          payload: JSON.parse(r.payload_json),
+          signature: r.signature,
+          checksum: r.checksum,
+          encrypted: r.encrypted === 1,
+        });
+        const afterRaw = url.searchParams.get('after');
+        const after = afterRaw === null ? null : parseInt(afterRaw, 10);
+        const hasAfter = after !== null && Number.isFinite(after);
+        const wait = Math.min(Math.max(parseInt(url.searchParams.get('wait') || '0', 10) || 0, 0), 25);
+
         if (env?.DB) {
-          const rows = await env.DB.prepare('SELECT * FROM messages WHERE channel = ? ORDER BY COALESCE(stored_seq, sequence) ASC').bind(chName).all();
-          const msgs = (rows.results || []).map((r: any) => ({
-            id: r.id,
-            channel: r.channel,
-            sender: r.sender,
-            type: r.type,
-            // `sequence` is the value the sender signed (verify-as-stored, #7);
-            // `storedSeq` is unsigned relay ingest order — never verified against.
-            sequence: r.sequence,
-            storedSeq: r.stored_seq ?? r.sequence,
-            timestamp: r.timestamp,
-            payload: JSON.parse(r.payload_json),
-            signature: r.signature,
-            checksum: r.checksum,
-            encrypted: r.encrypted === 1,
-          }));
+          const fetchRows = async () => {
+            const q = hasAfter
+              ? env.DB!.prepare('SELECT * FROM messages WHERE channel = ? AND COALESCE(stored_seq, sequence) > ? ORDER BY COALESCE(stored_seq, sequence) ASC').bind(chName, after)
+              : env.DB!.prepare('SELECT * FROM messages WHERE channel = ? ORDER BY COALESCE(stored_seq, sequence) ASC').bind(chName);
+            return ((await q.all()).results || []) as any[];
+          };
+          let results = await fetchRows();
+          // long-poll: with ?after=<storedSeq>&wait=<sec>, hold until something new arrives
+          const deadline = Date.now() + wait * 1000;
+          while (!results.length && hasAfter && Date.now() < deadline) {
+            await new Promise((r) => setTimeout(r, 2000));
+            results = await fetchRows();
+          }
+          const msgs = results.map(mapRow);
           return jsonResponse({ channel: chName, messages: msgs, count: msgs.length });
         }
 

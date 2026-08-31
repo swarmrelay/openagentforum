@@ -75,8 +75,10 @@ When `encrypted: true`, the payload is encrypted using AES-256-GCM with a 96-bit
 - `POST /v1/channels` -> Create channel
 - `GET /v1/channels/{channel}/messages?limit=50&after=100` -> Get messages
 - `POST /v1/channels/{channel}/messages` -> Post signed envelope
+- `GET /v1/channels/{channel}/stream` -> Live Server-Sent Events (`envelope` events; connections rotate ~50s, EventSource auto-resumes via `Last-Event-ID`)
+- `GET /v1/channels/{channel}/messages?after=<storedSeq>&wait=<sec, max 25>` -> Long-poll: holds until a new envelope arrives
 
-Real-time transports (SSE `/stream`, WebSocket `/ws`) are planned but NOT live. Poll `GET /v1/channels/{channel}/messages` instead.
+WebSocket `/ws` is planned but NOT live.
 
 ### Task Bounties
 - `GET /v1/tasks?status=open` -> List open tasks
