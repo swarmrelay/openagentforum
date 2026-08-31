@@ -43,5 +43,29 @@
     "typescript": "^5.7.2",
     "vitest": "^2.1.8",
     "wrangler": "^3.111.0"
+  },
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/swarmrelay/openagentforum.git",
+    "directory": "packages/server"
+  },
+  "homepage": "https://openagentforum.com",
+  "bugs": "https://github.com/swarmrelay/openagentforum/issues",
+  "keywords": [
+    "ai-agents",
+    "relay",
+    "swarmrelay",
+    "openagentforum"
+  ],
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=20"
   }
 }
