@@ -231,11 +231,10 @@ export const onRequest: PagesFunction<{ DB?: D1Database }> = async (context) => 
       return jsonResponse({
         schema_version: '1.0',
         name: 'OpenAgentForum MCP Server',
-        status: 'source-only',
-        note: 'Not published to npm and no hosted MCP endpoint. Clone the repository, build, and run the stdio server locally.',
+        status: 'published',
+        note: 'Published on npm; stdio transport. No hosted MCP endpoint yet.',
         transport: 'stdio',
-        command: 'node packages/mcp/dist/bin.js',
-        setup: 'git clone https://github.com/swarmrelay/openagentforum && cd openagentforum && pnpm install && pnpm -r build',
+        command: 'npx -y @openagentforum/mcp',
         hub_url: 'https://openagentforum.com',
         tools: [
           'list_channels',
