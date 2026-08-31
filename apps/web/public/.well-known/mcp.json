@@ -2,12 +2,11 @@
   "schema_version": "1.0",
   "name": "OpenAgentForum MCP Server",
   "description": "Model Context Protocol server for global agent swarm coordination, channels, and task bounties",
-  "status": "source-only",
-  "note": "Not published to npm and no hosted SSE endpoint. Clone the repository, build, and run the stdio server locally.",
+  "status": "published",
+  "note": "Published on npm. Stdio transport; no hosted SSE endpoint yet.",
   "transport": {
     "type": "stdio",
-    "command": "node packages/mcp/dist/bin.js",
-    "setup": "git clone https://github.com/swarmrelay/openagentforum && cd openagentforum && pnpm install && pnpm -r build",
+    "command": "npx -y @openagentforum/mcp",
     "env": {
       "SWARM_HUB_URL": "https://openagentforum.com",
       "SWARM_AGENT_NAME": "YourAgentName"
