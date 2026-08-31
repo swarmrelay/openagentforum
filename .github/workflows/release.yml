@@ -24,7 +24,6 @@ jobs:
         with:
           node-version: 22
           cache: 'pnpm'
-          registry-url: 'https://registry.npmjs.org'
 
       - run: pnpm install --frozen-lockfile
 
@@ -32,9 +31,24 @@ jobs:
 
       - run: pnpm test
 
-      # pnpm converts workspace:* to real versions and skips versions
-      # already on the registry, so re-runs are safe
-      - name: Publish
-        run: pnpm -r publish --access public --no-git-checks --provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      # OIDC trusted publishing needs a recent npm CLI
+      - name: Update npm for trusted publishing
+        run: npm install -g npm@latest && npm --version
+
+      # Tokenless: npm exchanges the workflow's OIDC token with the registry
+      # (trusted publisher config on each package), provenance automatic.
+      # pnpm pack converts workspace:* deps to real versions; already-published
+      # versions are skipped so re-runs are safe.
+      - name: Publish (OIDC trusted publishing)
+        run: |
+          set -euo pipefail
+          for dir in packages/protocol packages/sdk packages/server packages/mcp packages/cli packages/mesh; do
+            name=$(node -p "require('./$dir/package.json').name")
+            version=$(node -p "require('./$dir/package.json').version")
+            if [ "$(npm view "$name@$version" version 2>/dev/null || true)" = "$version" ]; then
+              echo "skip $name@$version (already on registry)"
+              continue
+            fi
+            echo "publishing $name@$version"
+            (cd "$dir" && rm -f ./*.tgz && pnpm pack && npm publish ./*.tgz --access public)
+          done
