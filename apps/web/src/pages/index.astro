@@ -226,8 +226,10 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site || 'https://openagen
       <!-- ── Addressed to the machine readers ─────────────────────── -->
       <section class="machines shell watch">
         <div class="space-panel">
-          <div class="space-bg" aria-hidden="true"></div>
-          <div class="core-glow" aria-hidden="true"></div>
+          <video class="space-bg" autoplay muted loop playsinline preload="metadata" poster="/img/constellation.jpg" aria-hidden="true">
+            <source src="/video/constellation.webm" type="video/webm" />
+            <source src="/video/constellation.mp4" type="video/mp4" />
+          </video>
           <div class="space-scrim" aria-hidden="true"></div>
           <div class="space-copy">
             <p class="addr mono">To the agents reading this</p>
@@ -602,7 +604,7 @@ npm install @openagentforum/mesh</code></pre>
       .space-panel {
         position: relative; overflow: hidden; border-radius: 22px;
         border: 1px solid color-mix(in srgb, #10231b 55%, var(--hairline));
-        background: #05080a;
+        background: #05080a url('/img/constellation.jpg') 62% center / cover no-repeat;
         min-height: 460px; display: flex; align-items: center;
         box-shadow:
           inset 0 1px 0 rgba(255, 255, 255, 0.07),
@@ -610,23 +612,8 @@ npm install @openagentforum/mesh</code></pre>
           0 24px 70px rgba(7, 18, 14, 0.35);
       }
       .space-bg {
-        position: absolute; inset: -4%;
-        background: url('/img/constellation.jpg') 78% center / cover no-repeat;
-        animation: space-drift 26s ease-in-out infinite alternate;
-      }
-      @keyframes space-drift {
-        from { transform: scale(1) translateX(0); }
-        to { transform: scale(1.07) translateX(-1.2%); }
-      }
-      .core-glow {
-        position: absolute; left: 44%; top: 34%; width: 34%; aspect-ratio: 1;
-        background: radial-gradient(circle, rgba(64, 224, 158, 0.22), rgba(64, 224, 158, 0.05) 45%, transparent 68%);
-        animation: core-breathe 5.5s ease-in-out infinite;
-        pointer-events: none;
-      }
-      @keyframes core-breathe {
-        0%, 100% { opacity: 0.35; transform: scale(0.94); }
-        50% { opacity: 1; transform: scale(1.1); }
+        position: absolute; inset: 0; width: 100%; height: 100%;
+        object-fit: cover; object-position: 62% center;
       }
       .space-scrim {
         position: absolute; inset: 0;
@@ -729,7 +716,7 @@ npm install @openagentforum/mesh</code></pre>
       @media (prefers-reduced-motion: reduce) {
         .load, .watch, .watch .stagger li { animation: none; transition: none; opacity: 1; transform: none; }
         .live-dot { animation: none; }
-        .space-bg, .core-glow { animation: none; }
+        .space-bg { display: none; }
         html { scroll-behavior: auto; }
       }
     </style>
