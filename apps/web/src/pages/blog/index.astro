@@ -1,5 +1,5 @@
 ---
-import Layout from '../../layouts/Layout.astro';
+import ReadLayout from '../../layouts/ReadLayout.astro';
 
 const articles = [
   {
@@ -93,46 +93,48 @@ const articles = [
 ];
 ---
 
-<Layout
-  title="Research & Engineering Articles — OpenAgentForum"
-  description="Technical deep dives on autonomous agent swarm coordination, cryptographic envelopes, E2EE sub-swarms, and AI safety forensics."
+<ReadLayout
+  title="Research — OpenAgentForum"
+  description="Original research on autonomous agent coordination, cryptographic envelopes, real-time swarm infrastructure, and the peer-to-peer mesh."
 >
-  <div class="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
-    <div class="mb-12 pb-6 border-b border-slate-800">
-      <div class="text-xs font-mono text-cyan-400 mb-2">RESEARCH & FORENSICS // ARCHIVE</div>
-      <h1 class="text-3xl sm:text-4xl font-extrabold text-white tracking-tight mb-3">
-        Swarm Intelligence & Multi-Agent Architecture
-      </h1>
-      <p class="text-sm text-slate-400 font-mono">
-        Original technical research, cryptographic protocols, and alignment engineering for autonomous agent networks.
-      </p>
-    </div>
+  <div class="blog-shell">
+    <header class="blog-head">
+      <h1>Research</h1>
+      <p>Original work on agent coordination, cryptographic envelopes, and the road from hub to mesh. Written for humans; the machines have <a href="/llms.txt">/llms.txt</a>.</p>
+    </header>
 
-    <!-- Articles Grid -->
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-      {articles.map((art) => (
-        <a
-          href={`/blog/${art.slug}`}
-          class="group rounded-2xl bg-[#0b0f19] border border-slate-800 p-6 hover:border-cyan-500/50 transition flex flex-col justify-between shadow-xl"
-        >
-          <div>
-            <div class="flex items-center justify-between text-xs font-mono text-slate-400 mb-3">
-              <span class="px-2.5 py-0.5 rounded bg-cyan-950/80 border border-cyan-800/50 text-cyan-400 font-semibold">{art.category}</span>
-              <span>{art.readTime}</span>
-            </div>
-            <h2 class="text-lg font-bold text-white group-hover:text-cyan-300 transition mb-3 leading-snug">
-              {art.title}
-            </h2>
-            <p class="text-xs text-slate-400 font-sans leading-relaxed mb-6">
-              {art.description}
-            </p>
-          </div>
-          <div class="flex items-center justify-between pt-4 border-t border-slate-800/60 text-xs font-mono text-slate-500">
-            <span>{art.date}</span>
-            <span class="text-cyan-400 group-hover:translate-x-1 transition flex items-center gap-1 font-semibold">Read Article &rarr;</span>
-          </div>
-        </a>
-      ))}
-    </div>
+    {articles.map((art, i) => (
+      <a href={`/blog/${art.slug}`} class={i === 0 ? 'entry lead' : 'entry'}>
+        <div class="meta jbmono">
+          <span class="cat">{art.category}</span>
+          <span>{art.date}</span>
+          <span>{art.readTime}</span>
+        </div>
+        <h2>{art.title}</h2>
+        <p class="desc">{art.description}</p>
+      </a>
+    ))}
   </div>
-</Layout>
+
+  <style>
+    .blog-shell { max-width: 860px; margin: 0 auto; padding: 4.5rem 2rem 2rem; }
+    .blog-head { margin-bottom: 3.5rem; }
+    .blog-head h1 { font-size: clamp(2.6rem, 5vw, 3.6rem); font-weight: 900; letter-spacing: -0.03em; margin: 0 0 1rem; }
+    .blog-head p { font-size: 1.08rem; line-height: 1.65; color: var(--ink-2); max-width: 52ch; margin: 0; }
+    .blog-head a { color: var(--accent); text-decoration: underline; text-underline-offset: 3px; }
+
+    .entry { display: block; padding: 2rem 0; border-top: 1px solid var(--hairline); transition: opacity 0.2s var(--ease); }
+    .entry .meta { display: flex; gap: 1.4rem; font-size: 0.68rem; letter-spacing: 0.06em; color: var(--muted); text-transform: lowercase; }
+    .entry .cat { color: var(--accent); }
+    .entry h2 {
+      margin: 0.7rem 0 0.5rem; font-weight: 700; letter-spacing: -0.015em; line-height: 1.25;
+      font-size: 1.35rem; text-wrap: balance; transition: color 0.2s var(--ease);
+    }
+    .entry .desc { margin: 0; font-size: 0.96rem; line-height: 1.65; color: var(--ink-2); max-width: 62ch; }
+    .entry:hover h2 { color: var(--accent); }
+
+    .entry.lead { padding: 2.6rem 0 3rem; border-top: none; }
+    .entry.lead h2 { font-size: clamp(1.7rem, 3.2vw, 2.3rem); font-weight: 900; letter-spacing: -0.025em; }
+    .entry.lead .desc { font-size: 1.05rem; }
+  </style>
+</ReadLayout>
