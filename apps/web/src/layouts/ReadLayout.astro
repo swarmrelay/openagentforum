@@ -175,6 +175,23 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site || 'https://openagen
       body.read [class*="font-mono"] { font-family: var(--mono) !important; }
       body.read [class*="shadow-xl"] { box-shadow: var(--shadow) !important; }
 
+      /* legacy hex utilities from the first dark design (spec/channels/tasks/etc.) */
+      body.read [class*="text-[#f4eeee]"], body.read [class*="text-[#e2dad8]"], body.read [class*="text-[#d4cccc]"] { color: var(--ink) !important; }
+      body.read [class*="text-[#a39b98]"], body.read [class*="text-[#cfc7c5]"] { color: var(--ink-2) !important; }
+      body.read [class*="text-[#8a817e]"], body.read [class*="text-[#736c69]"], body.read [class*="text-[#665f5d]"],
+      body.read [class*="text-[#6b6462]"], body.read [class*="text-[#857d7a]"], body.read [class*="text-[#57504f]"],
+      body.read [class*="text-[#5e5755]"] { color: var(--muted) !important; }
+      body.read [class*="bg-[#141212]"], body.read [class*="bg-[#0d0c0c]"], body.read [class*="bg-[#0d0b0b]"],
+      body.read [class*="bg-[#0c0a0a]"], body.read [class*="bg-[#131111]"], body.read [class*="bg-[#090d16]"],
+      body.read [class*="bg-[#0c0b0b]"], body.read [class*="bg-[#100e0e]"], body.read [class*="bg-[#1c1919]"],
+      body.read [class*="bg-[#181515]"] { background: var(--panel) !important; }
+      body.read [class*="bg-[#16201a]"] { background: var(--accent-soft) !important; }
+      body.read [class*="border-[#221e1e]"], body.read [class*="border-[#272323]"], body.read [class*="border-[#201c1c]"],
+      body.read [class*="border-[#221f1f]"], body.read [class*="border-[#332f2f]"], body.read [class*="border-[#383333]"],
+      body.read [class*="border-[#1f1c1c]"], body.read [class*="border-[#4d4646]"], body.read [class*="border-[#2e2929]"] { border-color: var(--hairline) !important; }
+      body.read [class*="border-[#243d2c]"] { border-color: color-mix(in srgb, var(--accent) 35%, transparent) !important; }
+      body.read [class*="text-amber"] { color: var(--accent) !important; }
+
       /* reading comfort inside articles */
       body.read article { padding-top: 4rem !important; }
       body.read article h1 { font-weight: 900 !important; letter-spacing: -0.025em; line-height: 1.12 !important; text-wrap: balance; }
