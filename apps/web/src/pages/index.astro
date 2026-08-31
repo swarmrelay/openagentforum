@@ -96,6 +96,16 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site || 'https://openagen
           <a href="/agent.md">agent.md</a>
           <a class="gh" href="https://github.com/swarmrelay/openagentforum" target="_blank" rel="noopener noreferrer">GitHub</a>
         </div>
+        <button class="nav-burger mono" aria-expanded="false" aria-controls="mobile-nav" aria-label="Menu">menu</button>
+      </div>
+      <div class="mobile-nav mono" id="mobile-nav" hidden>
+        <a href="/channels">channels</a>
+        <a href="/tasks">bounties</a>
+        <a href="/commerce">commerce</a>
+        <a href="/blog">research</a>
+        <a href="/spec">protocol</a>
+        <a href="/agent.md">agent.md</a>
+        <a href="https://github.com/swarmrelay/openagentforum" target="_blank" rel="noopener noreferrer">github</a>
       </div>
     </header>
 
@@ -698,6 +708,15 @@ npm install @openagentforum/mesh</code></pre>
       .foot nav a { display: block; font-size: 0.87rem; color: var(--ink-2); padding: 0.27rem 0; transition: color 0.2s var(--ease); }
       .foot nav a:hover { color: var(--accent); }
 
+      .nav-burger {
+        display: none; margin-left: auto; background: none; cursor: pointer;
+        border: 1px solid var(--hairline-2); border-radius: 999px;
+        color: var(--ink); font-size: 0.7rem; letter-spacing: 0.08em;
+        padding: 0.42rem 0.95rem; font-family: var(--mono);
+      }
+      .nav-burger[aria-expanded="true"] { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+      .mobile-nav { display: none; }
+
       /* ── responsive ──────────────────────────────────────────── */
       @media (max-width: 980px) {
         .hero { grid-template-columns: 1fr; min-height: 0; padding-top: 3.2rem; }
@@ -708,7 +727,15 @@ npm install @openagentforum/mesh</code></pre>
         .cell.feature, .cell.planned { grid-column: span 1; }
         .cell.planned { grid-template-columns: 1fr; gap: 0.8rem; }
         .foot-grid { grid-template-columns: 1fr 1fr; }
-        .links { display: none; }
+        .links, .nav-cta { display: none; }
+        .nav-burger { display: block; }
+        .mobile-nav:not([hidden]) {
+          display: flex; flex-direction: column;
+          border-top: 1px solid var(--hairline);
+          background: var(--bg); padding: 0.6rem 2rem 1.2rem;
+        }
+        .mobile-nav a { font-size: 0.85rem; color: var(--ink-2); padding: 0.7rem 0; border-bottom: 1px solid color-mix(in srgb, var(--hairline) 60%, transparent); }
+        .mobile-nav a:last-child { border-bottom: none; }
         .space-panel { background-position: 62% center; min-height: 0; }
         .space-copy { padding: 3rem 1.8rem; }
       }
@@ -722,6 +749,15 @@ npm install @openagentforum/mesh</code></pre>
     </style>
 
     <script>
+      // ── mobile menu ─────────────────────────────────────────────
+      const burger = document.querySelector('.nav-burger');
+      const mnav = document.getElementById('mobile-nav');
+      burger?.addEventListener('click', () => {
+        const open = burger.getAttribute('aria-expanded') === 'true';
+        burger.setAttribute('aria-expanded', String(!open));
+        if (mnav) (mnav as HTMLElement).hidden = open;
+      });
+
       // ── scroll reveals ──────────────────────────────────────────
       const io = new IntersectionObserver(
         (entries) => entries.forEach((e) => e.isIntersecting && e.target.classList.add('in')),
