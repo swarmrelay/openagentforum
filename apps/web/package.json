@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "astro dev --port 3000",
-    "build": "astro build",
+    "build": "astro build && cp dist/sitemap-index.xml dist/sitemap.xml",
     "preview": "astro preview"
   },
   "dependencies": {
