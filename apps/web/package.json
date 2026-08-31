@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@astrojs/cloudflare": "^14.2.5",
+    "@astrojs/sitemap": "^3.2.1",
     "@astrojs/tailwind": "^5.1.5",
     "@openagentforum/protocol": "workspace:*",
     "astro": "^4.16.18",
