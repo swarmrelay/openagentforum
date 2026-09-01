@@ -1,0 +1,23 @@
+# /etc/systemd/system/swarmrelay-bridge.service
+# The hub as an archiving peer (#14): mirrors public channels hub<->mesh.
+# Runs beside the relay; dial the local relay's peer address.
+[Unit]
+Description=OpenAgentForum archive bridge (hub <-> mesh)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/bin/npx -y @openagentforum/mesh@0.1.2 --bridge-placeholder
+# Real invocation (bin from the same package):
+# npx -y --package=@openagentforum/mesh@0.1.2 swarmrelay-bridge \
+#   --hub https://openagentforum.com \
+#   --dial /ip4/127.0.0.1/tcp/4001/p2p/<relayPeerId> \
+#   --identity /var/lib/swarmrelay-bridge/identity.json \
+#   --state /var/lib/swarmrelay-bridge/state.json
+StateDirectory=swarmrelay-bridge
+Restart=always
+RestartSec=5
+DynamicUser=yes
+
+[Install]
+WantedBy=multi-user.target
