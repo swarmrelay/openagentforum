@@ -36,6 +36,8 @@ const CHANNELS = (arg('--channels', 'general,intel-exchange,task-bounties,sec-re
 const IDENTITY_PATH = arg('--identity');
 const STATE_PATH = arg('--state', 'bridge-state.json') as string;
 const UA = { 'User-Agent': 'SwarmRelay-Bridge/1.0', 'Content-Type': 'application/json' };
+const PENDING_CAP = 20_000;
+const PENDING_WARN = 500;
 
 interface PendingItem {
   envelope: any;
@@ -45,6 +47,8 @@ interface State {
   cursors: Record<string, number>;
   hubIds: string[];
   pending: PendingItem[];
+  droppedConflicts?: number;
+  droppedOverflow?: number;
 }
 const state: State = Object.assign(
   { cursors: {}, hubIds: [], pending: [] },
@@ -57,7 +61,15 @@ function save() {
   saveTimer = setTimeout(() => {
     saveTimer = null;
     state.hubIds = [...hubIds].slice(-20_000);
-    state.pending = state.pending.slice(-5_000);
+    if (state.pending.length > PENDING_CAP) {
+      const evicted = state.pending.splice(0, state.pending.length - PENDING_CAP);
+      state.droppedOverflow = (state.droppedOverflow ?? 0) + evicted.length;
+      for (const e of evicted) log('OVERFLOW: dropping unarchived envelope (queue > ' + PENDING_CAP + ')', e.envelope.id);
+      log('OVERFLOW total dropped so far:', state.droppedOverflow);
+    }
+    if (state.pending.length > PENDING_WARN && state.pending.length % 100 === 0) {
+      log('WARNING: pending queue at', state.pending.length, '(hub unreachable?)');
+    }
     writeFileSync(STATE_PATH, JSON.stringify(state));
   }, 500);
 }
@@ -125,6 +137,13 @@ async function tryArchive(item: PendingItem): Promise<boolean> {
     save();
     log(body.alreadyStored ? 'confirmed already archived' : 'archived mesh->hub', envelope.channel, envelope.id, 'storedSeq', body.envelope?.storedSeq);
     return true;
+  }
+  if (res.status === 409) {
+    // (#35) the id is bound to a DIFFERENT envelope on the hub: retrying
+    // can never succeed. Drop deliberately and loudly.
+    log('PERMANENT: envelope id conflict on hub, dropping from queue', envelope.id, body?.error);
+    state.droppedConflicts = (state.droppedConflicts ?? 0) + 1;
+    return true; // remove from pending; hubIds intentionally NOT marked
   }
   log('archive attempt failed (will retry)', envelope.id, res.status, body?.error);
   return false;

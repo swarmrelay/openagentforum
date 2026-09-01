@@ -81,6 +81,7 @@ export function createStandaloneServer(config: StandaloneConfig = {}): Standalon
       sender TEXT NOT NULL,
       type TEXT NOT NULL,
       sequence INTEGER NOT NULL,
+      stored_seq INTEGER,
       timestamp INTEGER NOT NULL,
       payload_json TEXT NOT NULL,
       signature TEXT NOT NULL,
@@ -237,14 +238,54 @@ export function createStandaloneServer(config: StandaloneConfig = {}): Standalon
     });
   });
 
+  // Verify-as-stored migration (#29): older databases carry relay-rewritten
+  // sequence values; adopt them as ingest order and stop rewriting from here on.
+  try {
+    db.prepare('SELECT stored_seq FROM messages LIMIT 1').get();
+  } catch {
+    db.exec('ALTER TABLE messages ADD COLUMN stored_seq INTEGER');
+  }
+  db.exec('UPDATE messages SET stored_seq = sequence WHERE stored_seq IS NULL');
+  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_channel_stored_seq ON messages (channel, stored_seq)');
+
   // Agents
   app.post('/v1/agents/register', async (c) => {
-    const { name, publicKey, x25519PublicKey, capabilities = [], metadata = {}, endpoint } = await c.req.json();
+    const { name, publicKey, x25519PublicKey, capabilities = [], metadata = {}, endpoint, proofSignature, timestamp } = await c.req.json();
     if (!publicKey) return c.json({ error: 'publicKey required' }, 400);
 
     const agentId = await deriveAgentId(publicKey);
     const agentName = name || `Agent-${agentId.slice(6, 12)}`;
     const now = Date.now();
+
+    // (#30) anyone can create; only the keyholder can change. Updates to an
+    // existing registration require a valid proof over register|agentId|ts.
+    let proofValid = false;
+    if (proofSignature && timestamp) {
+      try {
+        const pubKey = await crypto.subtle.importKey('raw', Uint8Array.from((publicKey.toLowerCase().match(/../g) || []).map((h: string) => parseInt(h, 16))), { name: 'Ed25519' }, false, ['verify']);
+        const sigBytes = Uint8Array.from((String(proofSignature).match(/../g) || []).map((h: string) => parseInt(h, 16)));
+        proofValid = await crypto.subtle.verify('Ed25519', pubKey, sigBytes, new TextEncoder().encode(`register|${agentId}|${timestamp}`));
+      } catch { proofValid = false; }
+      if (!proofValid) return c.json({ error: 'Invalid registration proof signature' }, 403);
+    }
+    const existingAgent = db.prepare('SELECT * FROM agents WHERE agent_id = ?').get(agentId) as any;
+    if (existingAgent && !proofValid) {
+      db.prepare('UPDATE agents SET last_seen_at = ? WHERE agent_id = ?').run(now, agentId);
+      return c.json({
+        success: true,
+        alreadyRegistered: true,
+        agent: {
+          agentId: existingAgent.agent_id,
+          name: existingAgent.name,
+          publicKey: existingAgent.public_key,
+          x25519PublicKey: existingAgent.x25519_public_key || undefined,
+          capabilities: JSON.parse(existingAgent.capabilities_json || '[]'),
+          metadata: JSON.parse(existingAgent.metadata_json || '{}'),
+          registeredAt: existingAgent.registered_at,
+          lastSeenAt: now,
+        },
+      });
+    }
 
     db.prepare(`
       INSERT INTO agents (agent_id, name, public_key, x25519_public_key, capabilities_json, metadata_json, registered_at, last_seen_at, endpoint)
@@ -361,7 +402,7 @@ export function createStandaloneServer(config: StandaloneConfig = {}): Standalon
   app.get('/v1/channels/:name/messages', (c) => {
     const slug = c.req.param('name').toLowerCase();
     const limit = Math.min(parseInt(c.req.query('limit') || '50', 10), 200);
-    const rows = db.prepare('SELECT * FROM messages WHERE channel = ? ORDER BY sequence DESC LIMIT ?').all(slug, limit) as any[];
+    const rows = db.prepare('SELECT * FROM messages WHERE channel = ? ORDER BY COALESCE(stored_seq, sequence) DESC LIMIT ?').all(slug, limit) as any[];
 
     const messages = rows.reverse().map((r) => ({
       id: r.id,
@@ -369,6 +410,7 @@ export function createStandaloneServer(config: StandaloneConfig = {}): Standalon
       sender: r.sender,
       type: r.type,
       sequence: r.sequence,
+      storedSeq: r.stored_seq ?? r.sequence,
       timestamp: r.timestamp,
       payload: JSON.parse(r.payload_json),
       signature: r.signature,
@@ -415,21 +457,33 @@ export function createStandaloneServer(config: StandaloneConfig = {}): Standalon
       );
     }
 
-    // Monotonic sequence in SQLite transaction
-    const nextSeqRes = db.prepare('SELECT COALESCE(MAX(sequence), 0) + 1 as next_seq FROM messages WHERE channel = ?').get(channelName) as any;
-    const sequence = nextSeqRes.next_seq;
-    envelope.sequence = sequence;
+    // (#29) verify-as-stored: sequence is a SIGNED field, stored verbatim.
+    // Relay ingest order lives in the unsigned stored_seq column.
+    if (typeof envelope.sequence !== 'number' || typeof envelope.timestamp !== 'number') {
+      return c.json({ error: 'sequence and timestamp must be numbers and are part of the sign string' }, 400);
+    }
+    // (#35) idempotency only for byte-identical replays; id reuse is a conflict
+    const existingMsg = db.prepare('SELECT stored_seq, sequence, signature FROM messages WHERE id = ?').get(envelope.id) as any;
+    if (existingMsg) {
+      if (existingMsg.signature === envelope.signature) {
+        return c.json({ success: true, alreadyStored: true, envelope: { ...envelope, channel: channelName, storedSeq: existingMsg.stored_seq ?? existingMsg.sequence } });
+      }
+      return c.json({ error: 'Envelope id is already bound to a different envelope' }, 409);
+    }
+    const nextSeqRes = db.prepare('SELECT COALESCE(MAX(stored_seq), 0) + 1 as next_seq FROM messages WHERE channel = ?').get(channelName) as any;
+    const storedSeq = nextSeqRes.next_seq;
     envelope.channel = channelName;
 
     db.prepare(`
-      INSERT INTO messages (id, channel, sender, type, sequence, timestamp, payload_json, signature, checksum, reply_to_id, encrypted, recipient_keys_json, ephemeral_public_key, nonce)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO messages (id, channel, sender, type, sequence, stored_seq, timestamp, payload_json, signature, checksum, reply_to_id, encrypted, recipient_keys_json, ephemeral_public_key, nonce)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       envelope.id,
       channelName,
       envelope.sender,
       envelope.type,
-      sequence,
+      envelope.sequence,
+      storedSeq,
       envelope.timestamp,
       JSON.stringify(envelope.payload),
       envelope.signature,
@@ -452,7 +506,7 @@ export function createStandaloneServer(config: StandaloneConfig = {}): Standalon
       timestamp: Date.now(),
     });
 
-    return c.json({ success: true, envelope });
+    return c.json({ success: true, envelope: { ...envelope, storedSeq } });
   });
 
   // SSE Stream

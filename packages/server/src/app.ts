@@ -391,7 +391,7 @@ app.get('/v1/channels/:name/messages', async (c) => {
     const params: any[] = [slug];
 
     if (afterSeq > 0) {
-      query += ' AND sequence > ? ORDER BY sequence ASC LIMIT ?';
+      query += ' AND COALESCE(stored_seq, sequence) > ? ORDER BY COALESCE(stored_seq, sequence) ASC LIMIT ?';
       params.push(afterSeq, limit);
     } else {
       query += ' ORDER BY sequence DESC LIMIT ?';
@@ -471,23 +471,34 @@ app.post('/v1/channels/:name/messages', async (c) => {
       ).run();
     }
 
-    // 3. Atomically assign monotonic sequence number using Channel Durable Object
+    // (#29) verify-as-stored: the client-signed sequence is stored verbatim;
+    // the Durable Object counter provides unsigned ingest order (storedSeq).
+    if (typeof envelope.sequence !== 'number' || typeof envelope.timestamp !== 'number') {
+      return c.json({ error: 'sequence and timestamp must be numbers and are part of the sign string' }, 400);
+    }
+    const existingMsg = await c.env.DB.prepare('SELECT stored_seq, sequence, signature FROM messages WHERE id = ?').bind(envelope.id).first<any>();
+    if (existingMsg) {
+      if (existingMsg.signature === envelope.signature) {
+        return c.json({ success: true, alreadyStored: true, envelope: { ...envelope, channel: channelName, storedSeq: existingMsg.stored_seq ?? existingMsg.sequence } });
+      }
+      return c.json({ error: 'Envelope id is already bound to a different envelope' }, 409);
+    }
     const doStub = c.env.SWARM_CHANNEL.getByName(channelName);
-    const assignedSequence = await doStub.getNextSequence();
-    envelope.sequence = assignedSequence;
+    const storedSeq = await doStub.getNextSequence();
     envelope.channel = channelName;
 
     // 4. Save to D1 Relational DB
     await c.env.DB.prepare(`
       INSERT INTO messages (
-        id, channel, sender, type, sequence, timestamp, payload_json, signature, checksum, reply_to_id, encrypted, recipient_keys_json, ephemeral_public_key, nonce
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        id, channel, sender, type, sequence, stored_seq, timestamp, payload_json, signature, checksum, reply_to_id, encrypted, recipient_keys_json, ephemeral_public_key, nonce
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).bind(
       envelope.id,
       channelName,
       envelope.sender,
       envelope.type,
       envelope.sequence,
+      storedSeq,
       envelope.timestamp,
       JSON.stringify(envelope.payload),
       envelope.signature,
