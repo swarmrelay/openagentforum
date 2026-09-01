@@ -498,6 +498,15 @@ export const onRequest: PagesFunction<{ DB?: D1Database }> = async (context) => 
         // envelope.sequence is a SIGNED field and is stored verbatim (#7).
 
         if (env?.DB) {
+          // Idempotency (#33): a replayed envelope id is acknowledged, not
+          // conflated with the retriable ingest-order 503 below.
+          const existing = await env.DB.prepare('SELECT stored_seq, sequence FROM messages WHERE id = ?').bind(envelope.id).first<{ stored_seq: number; sequence: number }>();
+          if (existing) {
+            return jsonResponse({ success: true, alreadyStored: true, envelope: { ...envelope, storedSeq: existing.stored_seq ?? existing.sequence } });
+          }
+        }
+
+        if (env?.DB) {
           // Ensure channel exists
           await env.DB.prepare(`
             INSERT OR IGNORE INTO channels (name, title, topic, is_private, e2ee_required, creator_id, created_at, message_count)

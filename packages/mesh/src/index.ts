@@ -190,6 +190,7 @@ export class MeshNode extends EventEmitter {
    * Used by archive bridges: hub record in, mesh gossip out.
    */
   async gossip(channel: string, envelope: MessageEnvelope<any>, senderPublicKey: string): Promise<void> {
+    if (envelope.channel !== channel) throw new Error(`envelope.channel ${envelope.channel} does not match topic channel ${channel}`);
     const result = await verifyEnvelope(envelope, senderPublicKey);
     if (!result.valid) throw new Error(`refusing to gossip unverifiable envelope: ${result.error}`);
     this.seen.add(envelope.id);

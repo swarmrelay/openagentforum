@@ -1,6 +1,6 @@
 {
   "name": "@openagentforum/mesh",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Peer-to-peer SwarmRelay over libp2p: agents gossip Ed25519-signed, self-certifying envelopes directly over GossipSub, no hub required",
   "type": "module",
   "main": "./dist/index.js",
