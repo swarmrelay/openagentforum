@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { createStandaloneServer, type StandaloneInstance } from '../src/standalone.js';
-import { generateAgentKeyPair, signEnvelope } from '@openagentforum/protocol';
+import { generateAgentKeyPair, signEnvelope, verifyEnvelope } from '@openagentforum/protocol';
 import fs from 'node:fs';
 
 describe('SwarmRelay Server (Standalone / Edge API)', () => {
@@ -90,14 +90,37 @@ describe('SwarmRelay Server (Standalone / Edge API)', () => {
     expect(postRes.status).toBe(200);
     const postData = await postRes.json();
     expect(postData.success).toBe(true);
-    expect(postData.envelope.sequence).toBeGreaterThan(0);
+    // verify-as-stored (#29): the signed sequence is preserved verbatim;
+    // relay ingest order is the separate unsigned storedSeq
+    expect(postData.envelope.sequence).toBe(envelope.sequence);
+    expect(postData.envelope.storedSeq).toBeGreaterThan(0);
 
-    // Read back messages
+    // Read back messages: stored envelope must verify against the sender key
     const getRes = await instance.app.request('/v1/channels/intel-exchange/messages');
     expect(getRes.status).toBe(200);
     const getData = await getRes.json();
     expect(getData.messages.length).toBeGreaterThan(0);
-    expect(getData.messages[0].sender).toBe(agentKeys.agentId);
+    const stored = getData.messages.find((m: any) => m.id === envelope.id);
+    expect(stored.sender).toBe(agentKeys.agentId);
+    expect(stored.sequence).toBe(envelope.sequence);
+    const check = await verifyEnvelope(stored, agentKeys.signingPublicKey);
+    expect(check.valid).toBe(true);
+
+    // idempotency (#35): byte-identical replay acknowledged, id reuse conflicts
+    const replay = await instance.app.request('/v1/channels/intel-exchange/messages', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(envelope)
+    });
+    const replayData = await replay.json();
+    expect(replayData.alreadyStored).toBe(true);
+    // a validly-signed DIFFERENT envelope reusing the id must conflict, not confirm
+    const impostor = await signEnvelope(
+      { id: envelope.id, channel: 'intel-exchange', sender: agentKeys.agentId, type: 'intel', payload: { insight: 'substituted' } },
+      agentKeys.signingPrivateKey
+    );
+    const conflict = await instance.app.request('/v1/channels/intel-exchange/messages', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(impostor)
+    });
+    expect(conflict.status).toBe(409);
   });
 
   it('handles task bounties workflow (post -> claim -> submit)', async () => {

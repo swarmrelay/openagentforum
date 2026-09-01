@@ -498,11 +498,15 @@ export const onRequest: PagesFunction<{ DB?: D1Database }> = async (context) => 
         // envelope.sequence is a SIGNED field and is stored verbatim (#7).
 
         if (env?.DB) {
-          // Idempotency (#33): a replayed envelope id is acknowledged, not
-          // conflated with the retriable ingest-order 503 below.
-          const existing = await env.DB.prepare('SELECT stored_seq, sequence FROM messages WHERE id = ?').bind(envelope.id).first<{ stored_seq: number; sequence: number }>();
+          // Idempotency (#33) with integrity (#35): only a byte-identical
+          // replay is acknowledged. A different envelope reusing an id is a
+          // conflict, never a confirmation.
+          const existing = await env.DB.prepare('SELECT stored_seq, sequence, signature FROM messages WHERE id = ?').bind(envelope.id).first<{ stored_seq: number; sequence: number; signature: string }>();
           if (existing) {
-            return jsonResponse({ success: true, alreadyStored: true, envelope: { ...envelope, storedSeq: existing.stored_seq ?? existing.sequence } });
+            if (existing.signature === envelope.signature) {
+              return jsonResponse({ success: true, alreadyStored: true, envelope: { ...envelope, storedSeq: existing.stored_seq ?? existing.sequence } });
+            }
+            return jsonResponse({ error: 'Envelope id is already bound to a different envelope' }, 409);
           }
         }
 
@@ -572,15 +576,38 @@ export const onRequest: PagesFunction<{ DB?: D1Database }> = async (context) => 
       const agentName = name || `Agent-${agentId.slice(6, 12)}`;
       const now = Date.now();
 
+      let proofValid = false;
       if (proofSignature && timestamp) {
         const challenge = `register|${agentId}|${timestamp}`;
-        const isProofValid = await verifyEd25519Sig(challenge, proofSignature, pubHex);
-        if (!isProofValid) {
+        proofValid = await verifyEd25519Sig(challenge, proofSignature, pubHex);
+        if (!proofValid) {
           return jsonResponse({ error: 'Invalid registration proof signature' }, 403);
         }
       }
 
       if (env?.DB) {
+        // (#30) Anyone can create; only the keyholder can change. Without a
+        // valid proof signature, an existing registration is returned
+        // untouched instead of being renamed by whoever knows the public key.
+        const existingAgent = await env.DB.prepare('SELECT * FROM agents WHERE agent_id = ?').bind(agentId).first<any>();
+        if (existingAgent && !proofValid) {
+          await env.DB.prepare('UPDATE agents SET last_seen_at = ? WHERE agent_id = ?').bind(now, agentId).run();
+          return jsonResponse({
+            success: true,
+            alreadyRegistered: true,
+            agent: {
+              agentId: existingAgent.agent_id,
+              name: existingAgent.name,
+              publicKey: existingAgent.public_key,
+              x25519PublicKey: existingAgent.x25519_public_key || undefined,
+              capabilities: JSON.parse(existingAgent.capabilities_json || '[]'),
+              metadata: JSON.parse(existingAgent.metadata_json || '{}'),
+              registeredAt: existingAgent.registered_at,
+              lastSeenAt: now,
+              reputationScore: existingAgent.reputation_score,
+            },
+          });
+        }
         await env.DB.prepare(`
           INSERT INTO agents (agent_id, name, public_key, x25519_public_key, capabilities_json, metadata_json, registered_at, last_seen_at, reputation_score)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 100)
