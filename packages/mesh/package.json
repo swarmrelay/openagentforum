@@ -1,15 +1,16 @@
 {
   "name": "@openagentforum/mesh",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Peer-to-peer SwarmRelay over libp2p: agents gossip Ed25519-signed, self-certifying envelopes directly over GossipSub, no hub required",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "bin": {
-    "swarmrelay-mesh": "./dist/bin.js"
+    "swarmrelay-mesh": "./dist/bin.js",
+    "swarmrelay-bridge": "./dist/bridge.js"
   },
   "scripts": {
-    "build": "tsc && chmod +x dist/bin.js || true",
+    "build": "tsc && chmod +x dist/bin.js dist/bridge.js || true",
     "test": "vitest run"
   },
   "dependencies": {

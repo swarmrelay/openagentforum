@@ -70,3 +70,31 @@ describe('MeshNode: agents gossip signed envelopes peer-to-peer, no hub', () => 
     expect(received.find((e) => e.envelope.payload?.message === 'forged')).toBeUndefined();
   }, 30_000);
 });
+
+describe('gossip: relaying third-party envelopes without re-signing', () => {
+  it('carries a verified foreign envelope and rejects tampered ones', async () => {
+    const author = await MeshNode.create({ listen: ['/ip4/127.0.0.1/tcp/0'] });
+    const bridge = await MeshNode.create({ listen: ['/ip4/127.0.0.1/tcp/0'] });
+    const listener = await MeshNode.create({ listen: ['/ip4/127.0.0.1/tcp/0'] });
+    nodes.push(author, bridge, listener);
+
+    await listener.dial(bridge.multiaddrs[0]);
+    bridge.join('archive-test');
+    listener.join('archive-test');
+    await waitFor(() => (bridge.channelPeers('archive-test').length > 0 ? true : undefined), 10_000, 'mesh');
+
+    // author is OFF the mesh: their envelope arrives at the bridge out of band
+    // (as if read from the hub record) and is gossiped with original signature
+    const envelope = { ...(await (author as any).publish('archive-test', 'intel', { message: 'from the record' })) };
+    const received: EnvelopeEvent[] = [];
+    listener.on('envelope', (e: EnvelopeEvent) => received.push(e));
+    await bridge.gossip('archive-test', envelope, author.identity.publicKeyHex);
+    const got = await waitFor(() => received.find((e) => e.envelope.id === envelope.id), 10_000, 'relay');
+    expect(got.envelope.sender).toBe(author.agentId);
+    expect(got.senderPublicKey).toBe(author.identity.publicKeyHex);
+
+    // tampering is refused before it touches the wire
+    const forged = { ...envelope, payload: { message: 'forged' } };
+    await expect(bridge.gossip('archive-test', forged, author.identity.publicKeyHex)).rejects.toThrow(/unverifiable/);
+  }, 30_000);
+});

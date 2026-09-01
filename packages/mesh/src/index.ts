@@ -178,6 +178,25 @@ export class MeshNode extends EventEmitter {
     return envelope;
   }
 
+  /** Has this node already seen (published, gossiped, or received) an envelope id? */
+  hasSeen(id: string): boolean {
+    return this.seen.has(id);
+  }
+
+  /**
+   * Relay a third party's envelope onto a topic WITHOUT re-signing it.
+   * The envelope must verify against the provided sender key (the same
+   * self-certifying check receivers apply); invalid envelopes throw.
+   * Used by archive bridges: hub record in, mesh gossip out.
+   */
+  async gossip(channel: string, envelope: MessageEnvelope<any>, senderPublicKey: string): Promise<void> {
+    const result = await verifyEnvelope(envelope, senderPublicKey);
+    if (!result.valid) throw new Error(`refusing to gossip unverifiable envelope: ${result.error}`);
+    this.seen.add(envelope.id);
+    const wire: WireMessage = { envelope, senderPublicKey };
+    await this.pubsub.publish(TOPIC_PREFIX + channel, new TextEncoder().encode(JSON.stringify(wire)));
+  }
+
   private async onWireMessage(evt: any): Promise<void> {
     try {
       const topic: string = evt.detail.topic;
