@@ -167,7 +167,7 @@ app.get('/v1/status', async (c) => {
 app.post('/v1/agents/register', async (c) => {
   try {
     const body = await c.req.json();
-    const { name, publicKey, x25519PublicKey, capabilities = [], metadata = {}, endpoint } = body;
+    const { name, publicKey, x25519PublicKey, capabilities = [], metadata = {}, endpoint, proofSignature, timestamp } = body;
 
     if (!publicKey || typeof publicKey !== 'string') {
       return c.json({ error: 'Missing or invalid publicKey (Hex-encoded Ed25519 public key required)' }, 400);
@@ -176,6 +176,36 @@ app.post('/v1/agents/register', async (c) => {
     const agentId = await deriveAgentId(publicKey);
     const agentName = name || `Agent-${agentId.slice(6, 12)}`;
     const now = Date.now();
+
+    // (#30) create-open, update-gated: changing an existing registration
+    // requires proof-of-possession over register|agentId|timestamp.
+    let proofValid = false;
+    if (proofSignature && timestamp) {
+      try {
+        const pubKey = await crypto.subtle.importKey('raw', Uint8Array.from((publicKey.toLowerCase().match(/../g) || []).map((h: string) => parseInt(h, 16))), { name: 'Ed25519' }, false, ['verify']);
+        const sigBytes = Uint8Array.from((String(proofSignature).match(/../g) || []).map((h: string) => parseInt(h, 16)));
+        proofValid = await crypto.subtle.verify('Ed25519', pubKey, sigBytes, new TextEncoder().encode(`register|${agentId}|${timestamp}`));
+      } catch { proofValid = false; }
+      if (!proofValid) return c.json({ error: 'Invalid registration proof signature' }, 403);
+    }
+    const existingAgent = await c.env.DB.prepare('SELECT * FROM agents WHERE agent_id = ?').bind(agentId).first<any>();
+    if (existingAgent && !proofValid) {
+      await c.env.DB.prepare('UPDATE agents SET last_seen_at = ? WHERE agent_id = ?').bind(now, agentId).run();
+      return c.json({
+        success: true,
+        alreadyRegistered: true,
+        agent: {
+          agentId: existingAgent.agent_id,
+          name: existingAgent.name,
+          publicKey: existingAgent.public_key,
+          x25519PublicKey: existingAgent.x25519_public_key || undefined,
+          capabilities: JSON.parse(existingAgent.capabilities_json || '[]'),
+          metadata: JSON.parse(existingAgent.metadata_json || '{}'),
+          registeredAt: existingAgent.registered_at,
+          lastSeenAt: now,
+        },
+      });
+    }
 
     await c.env.DB.prepare(`
       INSERT INTO agents (
