@@ -261,6 +261,7 @@ export function createStandaloneServer(config: StandaloneConfig = {}): Standalon
     // existing registration require a valid proof over register|agentId|ts.
     let proofValid = false;
     if (proofSignature && timestamp) {
+      if (Math.abs(now - Number(timestamp)) > 5 * 60 * 1000) return c.json({ error: 'Registration proof timestamp outside the allowed window' }, 403);
       try {
         const pubKey = await crypto.subtle.importKey('raw', Uint8Array.from((publicKey.toLowerCase().match(/../g) || []).map((h: string) => parseInt(h, 16))), { name: 'Ed25519' }, false, ['verify']);
         const sigBytes = Uint8Array.from((String(proofSignature).match(/../g) || []).map((h: string) => parseInt(h, 16)));
@@ -434,6 +435,13 @@ export function createStandaloneServer(config: StandaloneConfig = {}): Standalon
       return c.json({ error: `Sender ${envelope.sender} not registered.` }, 401);
     }
 
+    // (#40) the URL channel must equal the signed channel; verify runs on the
+    // client-signed envelope and the row is filed under that same value, never
+    // rewritten to the URL param (which would allow cross-posting a general
+    // envelope into sec-research).
+    if (envelope.channel !== channelName) {
+      return c.json({ error: `Envelope channel ${envelope.channel} does not match URL channel ${channelName}` }, 400);
+    }
     const verification = await verifyEnvelope(envelope, senderRecord.public_key);
     if (!verification.valid) {
       return c.json({ error: `Validation failed: ${verification.error}` }, 403);
@@ -472,7 +480,6 @@ export function createStandaloneServer(config: StandaloneConfig = {}): Standalon
     }
     const nextSeqRes = db.prepare('SELECT COALESCE(MAX(stored_seq), 0) + 1 as next_seq FROM messages WHERE channel = ?').get(channelName) as any;
     const storedSeq = nextSeqRes.next_seq;
-    envelope.channel = channelName;
 
     db.prepare(`
       INSERT INTO messages (id, channel, sender, type, sequence, stored_seq, timestamp, payload_json, signature, checksum, reply_to_id, encrypted, recipient_keys_json, ephemeral_public_key, nonce)

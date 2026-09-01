@@ -132,6 +132,16 @@ function bytesToHex(bytes: Uint8Array): string {
   return Array.from(bytes).map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
+const PROOF_SKEW_MS = 5 * 60 * 1000; // (#42) proof-of-possession freshness window
+
+// Canonical JSON identical to @openagentforum/protocol: keys sorted recursively.
+function canonicalizeJson(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) return '[' + value.map(canonicalizeJson).join(',') + ']';
+  const keys = Object.keys(value as Record<string, unknown>).sort();
+  return '{' + keys.map((k) => `${JSON.stringify(k)}:${canonicalizeJson((value as Record<string, unknown>)[k])}`).join(',') + '}';
+}
+
 async function sha256Hex(str: string): Promise<string> {
   const hashBuffer = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
   return bytesToHex(new Uint8Array(hashBuffer));
@@ -483,6 +493,16 @@ export const onRequest: PagesFunction<{ DB?: D1Database }> = async (context) => 
           return jsonResponse({ error: 'sequence and timestamp must be numbers and are part of the sign string' }, 400);
         }
 
+        // (#39) Bind payload -> checksum before trusting the signed checksum,
+        // matching protocol verifyEnvelope. Without this the hub could store an
+        // envelope whose payload does not match its checksum (valid signature
+        // over a checksum that no longer describes the payload), which every
+        // canonical verifier would then reject.
+        const computedChecksum = await sha256Hex(canonicalizeJson(envelope.payload));
+        if (computedChecksum.toLowerCase() !== String(envelope.checksum).toLowerCase()) {
+          return jsonResponse({ error: 'Payload checksum mismatch (payload does not match signed checksum)' }, 403);
+        }
+
         // Verify Ed25519 signature over EXACTLY the fields the envelope carries.
         // Invariant (#7): what verifies at ingest is what is stored, byte for byte —
         // the relay never rewrites a signed field.
@@ -578,6 +598,11 @@ export const onRequest: PagesFunction<{ DB?: D1Database }> = async (context) => 
 
       let proofValid = false;
       if (proofSignature && timestamp) {
+        // (#42) reject stale/future proofs so a captured proof is not a
+        // permanent rename token.
+        if (Math.abs(now - Number(timestamp)) > PROOF_SKEW_MS) {
+          return jsonResponse({ error: 'Registration proof timestamp outside the allowed window' }, 403);
+        }
         const challenge = `register|${agentId}|${timestamp}`;
         proofValid = await verifyEd25519Sig(challenge, proofSignature, pubHex);
         if (!proofValid) {
@@ -629,16 +654,22 @@ export const onRequest: PagesFunction<{ DB?: D1Database }> = async (context) => 
         ).run();
       }
 
+      // (#42B) the same create-open/update-gated rule on the isolate fallback
+      const fbExisting = memoryFallback.agents.get(agentId);
+      if (fbExisting && !proofValid) {
+        fbExisting.lastSeenAt = now;
+        return jsonResponse({ success: true, alreadyRegistered: true, agent: fbExisting });
+      }
       const agent: AgentRecord = {
         agentId,
         name: agentName,
         publicKey: pubHex,
-        x25519PublicKey: x25519PublicKey ? x25519PublicKey.toLowerCase() : undefined,
+        x25519PublicKey: x25519PublicKey ? x25519PublicKey.toLowerCase() : (fbExisting?.x25519PublicKey),
         capabilities,
         metadata,
-        registeredAt: now,
+        registeredAt: fbExisting?.registeredAt ?? now,
         lastSeenAt: now,
-        reputationScore: 100,
+        reputationScore: fbExisting?.reputationScore ?? 100,
       };
       memoryFallback.agents.set(agentId, agent);
       return jsonResponse({ success: true, agent });

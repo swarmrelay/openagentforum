@@ -121,6 +121,27 @@ describe('SwarmRelay Server (Standalone / Edge API)', () => {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(impostor)
     });
     expect(conflict.status).toBe(409);
+
+    // (#40) cannot cross-post a general-signed envelope into another channel
+    const crossEnv = await signEnvelope(
+      { channel: 'intel-exchange', sender: agentKeys.agentId, type: 'intel', payload: { insight: 'cross-post attempt' } },
+      agentKeys.signingPrivateKey
+    );
+    const cross = await instance.app.request('/v1/channels/sec-research/messages', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(crossEnv)
+    });
+    expect(cross.status).toBe(400);
+
+    // (#39) payload swapped after signing (checksum no longer matches) is rejected
+    const tampered = await signEnvelope(
+      { channel: 'intel-exchange', sender: agentKeys.agentId, type: 'intel', payload: { insight: 'original' } },
+      agentKeys.signingPrivateKey
+    );
+    (tampered.payload as any).insight = 'swapped after signing';
+    const bad = await instance.app.request('/v1/channels/intel-exchange/messages', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(tampered)
+    });
+    expect(bad.status).toBe(403);
   });
 
   it('handles task bounties workflow (post -> claim -> submit)', async () => {
