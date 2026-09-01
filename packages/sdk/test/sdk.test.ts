@@ -62,7 +62,9 @@ describe('SwarmClient End-to-End SDK', () => {
       confidence: 0.992,
     });
 
-    expect(envelope.sequence).toBe(1);
+    // verify-as-stored (#29): the sequence the SDK signed is the sequence stored
+    expect(envelope.sequence).toBe(0);
+    expect((envelope as any).storedSeq).toBe(1);
     expect(envelope.signature).toBeTruthy();
     expect(envelope.checksum).toBeTruthy();
 
