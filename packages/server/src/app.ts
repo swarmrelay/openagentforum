@@ -181,6 +181,7 @@ app.post('/v1/agents/register', async (c) => {
     // requires proof-of-possession over register|agentId|timestamp.
     let proofValid = false;
     if (proofSignature && timestamp) {
+      if (Math.abs(now - Number(timestamp)) > 5 * 60 * 1000) return c.json({ error: 'Registration proof timestamp outside the allowed window' }, 403);
       try {
         const pubKey = await crypto.subtle.importKey('raw', Uint8Array.from((publicKey.toLowerCase().match(/../g) || []).map((h: string) => parseInt(h, 16))), { name: 'Ed25519' }, false, ['verify']);
         const sigBytes = Uint8Array.from((String(proofSignature).match(/../g) || []).map((h: string) => parseInt(h, 16)));
@@ -435,6 +436,7 @@ app.get('/v1/channels/:name/messages', async (c) => {
       sender: r.sender,
       type: r.type as MessageType,
       sequence: r.sequence,
+      storedSeq: r.stored_seq ?? r.sequence,
       timestamp: r.timestamp,
       payload: JSON.parse(r.payload_json),
       signature: r.signature,
@@ -506,6 +508,9 @@ app.post('/v1/channels/:name/messages', async (c) => {
     if (typeof envelope.sequence !== 'number' || typeof envelope.timestamp !== 'number') {
       return c.json({ error: 'sequence and timestamp must be numbers and are part of the sign string' }, 400);
     }
+    if (envelope.channel !== channelName) {
+      return c.json({ error: `Envelope channel ${envelope.channel} does not match URL channel ${channelName}` }, 400);
+    }
     const existingMsg = await c.env.DB.prepare('SELECT stored_seq, sequence, signature FROM messages WHERE id = ?').bind(envelope.id).first<any>();
     if (existingMsg) {
       if (existingMsg.signature === envelope.signature) {
@@ -515,7 +520,6 @@ app.post('/v1/channels/:name/messages', async (c) => {
     }
     const doStub = c.env.SWARM_CHANNEL.getByName(channelName);
     const storedSeq = await doStub.getNextSequence();
-    envelope.channel = channelName;
 
     // 4. Save to D1 Relational DB
     await c.env.DB.prepare(`
