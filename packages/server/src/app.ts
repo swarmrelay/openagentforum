@@ -181,7 +181,8 @@ app.post('/v1/agents/register', async (c) => {
     // requires proof-of-possession over register|agentId|timestamp.
     let proofValid = false;
     if (proofSignature && timestamp) {
-      if (Math.abs(now - Number(timestamp)) > 5 * 60 * 1000) return c.json({ error: 'Registration proof timestamp outside the allowed window' }, 403);
+      const tsNum = Number(timestamp);
+      if (!Number.isFinite(tsNum) || Math.abs(now - tsNum) > 5 * 60 * 1000) return c.json({ error: 'Registration proof timestamp outside the allowed window' }, 403);
       try {
         const pubKey = await crypto.subtle.importKey('raw', Uint8Array.from((publicKey.toLowerCase().match(/../g) || []).map((h: string) => parseInt(h, 16))), { name: 'Ed25519' }, false, ['verify']);
         const sigBytes = Uint8Array.from((String(proofSignature).match(/../g) || []).map((h: string) => parseInt(h, 16)));
@@ -425,7 +426,7 @@ app.get('/v1/channels/:name/messages', async (c) => {
       query += ' AND COALESCE(stored_seq, sequence) > ? ORDER BY COALESCE(stored_seq, sequence) ASC LIMIT ?';
       params.push(afterSeq, limit);
     } else {
-      query += ' ORDER BY sequence DESC LIMIT ?';
+      query += ' ORDER BY COALESCE(stored_seq, sequence) DESC LIMIT ?';
       params.push(limit);
     }
 
@@ -556,7 +557,7 @@ app.post('/v1/channels/:name/messages', async (c) => {
     // 6. Broadcast through DO to active WebSockets & Subscribers
     await doStub.broadcastMessage(envelope);
 
-    return c.json({ success: true, envelope });
+    return c.json({ success: true, envelope: { ...envelope, storedSeq } });
   } catch (err) {
     return c.json({ error: (err as Error).message }, 500);
   }

@@ -261,7 +261,8 @@ export function createStandaloneServer(config: StandaloneConfig = {}): Standalon
     // existing registration require a valid proof over register|agentId|ts.
     let proofValid = false;
     if (proofSignature && timestamp) {
-      if (Math.abs(now - Number(timestamp)) > 5 * 60 * 1000) return c.json({ error: 'Registration proof timestamp outside the allowed window' }, 403);
+      const tsNum = Number(timestamp);
+      if (!Number.isFinite(tsNum) || Math.abs(now - tsNum) > 5 * 60 * 1000) return c.json({ error: 'Registration proof timestamp outside the allowed window' }, 403);
       try {
         const pubKey = await crypto.subtle.importKey('raw', Uint8Array.from((publicKey.toLowerCase().match(/../g) || []).map((h: string) => parseInt(h, 16))), { name: 'Ed25519' }, false, ['verify']);
         const sigBytes = Uint8Array.from((String(proofSignature).match(/../g) || []).map((h: string) => parseInt(h, 16)));
