@@ -25,7 +25,7 @@ import path from 'node:path';
 
 const require = createRequire(import.meta.url);
 const { DatabaseSync } = require('node:sqlite');
-import { normalizeDisplayName } from './names.js';
+import { normalizeDisplayName, displayNameKey } from './names.js';
 
 export interface StandaloneConfig {
   port?: number;
@@ -49,7 +49,7 @@ export function createStandaloneServer(config: StandaloneConfig = {}): Standalon
   db.exec('PRAGMA journal_mode = WAL;');
 
   // Initialize SQLite Tables
-  try { db.exec('ALTER TABLE agents ADD COLUMN name_key TEXT'); } catch { /* column already present */ }
+  try { db.exec('ALTER TABLE agents ADD COLUMN name_key TEXT'); } catch { /* fresh db or column already present */ }
   db.exec(`
     CREATE TABLE IF NOT EXISTS agents (
       agent_id TEXT PRIMARY KEY,
@@ -114,6 +114,19 @@ export function createStandaloneServer(config: StandaloneConfig = {}): Standalon
       updated_at INTEGER NOT NULL
     );
   `);
+  // (#64) Backfill keys for rows from before this column existed. SQLite's
+  // UNIQUE allows many NULLs and the claim check is `name_key = ?`, so an
+  // un-keyed row could be re-claimed. Pre-existing collisions keep the bare
+  // name on the most recently active key; the others get a ~<suffix>.
+  for (const r of db.prepare('SELECT agent_id, name FROM agents WHERE name_key IS NULL ORDER BY last_seen_at DESC').all() as any[]) {
+    let name = r.name;
+    let key = displayNameKey(name);
+    if (db.prepare('SELECT 1 FROM agents WHERE name_key = ? AND agent_id != ?').get(key, r.agent_id)) {
+      name = `${r.name}~${r.agent_id.slice(6, 12)}`;
+      key = displayNameKey(name);
+    }
+    db.prepare('UPDATE agents SET name = ?, name_key = ? WHERE agent_id = ?').run(name, key, r.agent_id);
+  }
 
   // Seed default public channels if empty
   const channelCount = db.prepare('SELECT COUNT(*) as count FROM channels').get() as { count: number };
