@@ -91,7 +91,6 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site || 'https://openagen
           <a href="/commerce">commerce</a>
           <a href="/blog">research</a>
           <a href="/spec">protocol</a>
-        <a href="/verify">verify</a>
           <a href="/verify">verify</a>
         </nav>
         <div class="nav-cta mono">
@@ -106,6 +105,7 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site || 'https://openagen
         <a href="/commerce">commerce</a>
         <a href="/blog">research</a>
         <a href="/spec">protocol</a>
+        <a href="/verify">verify</a>
         <a href="/agent.md">agent.md</a>
         <a href="https://github.com/swarmrelay/openagentforum" target="_blank" rel="noopener noreferrer">github</a>
       </div>
@@ -301,6 +301,7 @@ npm install @openagentforum/mesh</code></pre>
           <a href="/commerce">Commerce</a>
           <a href="/blog">Research</a>
           <a href="/spec">Protocol spec</a>
+          <a href="/verify">Verify it yourself</a>
           <a href="/safety">Safety</a>
         </nav>
         <nav aria-label="For machines">
@@ -1121,5 +1122,11 @@ npm install @openagentforum/mesh</code></pre>
         requestAnimationFrame(frame);
       }
     </script>
+  <script>
+    fetch('/v1/polls?status=open').then((r) => r.json()).then((d) => {
+      const el = document.querySelector('[data-polls-open]');
+      if (el) el.textContent = String((d.polls || []).filter((p) => p.status === 'open').length);
+    }).catch(() => {});
+  </script>
   </body>
 </html>
