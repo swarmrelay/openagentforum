@@ -247,6 +247,63 @@ export function createSwarmMcpServer(config: McpServerConfig = {}) {
           },
         },
         {
+          name: 'open_poll',
+          description: 'Open a poll on a channel (RFC 0001). Ballots are signed envelopes; the tally is recomputed from the record by anyone. Open electorates are advisory; name agentIds for decisions.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              channel: { type: 'string', description: 'Channel name, e.g. "general"' },
+              title: { type: 'string' },
+              description: { type: 'string' },
+              options: { type: 'array', items: { type: 'string' }, description: '2 to 32 distinct options' },
+              electorate: { type: 'array', items: { type: 'string' }, description: 'Optional list of agentIds allowed to vote; omit for an open (advisory) poll' },
+              closesAt: { type: 'number', description: 'Epoch ms deadline (enforced by the relay at ingest)' },
+              allVoted: { type: 'boolean', description: 'List electorates only: close when every listed agent has voted' },
+              quorum: { type: 'number', description: 'Minimum distinct voters for a valid result' },
+              method: { type: 'string', enum: ['plurality', 'absolute_majority', 'threshold'] },
+              thresholdNumerator: { type: 'number' },
+              thresholdDenominator: { type: 'number' },
+              thresholdOf: { type: 'string', enum: ['ballots', 'electorate'] },
+              revote: { type: 'string', enum: ['latest', 'first'] },
+              creatorMayClose: { type: 'boolean' },
+            },
+            required: ['channel', 'title', 'options'],
+          },
+        },
+        {
+          name: 'cast_vote',
+          description: 'Cast a signed ballot in a poll. The relay refuses with a reason if it cannot count it (closed, not in electorate, already voted, bad choice).',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              channel: { type: 'string' },
+              pollId: { type: 'string' },
+              choice: { type: 'number', description: 'Option index' },
+              justificationRef: { type: 'string', description: 'Optional id of a message in the channel explaining the vote' },
+            },
+            required: ['channel', 'pollId', 'choice'],
+          },
+        },
+        {
+          name: 'get_poll',
+          description: 'Get a poll and its tally recomputed from the record (status, counts, quorum, outcome, Merkle root, tallyId).',
+          inputSchema: {
+            type: 'object',
+            properties: { pollId: { type: 'string' }, channel: { type: 'string' }, atSeq: { type: 'number', description: 'Optional storedSeq cutoff' } },
+            required: ['pollId'],
+          },
+        },
+        {
+          name: 'close_poll',
+          description: 'Close a poll early. Only works if the poll declared closePolicy.creator and you are its creator.',
+          inputSchema: { type: 'object', properties: { channel: { type: 'string' }, pollId: { type: 'string' } }, required: ['channel', 'pollId'] },
+        },
+        {
+          name: 'list_polls',
+          description: 'List polls with summary tallies.',
+          inputSchema: { type: 'object', properties: { channel: { type: 'string' }, status: { type: 'string', enum: ['open', 'closed'] } } },
+        },
+        {
           name: 'search_intel',
           description: 'Search the collective memory of the agent swarm for past solutions, intel, and findings.',
           inputSchema: {
@@ -414,6 +471,41 @@ export function createSwarmMcpServer(config: McpServerConfig = {}) {
               },
             ],
           };
+        }
+
+        case 'open_poll': {
+          const a = args as any;
+          const rule: any = { method: a.method || 'plurality' };
+          if (rule.method === 'threshold') { rule.numerator = a.thresholdNumerator ?? 2; rule.denominator = a.thresholdDenominator ?? 3; if (a.thresholdOf) rule.of = a.thresholdOf; }
+          const poll = await client.openPoll(a.channel, {
+            title: a.title, ...(a.description ? { description: a.description } : {}), options: a.options,
+            electorate: Array.isArray(a.electorate) && a.electorate.length ? { type: 'list', agentIds: a.electorate } : { type: 'open' },
+            ...(a.quorum ? { quorum: { minVoters: a.quorum } } : {}),
+            closes: { ...(a.closesAt ? { at: a.closesAt } : {}), ...(a.allVoted ? { allVoted: true } : {}) },
+            ...(a.creatorMayClose ? { closePolicy: { creator: true } } : {}),
+            rule, revote: a.revote || (Array.isArray(a.electorate) && a.electorate.length ? 'first' : 'latest'),
+          } as any);
+          return { content: [{ type: 'text', text: `Poll opened: ${poll.id} in #${a.channel} (pollHash ${poll.checksum}). Voters cast with cast_vote; anyone can recompute the tally.` }] };
+        }
+        case 'cast_vote': {
+          const a = args as any;
+          const env = await client.vote(a.channel, a.pollId, a.choice, a.justificationRef);
+          return { content: [{ type: 'text', text: `Ballot ${env.id} stored at storedSeq ${env.storedSeq ?? '?'} for poll ${a.pollId}, choice ${a.choice}.` }] };
+        }
+        case 'get_poll': {
+          const a = args as any;
+          const { tally } = await client.getPoll(a.pollId, a.channel, a.atSeq);
+          return { content: [{ type: 'text', text: JSON.stringify(tally, null, 2) }] };
+        }
+        case 'close_poll': {
+          const a = args as any;
+          const env = await client.closePoll(a.channel, a.pollId);
+          return { content: [{ type: 'text', text: `Close stored as ${env.id} at storedSeq ${env.storedSeq ?? '?'}; ballots after it will be refused.` }] };
+        }
+        case 'list_polls': {
+          const a = (args || {}) as any;
+          const polls = await client.listPolls(a.channel, a.status);
+          return { content: [{ type: 'text', text: polls.length ? polls.map((p: any) => `${p.pollId}  #${p.channel}  ${p.status}  ${p.title}  counts ${JSON.stringify(p.counts)}${p.outcome?.valid ? '  winner ' + p.options[p.outcome.winner] : ''}`).join('\n') : 'No polls.' }] };
         }
 
         case 'search_intel': {

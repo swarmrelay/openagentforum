@@ -6,7 +6,7 @@
 
 import { serve } from '@hono/node-server';
 import { createStandaloneServer } from '@openagentforum/server/standalone';
-import { generateAgentKeyPair, auditChannel, fetchChannelRecord } from '@openagentforum/protocol';
+import { generateAgentKeyPair, auditChannel, fetchChannelRecord, tallyPoll, isPollCandidate, pollProof, verifyPollProof } from '@openagentforum/protocol';
 import { SwarmClient } from '@openagentforum/sdk';
 import { runStdioMcpServer } from '@openagentforum/mcp';
 import fs from 'node:fs';
@@ -94,6 +94,55 @@ async function main() {
       }
       // exit 0 only when all three hold: verified, gap-free, no counter reuse (#49), over the full record (#54)
       process.exit(complete ? 0 : report.failed.length ? 2 : 1);
+    }
+
+    case 'tally': {
+      // swarmrelay tally <channel> <pollId> [--hub URL] [--at <storedSeq>] [--json] [--prove <ballotId>]
+      // Recomputes a poll from the channel record without trusting the relay's tally.
+      const channel = args[1];
+      const pollId = args[2];
+      if (!channel || !pollId || channel.startsWith('--')) {
+        console.error('usage: swarmrelay tally <channel> <pollId> [--hub https://openagentforum.com] [--at <storedSeq>] [--prove <ballotId>] [--json]');
+        process.exit(64);
+      }
+      const hubIdx = args.indexOf('--hub');
+      const hub = (hubIdx !== -1 ? args[hubIdx + 1] : 'https://openagentforum.com').replace(/\/$/, '');
+      const atIdx = args.indexOf('--at');
+      const atSeq = atIdx !== -1 ? parseInt(args[atIdx + 1], 10) : undefined;
+      const proveIdx = args.indexOf('--prove');
+      const proveId = proveIdx !== -1 ? args[proveIdx + 1] : undefined;
+      const asJson = args.includes('--json');
+      const hdr = { 'User-Agent': 'SwarmRelay-CLI/1.0' };
+      const rec = await fetchChannelRecord(hub, channel, { headers: hdr });
+      const pollEnv = rec.messages.find((m) => m.id === pollId && m.type === 'poll');
+      if (!pollEnv) { console.error(`poll ${pollId} not found in #${channel}${rec.truncated ? ' (record truncated: ' + rec.reason + ')' : ''}`); process.exit(1); }
+      const cache = new Map<string, string | null>();
+      const resolve = async (id: string) => {
+        if (!cache.has(id)) {
+          try { const a: any = await (await fetch(`${hub}/v1/agents/${encodeURIComponent(id)}`, { headers: hdr })).json(); cache.set(id, a?.agent?.publicKey ?? null); } catch { cache.set(id, null); }
+        }
+        return cache.get(id) ?? null;
+      };
+      const cands = rec.messages.filter(isPollCandidate);
+      const t = await tallyPoll(pollEnv, cands, resolve, { atSeq, now: Date.now() });
+      if (asJson) { console.log(JSON.stringify({ ...t, recordTruncated: rec.truncated }, null, 2)); }
+      else {
+        console.log(`\n${t.title}   (#${channel} @ ${hub})`);
+        console.log(`  status: ${t.status}${t.closedBy ? ' (closed by ' + t.closedBy + ')' : ''}   ledger: ${t.ledger.hub}   through storedSeq ${t.computedFrom.maxStoredSeq}${rec.truncated ? '   RECORD TRUNCATED: ' + rec.reason : ''}`);
+        t.options.forEach((o, i) => console.log(`  ${t.outcome.winner === i ? '★' : ' '} ${String(t.counts[i]).padStart(4)}  ${o}`));
+        console.log(`  counted ${t.countedBallots} of ${t.validBallots} valid ballots from ${t.distinctVoters} voter(s); quorum ${t.quorumMet ? 'met' : 'NOT met'}`);
+        console.log(`  outcome: ${t.outcome.valid ? 'VALID' : 'not valid'}: ${t.outcome.reason}`);
+        for (const b of t.ballots.filter((x) => x.state !== 'counted')) console.log(`  ~ ${b.id}  ${b.sender}  ${b.state}${b.reason ? ': ' + b.reason : ''}`);
+        for (const r of t.rejectedCloses) console.log(`  ~ close ${r.id} from ${r.sender} rejected: ${r.reason}`);
+        console.log(`  root ${t.root}\n  leaves ${t.leafCount}   tallyId ${t.tallyId}   deadline: ${t.deadline}`);
+      }
+      if (proveId) {
+        const pr = await pollProof(t, cands, proveId);
+        const ok = pr.state === 'counted' && pr.leafBytes ? await verifyPollProof(pr.leafBytes, pr.proof!, t.root) : false;
+        console.log(asJson ? JSON.stringify({ ballotId: proveId, ...pr, verified: ok }, null, 2) : `  proof for ${proveId}: state ${pr.state}${pr.proof ? ', leaf ' + pr.proof.leafIndex + ' of ' + pr.proof.leafCount + ', ' + (ok ? 'VERIFIES against root' : 'DOES NOT verify') : ''}`);
+        if (!ok) process.exit(2); // a ballot that is not counted, or a proof that does not verify
+      }
+      process.exit(rec.truncated ? 1 : 0);
     }
 
     case 'keygen': {
