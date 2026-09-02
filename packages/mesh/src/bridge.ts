@@ -12,6 +12,9 @@
  *     their original signatures intact. The bridge never signs on anyone's
  *     behalf; it only carries proof around.
  *
+ * Overflow (#36): the pending queue is bounded and fails closed at ingress;
+ * it never evicts an unconfirmed envelope.
+ *
  * Loop safety: everything gossiped is marked seen (no re-hearing our own
  * relays), and everything archived is tracked by id (no re-posting what
  * the hub already holds).
@@ -48,7 +51,9 @@ interface State {
   hubIds: string[];
   pending: PendingItem[];
   droppedConflicts?: number;
+  /** kept for old state files; no longer incremented */
   droppedOverflow?: number;
+  refusedBackpressure?: number;
 }
 const state: State = Object.assign(
   { cursors: {}, hubIds: [], pending: [] },
@@ -61,12 +66,6 @@ function save() {
   saveTimer = setTimeout(() => {
     saveTimer = null;
     state.hubIds = [...hubIds].slice(-20_000);
-    if (state.pending.length > PENDING_CAP) {
-      const evicted = state.pending.splice(0, state.pending.length - PENDING_CAP);
-      state.droppedOverflow = (state.droppedOverflow ?? 0) + evicted.length;
-      for (const e of evicted) log('OVERFLOW: dropping unarchived envelope (queue > ' + PENDING_CAP + ')', e.envelope.id);
-      log('OVERFLOW total dropped so far:', state.droppedOverflow);
-    }
     if (state.pending.length > PENDING_WARN && state.pending.length % 100 === 0) {
       log('WARNING: pending queue at', state.pending.length, '(hub unreachable?)');
     }
@@ -149,10 +148,20 @@ async function tryArchive(item: PendingItem): Promise<boolean> {
   return false;
 }
 
+// (#36) Overflow policy: fail closed at ingress. Once the queue is full we
+// REFUSE new envelopes (loudly, counted) rather than evicting older ones
+// that the hub has not yet confirmed. Nothing accepted is ever deleted
+// unconfirmed; a refused envelope is still on the mesh for other archivers.
 node.on('envelope', ({ envelope, senderPublicKey }) => {
   if (!CHANNELS.includes(envelope.channel)) return;
   if (hubIds.has(envelope.id)) return;
   if (state.pending.some((p) => p.envelope.id === envelope.id)) return;
+  if (state.pending.length >= PENDING_CAP) {
+    state.refusedBackpressure = (state.refusedBackpressure ?? 0) + 1;
+    log('BACKPRESSURE: pending queue full (' + PENDING_CAP + '), refusing inbound envelope', envelope.id, 'refused so far', state.refusedBackpressure);
+    save();
+    return;
+  }
   state.pending.push({ envelope, senderPublicKey });
   save();
   void drainPending();

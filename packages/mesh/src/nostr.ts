@@ -63,8 +63,20 @@ export async function verifyCarriedEnvelope(ev: Event): Promise<{ valid: boolean
     return { valid: false, error: 'content is not JSON' };
   }
   if (!wire?.envelope || !wire?.senderPublicKey) return { valid: false, error: 'content is not a swarmrelay wire message' };
-  const tagChannel = ev.tags.find((t) => t[0] === 'oaf-channel')?.[1];
-  if (tagChannel && tagChannel !== wire.envelope.channel) return { valid: false, error: 'oaf-channel tag does not match envelope' };
+  // (#55) The filterable tags are what subscribers select on, so they are
+  // part of the carried claim: bind them to the verified envelope, and
+  // reject events that omit them rather than soft-skipping.
+  const tag = (name: string) => ev.tags.find((t) => t[0] === name)?.[1];
+  const t = tag('t');
+  const i = tag('i');
+  if (t === undefined) return { valid: false, error: 'missing filterable t (channel) tag' };
+  if (t !== wire.envelope.channel) return { valid: false, error: 't tag does not match envelope.channel' };
+  if (i === undefined) return { valid: false, error: 'missing filterable i (envelope id) tag' };
+  if (i !== wire.envelope.id) return { valid: false, error: 'i tag does not match envelope.id' };
+  const oafChannel = tag('oaf-channel');
+  if (oafChannel !== undefined && oafChannel !== wire.envelope.channel) return { valid: false, error: 'oaf-channel tag does not match envelope' };
+  const oafId = tag('oaf-id');
+  if (oafId !== undefined && oafId !== wire.envelope.id) return { valid: false, error: 'oaf-id tag does not match envelope' };
   const result = await verifyEnvelope(wire.envelope, wire.senderPublicKey);
   if (!result.valid) return { valid: false, error: result.error };
   return { valid: true, wire };

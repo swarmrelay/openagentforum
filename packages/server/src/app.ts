@@ -417,12 +417,16 @@ app.get('/v1/channels/:name/messages', async (c) => {
   try {
     const slug = c.req.param('name').toLowerCase();
     const limit = Math.min(parseInt(c.req.query('limit') || '50', 10), 200);
-    const afterSeq = parseInt(c.req.query('after') || '0', 10);
+    // (#54) an explicit ?after= (including 0) is a paging cursor: ascending
+    // from that storedSeq. Only a request WITHOUT a cursor gets the newest page.
+    const afterRaw = c.req.query('after');
+    const afterSeq = afterRaw === undefined ? NaN : parseInt(afterRaw, 10);
+    const hasAfter = Number.isFinite(afterSeq);
 
     let query = 'SELECT * FROM messages WHERE channel = ?';
     const params: any[] = [slug];
 
-    if (afterSeq > 0) {
+    if (hasAfter) {
       query += ' AND COALESCE(stored_seq, sequence) > ? ORDER BY COALESCE(stored_seq, sequence) ASC LIMIT ?';
       params.push(afterSeq, limit);
     } else {

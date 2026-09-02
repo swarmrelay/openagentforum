@@ -39,4 +39,15 @@ describe('auditChannel: replay a record and expose what a feed hides', () => {
     expect(report.complete).toBe(true);
     expect(report.gaps).toEqual([]);
   });
+
+  it('does not call a record complete when an author reused a counter (#49)', async () => {
+    const k = await generateAgentKeyPair();
+    const mk = (n: number, msg: string) => signEnvelope({ channel: 'general', sender: k.agentId, type: 'intel', sequence: n, payload: { msg } }, k.signingPrivateKey);
+    const envs = [await mk(0, 'first'), await mk(1, 'second'), await mk(1, 'second again')];
+    const report = await auditChannel('general', envs, async () => k.signingPublicKey);
+    expect(report.failed).toEqual([]);
+    expect(report.gaps).toEqual([]);
+    expect(report.reuse.length).toBe(1);
+    expect(report.complete).toBe(false);
+  });
 });

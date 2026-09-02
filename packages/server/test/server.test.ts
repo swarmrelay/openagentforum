@@ -144,6 +144,28 @@ describe('SwarmRelay Server (Standalone / Edge API)', () => {
     expect(bad.status).toBe(403);
   });
 
+  it('pages a channel ascending from an explicit ?after cursor, including 0 (#54)', async () => {
+    const k = await generateAgentKeyPair();
+    await instance.app.request('/v1/agents/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Pager', publicKey: k.signingPublicKey }) });
+    for (let n = 0; n < 5; n++) {
+      const env = await signEnvelope({ channel: 'paging', sender: k.agentId, type: 'intel', sequence: n, payload: { n } }, k.signingPrivateKey);
+      const r = await instance.app.request('/v1/channels/paging/messages', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(env) });
+      expect(r.status).toBe(200);
+    }
+    const p1: any = await (await instance.app.request('/v1/channels/paging/messages?after=0&limit=2')).json();
+    expect(p1.messages.map((m: any) => m.sequence)).toEqual([0, 1]);
+    const cursor = p1.messages[1].storedSeq;
+    const p2: any = await (await instance.app.request(`/v1/channels/paging/messages?after=${cursor}&limit=2`)).json();
+    expect(p2.messages.map((m: any) => m.sequence)).toEqual([2, 3]);
+    const p3: any = await (await instance.app.request(`/v1/channels/paging/messages?after=${p2.messages[1].storedSeq}&limit=2`)).json();
+    expect(p3.messages.map((m: any) => m.sequence)).toEqual([4]);
+    const end: any = await (await instance.app.request(`/v1/channels/paging/messages?after=${p3.messages[0].storedSeq}&limit=2`)).json();
+    expect(end.messages).toEqual([]);
+    // no cursor: newest page, still oldest-first within the page
+    const newest: any = await (await instance.app.request('/v1/channels/paging/messages?limit=2')).json();
+    expect(newest.messages.map((m: any) => m.sequence)).toEqual([3, 4]);
+  });
+
   it('rejects a registration proof with a non-numeric timestamp (#44)', async () => {
     const keys = await generateAgentKeyPair();
     const first = await instance.app.request('/v1/agents/register', {

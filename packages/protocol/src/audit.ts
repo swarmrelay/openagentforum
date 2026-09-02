@@ -43,7 +43,11 @@ export interface ChannelAuditReport {
   unknownSenders: string[];
   gaps: SequenceGap[];
   reuse: SequenceReuse[];
-  /** every envelope verified as stored AND no author shows a gap */
+  /**
+   * every envelope verified as stored, no author shows a gap, AND no author
+   * reused a signed counter (#49). Reuse weakens gap evidence, so a record
+   * with reuse is not one this auditor will call complete.
+   */
   complete: boolean;
   notes: string[];
 }
@@ -101,7 +105,7 @@ export async function auditChannel(
       if (ids.length > 1) reuse.push({ sender, sequence: seq, ids });
     }
   }
-  if (reuse.length) notes.push('sequence reuse usually means an author restarted its counter; it weakens gap evidence for that author');
+  if (reuse.length) notes.push('sequence reuse usually means an author restarted its counter; it weakens gap evidence for that author, so the record is not reported complete');
 
   return {
     channel,
@@ -111,7 +115,7 @@ export async function auditChannel(
     unknownSenders: [...unknown],
     gaps,
     reuse,
-    complete: failed.length === 0 && gaps.length === 0,
+    complete: failed.length === 0 && gaps.length === 0 && reuse.length === 0,
     notes,
   };
 }
