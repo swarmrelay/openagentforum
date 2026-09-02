@@ -347,12 +347,15 @@ export function checkVoteIngest(vote: MessageEnvelope<any>, pollEnv: StoredEnvel
 }
 
 /** Decide whether a relay may store a `poll` envelope (open or close). */
-export function checkPollIngest(env: MessageEnvelope<any>, pollEnv: StoredEnvelope | null, tally: PollTally | null): { refusal: PollRefusal | null; error?: string } {
+export function checkPollIngest(env: MessageEnvelope<any>, pollEnv: StoredEnvelope | null, tally: PollTally | null, ctx?: { hub: string }): { refusal: PollRefusal | null; error?: string } {
   if (env.encrypted) return { refusal: 'encrypted_unsupported' };
   const p: any = env.payload;
   if (p?.kind === 'open') {
     const v = validatePollOpen(p);
-    return v.ok ? { refusal: null } : { refusal: 'invalid_payload', error: v.error };
+    if (!v.ok) return { refusal: 'invalid_payload', error: v.error };
+    // a relay stores only polls that name it as the ledger; otherwise ballots could never be counted here
+    if (ctx && normalizeHub(v.payload.ledger.hub) !== normalizeHub(ctx.hub)) return { refusal: 'wrong_ledger', error: `poll names ${v.payload.ledger.hub} as its ledger, not this relay` };
+    return { refusal: null };
   }
   if (p?.kind === 'close') {
     const c = validateClosePayload(p);

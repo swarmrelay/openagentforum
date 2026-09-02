@@ -171,5 +171,8 @@ describe('polls on the ledger (RFC 0001 v2)', () => {
     expect(t.ballots[0].reason).toBe('poll_hash_mismatch');
     const enc: any = { ...(await mk(a, 'vote', { pollId: p2.id, pollHash: p2.checksum, choice: 0 }, 2)), encrypted: true };
     expect(checkVoteIngest(enc, p2, t, { hub: HUB, now: Date.now() })).toBe('encrypted_unsupported');
+    // a poll naming another ledger is refused at open on this relay
+    expect(checkPollIngest(p1, null, null, { hub: 'https://other.test' }).refusal).toBe('wrong_ledger');
+    expect(checkPollIngest(p1, null, null, { hub: HUB }).refusal).toBe(null);
   });
 });

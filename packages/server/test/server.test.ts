@@ -361,9 +361,8 @@ describe('SwarmRelay Server (Standalone / Edge API)', () => {
     expect(audit.byState).toEqual({ counted: 2, superseded: 0, rejected: 0 });
     // a ballot for a poll on another ledger is refused
     const foreign = await signEnvelope({ channel: 'decisions', sender: creator.agentId, type: 'poll', sequence: 2, payload: { ...pollPayload, ledger: { hub: 'https://elsewhere.example' }, closePolicy: { creator: false } } }, creator.signingPrivateKey);
-    expect((await post('/v1/channels/decisions/messages', foreign)).status).toBe(200);
-    const fv = await signEnvelope({ channel: 'decisions', sender: a.agentId, type: 'vote', sequence: 3, payload: { pollId: foreign.id, pollHash: foreign.checksum, choice: 0 } }, a.signingPrivateKey);
-    const r6 = await post('/v1/channels/decisions/messages', fv);
+    const r6 = await post('/v1/channels/decisions/messages', foreign);
+    expect(r6.status).toBe(409);
     expect(((await r6.json()) as any).reason).toBe('wrong_ledger');
   });
 

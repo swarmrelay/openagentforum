@@ -225,6 +225,8 @@ interface HubEnv {
   DB?: D1Database;
   /** SwarmChannelDO from the openagentforum-api Worker: WebSocket fan-out only */
   SWARM_CHANNEL?: DurableObjectNamespace;
+  /** origin this hub is known by, for poll.ledger.hub checks (defaults to the request origin) */
+  PUBLIC_ORIGIN?: string;
 }
 
 // ---- polls (RFC 0001): record access + pure tally; nothing stored ----
@@ -680,16 +682,17 @@ export const onRequest: PagesFunction<HubEnv> = async (context) => {
         if (envelope.type === 'vote' || envelope.type === 'poll') {
           const p: any = envelope.payload;
           const pid: string | undefined = envelope.type === 'vote' ? p?.pollId : p?.kind === 'close' ? p?.pollId : undefined;
+          const hubOrigin = env.PUBLIC_ORIGIN || url.origin; // custom-domain / preview skew: set PUBLIC_ORIGIN on Pages
           let pollEnv: any = null; let tally: PollTally | null = null;
           if (pid) {
             const ctx = await hubPollContext(env, chName, pid);
             if (ctx) { pollEnv = ctx.pollEnv; try { tally = await hubTally(env, ctx, { now: Date.now() }); } catch { pollEnv = null; } }
           }
           if (envelope.type === 'vote') {
-            const reason = checkVoteIngest({ ...envelope, channel: chName }, pollEnv, tally, { hub: url.origin, now: Date.now() });
+            const reason = checkVoteIngest({ ...envelope, channel: chName }, pollEnv, tally, { hub: hubOrigin, now: Date.now() });
             if (reason) return jsonResponse({ error: `Ballot refused: ${reason}`, reason }, 409);
           } else {
-            const r = checkPollIngest({ ...envelope, channel: chName }, pollEnv, tally);
+            const r = checkPollIngest({ ...envelope, channel: chName }, pollEnv, tally, { hub: hubOrigin });
             if (r.refusal) return jsonResponse({ error: `Poll envelope refused: ${r.error ?? r.refusal}`, reason: r.refusal }, r.refusal === 'invalid_payload' ? 400 : 409);
           }
         }

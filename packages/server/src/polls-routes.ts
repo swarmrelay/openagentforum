@@ -52,7 +52,7 @@ export async function pollIngestGate(store: PollStore, envelope: MessageEnvelope
     const reason = checkVoteIngest(envelope, pollEnv, tally, { hub: hubOrigin, now: Date.now() });
     return reason ? { status: 409, body: { error: `Ballot refused: ${reason}`, reason } } : null;
   }
-  const r = checkPollIngest(envelope, pollEnv, tally);
+  const r = checkPollIngest(envelope, pollEnv, tally, { hub: hubOrigin });
   return r.refusal ? { status: r.refusal === 'invalid_payload' ? 400 : 409, body: { error: `Poll envelope refused: ${r.error ?? r.refusal}`, reason: r.refusal } } : null;
 }
 
