@@ -158,6 +158,45 @@ describe('SwarmRelay Server (Standalone / Edge API)', () => {
     expect((await reg(second, 'Herald-2')).status).toBe(200);
   });
 
+  it('name claims survive whitespace, lookalikes, and invisible characters (#64)', async () => {
+    const owner = await generateAgentKeyPair();
+    const reg = async (name: string) => instance.app.request('/v1/agents/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, publicKey: (await generateAgentKeyPair()).signingPublicKey }) });
+    expect((await instance.app.request('/v1/agents/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Vigil', publicKey: owner.signingPublicKey }) })).status).toBe(200);
+    expect((await reg('Vigil ')).status).toBe(409);          // trailing space
+    expect((await reg(' vigil')).status).toBe(409);          // leading space + case
+    expect((await reg('V i g i l')).status).toBe(409);       // inner whitespace
+    expect((await reg('Vigil_')).status).toBe(409);          // punctuation padding
+    expect((await reg('V\u0456g\u0456l')).status).toBe(409); // Cyrillic і lookalikes
+    expect((await reg('Ｖｉｇｉｌ')).status).toBe(409);        // fullwidth (NFKC)
+    const zw = await reg('Vig\u200bil');                     // zero-width space
+    expect(zw.status).toBe(400);
+    expect((await reg('\u0007Vigil')).status).toBe(400);     // control char
+    expect((await reg('Vigilant')).status).toBe(200);        // a different name is fine
+  });
+
+  it('backfills name_key for agents from a pre-#64 database on startup', async () => {
+    const legacy = 'test-legacy.sqlite';
+    if (fs.existsSync(legacy)) fs.unlinkSync(legacy);
+    const { DatabaseSync } = (await import('node:module')).createRequire(import.meta.url)('node:sqlite');
+    const db = new DatabaseSync(legacy);
+    db.exec(`CREATE TABLE agents (agent_id TEXT PRIMARY KEY, name TEXT NOT NULL, public_key TEXT NOT NULL, x25519_public_key TEXT,
+      capabilities_json TEXT NOT NULL DEFAULT '[]', metadata_json TEXT DEFAULT '{}', registered_at INTEGER NOT NULL, last_seen_at INTEGER NOT NULL,
+      reputation_score INTEGER NOT NULL DEFAULT 100, endpoint TEXT)`);
+    db.prepare("INSERT INTO agents (agent_id, name, public_key, registered_at, last_seen_at) VALUES ('agent_aaaaaaaaaaaaaaaa', 'Herald', 'aa', 1, 1)").run();
+    db.prepare("INSERT INTO agents (agent_id, name, public_key, registered_at, last_seen_at) VALUES ('agent_bbbbbbbbbbbbbbbb', 'herald ', 'bb', 2, 9)").run();
+    db.close();
+    const upgraded = createStandaloneServer({ dbPath: legacy, relayName: 'Legacy' });
+    const list: any = await (await upgraded.app.request('/v1/agents')).json();
+    const names = Object.fromEntries(list.agents.map((a: any) => [a.agentId, a.name]));
+    expect(names['agent_bbbbbbbbbbbbbbbb']).toBe('herald ');   // most recently active keeps the bare claim
+    expect(names['agent_aaaaaaaaaaaaaaaa']).toBe('Herald~aaaaaa');
+    // and the claim now holds against a newcomer
+    const k = await generateAgentKeyPair();
+    const r = await upgraded.app.request('/v1/agents/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'HERALD', publicKey: k.signingPublicKey }) });
+    expect(r.status).toBe(409);
+    fs.unlinkSync(legacy);
+  });
+
   it('pages a channel ascending from an explicit ?after cursor, including 0 (#54)', async () => {
     const k = await generateAgentKeyPair();
     await instance.app.request('/v1/agents/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Pager', publicKey: k.signingPublicKey }) });

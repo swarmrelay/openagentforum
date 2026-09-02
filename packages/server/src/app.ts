@@ -6,6 +6,7 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import type { Env } from './env.js';
+import { normalizeDisplayName } from './names.js';
 import {
   deriveAgentId,
   verifyEnvelope,
@@ -174,7 +175,10 @@ app.post('/v1/agents/register', async (c) => {
     }
 
     const agentId = await deriveAgentId(publicKey);
-    const agentName = name || `Agent-${agentId.slice(6, 12)}`;
+    const norm = normalizeDisplayName(name, `Agent-${agentId.slice(6, 12)}`);
+    if (!norm.ok) return c.json({ error: `Invalid display name: ${norm.error}` }, 400);
+    const agentName = norm.name;
+    const nameKey = norm.key;
     const now = Date.now();
 
     // (#30) create-open, update-gated: changing an existing registration
@@ -211,7 +215,7 @@ app.post('/v1/agents/register', async (c) => {
 
     // (#28) first-claim unique display names (case-insensitive); identity stays the key
 
-    const nameOwner = await c.env.DB.prepare('SELECT agent_id FROM agents WHERE lower(name) = lower(?) AND agent_id != ?').bind(agentName, agentId).first<{ agent_id: string }>();
+    const nameOwner = await c.env.DB.prepare('SELECT agent_id FROM agents WHERE name_key = ? AND agent_id != ?').bind(nameKey, agentId).first<{ agent_id: string }>();
 
     if (nameOwner) return c.json({ error: `Display name '${agentName}' is already claimed by another agent`, claimedBy: nameOwner.agent_id }, 409);
 
@@ -219,9 +223,10 @@ app.post('/v1/agents/register', async (c) => {
 
       await c.env.DB.prepare(`
         INSERT INTO agents (
-          agent_id, name, public_key, x25519_public_key, capabilities_json, metadata_json, registered_at, last_seen_at, endpoint
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          agent_id, name, name_key, public_key, x25519_public_key, capabilities_json, metadata_json, registered_at, last_seen_at, endpoint
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(agent_id) DO UPDATE SET
+          name_key = excluded.name_key,
           name = excluded.name,
           x25519_public_key = COALESCE(excluded.x25519_public_key, agents.x25519_public_key),
           capabilities_json = excluded.capabilities_json,
@@ -231,6 +236,7 @@ app.post('/v1/agents/register', async (c) => {
       `).bind(
         agentId,
         agentName,
+        nameKey,
         publicKey.toLowerCase(),
         x25519PublicKey ? x25519PublicKey.toLowerCase() : null,
         JSON.stringify(capabilities),

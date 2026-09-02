@@ -25,6 +25,7 @@ import path from 'node:path';
 
 const require = createRequire(import.meta.url);
 const { DatabaseSync } = require('node:sqlite');
+import { normalizeDisplayName, displayNameKey } from './names.js';
 
 export interface StandaloneConfig {
   port?: number;
@@ -48,6 +49,7 @@ export function createStandaloneServer(config: StandaloneConfig = {}): Standalon
   db.exec('PRAGMA journal_mode = WAL;');
 
   // Initialize SQLite Tables
+  try { db.exec('ALTER TABLE agents ADD COLUMN name_key TEXT'); } catch { /* fresh db or column already present */ }
   db.exec(`
     CREATE TABLE IF NOT EXISTS agents (
       agent_id TEXT PRIMARY KEY,
@@ -59,8 +61,10 @@ export function createStandaloneServer(config: StandaloneConfig = {}): Standalon
       registered_at INTEGER NOT NULL,
       last_seen_at INTEGER NOT NULL,
       reputation_score INTEGER NOT NULL DEFAULT 100,
-      endpoint TEXT
+      endpoint TEXT,
+      name_key TEXT
     );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_agents_name_key ON agents (name_key);
 
     CREATE TABLE IF NOT EXISTS channels (
       name TEXT PRIMARY KEY,
@@ -110,6 +114,19 @@ export function createStandaloneServer(config: StandaloneConfig = {}): Standalon
       updated_at INTEGER NOT NULL
     );
   `);
+  // (#64) Backfill keys for rows from before this column existed. SQLite's
+  // UNIQUE allows many NULLs and the claim check is `name_key = ?`, so an
+  // un-keyed row could be re-claimed. Pre-existing collisions keep the bare
+  // name on the most recently active key; the others get a ~<suffix>.
+  for (const r of db.prepare('SELECT agent_id, name FROM agents WHERE name_key IS NULL ORDER BY last_seen_at DESC').all() as any[]) {
+    let name = r.name;
+    let key = displayNameKey(name);
+    if (db.prepare('SELECT 1 FROM agents WHERE name_key = ? AND agent_id != ?').get(key, r.agent_id)) {
+      name = `${r.name}~${r.agent_id.slice(6, 12)}`;
+      key = displayNameKey(name);
+    }
+    db.prepare('UPDATE agents SET name = ?, name_key = ? WHERE agent_id = ?').run(name, key, r.agent_id);
+  }
 
   // Seed default public channels if empty
   const channelCount = db.prepare('SELECT COUNT(*) as count FROM channels').get() as { count: number };
@@ -254,7 +271,10 @@ export function createStandaloneServer(config: StandaloneConfig = {}): Standalon
     if (!publicKey) return c.json({ error: 'publicKey required' }, 400);
 
     const agentId = await deriveAgentId(publicKey);
-    const agentName = name || `Agent-${agentId.slice(6, 12)}`;
+    const norm = normalizeDisplayName(name, `Agent-${agentId.slice(6, 12)}`);
+    if (!norm.ok) return c.json({ error: `Invalid display name: ${norm.error}` }, 400);
+    const agentName = norm.name;
+    const nameKey = norm.key;
     const now = Date.now();
 
     // (#30) anyone can create; only the keyholder can change. Updates to an
@@ -291,17 +311,18 @@ export function createStandaloneServer(config: StandaloneConfig = {}): Standalon
 
     // (#28) first-claim unique display names (case-insensitive); identity stays the key
 
-    const nameOwner = db.prepare('SELECT agent_id FROM agents WHERE lower(name) = lower(?) AND agent_id != ?').get(agentName, agentId) as any;
+    const nameOwner = db.prepare('SELECT agent_id FROM agents WHERE name_key = ? AND agent_id != ?').get(nameKey, agentId) as any;
 
     if (nameOwner) return c.json({ error: `Display name '${agentName}' is already claimed by another agent`, claimedBy: nameOwner.agent_id }, 409);
 
     try {
 
       db.prepare(`
-        INSERT INTO agents (agent_id, name, public_key, x25519_public_key, capabilities_json, metadata_json, registered_at, last_seen_at, endpoint)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO agents (agent_id, name, name_key, public_key, x25519_public_key, capabilities_json, metadata_json, registered_at, last_seen_at, endpoint)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(agent_id) DO UPDATE SET
           name = excluded.name,
+          name_key = excluded.name_key,
           x25519_public_key = COALESCE(excluded.x25519_public_key, agents.x25519_public_key),
           capabilities_json = excluded.capabilities_json,
           metadata_json = excluded.metadata_json,
@@ -310,6 +331,7 @@ export function createStandaloneServer(config: StandaloneConfig = {}): Standalon
       `).run(
         agentId,
         agentName,
+        nameKey,
         publicKey.toLowerCase(),
         x25519PublicKey ? x25519PublicKey.toLowerCase() : null,
         JSON.stringify(capabilities),
