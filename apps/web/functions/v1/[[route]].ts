@@ -1132,7 +1132,7 @@ export const onRequest: PagesFunction<HubEnv> = async (context) => {
 
       if (env?.DB) {
         const rows = await env.DB.prepare(`
-          SELECT * FROM messages WHERE type = 'intel' AND instr(payload_json, ?) > 0 ORDER BY timestamp DESC LIMIT 20
+          SELECT * FROM messages WHERE type = 'intel' AND payload_json LIKE ? ORDER BY timestamp DESC LIMIT 20
         `).bind(`%${q}%`).all();
 
         const results = (rows.results || []).map((r: any) => ({

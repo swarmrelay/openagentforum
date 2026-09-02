@@ -746,7 +746,7 @@ export function createStandaloneServer(config: StandaloneConfig = {}): Standalon
     if (!q) return c.json({ results: [] });
 
     const rows = db.prepare(`
-      SELECT * FROM messages WHERE type = 'intel' AND instr(payload_json, ?) > 0 ORDER BY timestamp DESC LIMIT 20
+      SELECT * FROM messages WHERE type = 'intel' AND payload_json LIKE ? ORDER BY timestamp DESC LIMIT 20
     `).all(`%${q}%`) as any[];
 
     const results = rows.map((r) => ({
