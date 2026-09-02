@@ -161,6 +161,21 @@ describe('polls on the ledger (RFC 0001 v2)', () => {
     expect(tc.ballots.find((b) => b.id === after.id)!.reason).toBe('poll_closed');
   });
 
+  it('open electorate: a key registered after the poll is not a voter (#80), and the tally says the basis is registry-trusted', async () => {
+    const { keys, resolve } = await setup(3);
+    const [creator, early, late] = keys;
+    const pollEnv = stored(await mk(creator, 'poll', { kind: 'open', title: 'Open q', options: ['a', 'b'], ledger: { hub: HUB }, electorate: { type: 'open' }, closes: { at: Date.now() + 60_000 }, rule: { method: 'plurality' } }));
+    const registeredAt = async (id: string) => (id === early.agentId ? pollEnv.timestamp - 1000 : id === late.agentId ? pollEnv.timestamp + 1000 : pollEnv.timestamp - 5000);
+    const vote = (k: any, choice: number) => mk(k, 'vote', { pollId: pollEnv.id, pollHash: pollEnv.checksum, choice }, 1);
+    const cands = [stored(await vote(early, 0)), stored(await vote(late, 1))];
+    const t = await tallyPoll(pollEnv, cands, resolve, { registeredAt });
+    expect(t.electorateBasis).toBe('registry-trusted');
+    expect(t.ballots.map((b) => b.state)).toEqual(['counted', 'rejected']);
+    expect(t.ballots[1].reason).toBe('not_in_electorate');
+    expect(checkVoteIngest(await vote(late, 0), pollEnv, t, { hub: HUB, now: Date.now(), voterRegisteredAt: pollEnv.timestamp + 1 })).toBe('not_in_electorate');
+    expect(checkVoteIngest(await vote(creator, 0), pollEnv, t, { hub: HUB, now: Date.now(), voterRegisteredAt: pollEnv.timestamp - 1 })).toBe(null);
+  });
+
   it('refuses ballots for a re-issued poll (pollHash) and encrypted ballots', async () => {
     const { keys, resolve } = await setup(2);
     const [creator, a] = keys;

@@ -216,6 +216,7 @@ async function verifyTaskActionHub(action: 'create' | 'claim' | 'submit', taskId
   if (typeof signature !== 'string' || timestamp === undefined || timestamp === null) return { valid: false, error: `signature and timestamp required: sign 'task|${action}|${taskId}|${agentId}|<timestamp>|<sha256(canonicalJson(payload))>' with your Ed25519 key` };
   const ts = Number(timestamp);
   if (!Number.isFinite(ts) || Math.abs(Date.now() - ts) > PROOF_SKEW_MS) return { valid: false, error: 'timestamp outside the allowed window' };
+  if (!/^[0-9a-f]{128}$/.test(signature)) return { valid: false, error: 'signature must be 128 lowercase hex characters' }; // (#78) canonical encoding
   const checksum = await sha256Hex(canonicalizeJson(payload));
   const ok = await verifyEd25519Sig(`task|${action}|${taskId}|${agentId}|${ts}|${checksum}`, signature, publicKeyHex);
   return ok ? { valid: true } : { valid: false, error: `invalid ${action} signature` };
@@ -255,9 +256,13 @@ async function hubPollKey(env: HubEnv, cache: Map<string, string | null>, agentI
   cache.set(agentId, pub);
   return pub;
 }
+async function hubRegisteredAt(env: HubEnv, agentId: string): Promise<number | null> {
+  if (env.DB) return (await env.DB.prepare('SELECT registered_at FROM agents WHERE agent_id = ?').bind(agentId).first<{ registered_at: number }>())?.registered_at ?? null;
+  return memoryFallback.agents.get(agentId)?.registeredAt ?? null;
+}
 async function hubTally(env: HubEnv, ctx: { pollEnv: any; cands: any[] }, opts: { atSeq?: number; now?: number }) {
   const cache = new Map<string, string | null>();
-  return tallyPoll(ctx.pollEnv, ctx.cands.filter(isPollCandidate), (id) => hubPollKey(env, cache, id), opts);
+  return tallyPoll(ctx.pollEnv, ctx.cands.filter(isPollCandidate), (id) => hubPollKey(env, cache, id), { ...opts, registeredAt: (id) => hubRegisteredAt(env, id) });
 }
 async function hubListPolls(env: HubEnv, channel: string | null, limit: number): Promise<any[]> {
   if (env.DB) {
@@ -689,7 +694,7 @@ export const onRequest: PagesFunction<HubEnv> = async (context) => {
             if (ctx) { pollEnv = ctx.pollEnv; try { tally = await hubTally(env, ctx, { now: Date.now() }); } catch { pollEnv = null; } }
           }
           if (envelope.type === 'vote') {
-            const reason = checkVoteIngest({ ...envelope, channel: chName }, pollEnv, tally, { hub: hubOrigin, now: Date.now() });
+            const reason = checkVoteIngest({ ...envelope, channel: chName }, pollEnv, tally, { hub: hubOrigin, now: Date.now(), voterRegisteredAt: await hubRegisteredAt(env, envelope.sender) });
             if (reason) return jsonResponse({ error: `Ballot refused: ${reason}`, reason }, 409);
           } else {
             const r = checkPollIngest({ ...envelope, channel: chName }, pollEnv, tally, { hub: hubOrigin });
@@ -996,7 +1001,7 @@ export const onRequest: PagesFunction<HubEnv> = async (context) => {
 
       // (#71) the id is derived from the creator's proof, so a replayed create
       // body maps to the same task instead of minting duplicates
-      const taskId = `task_${(await sha256Hex(signature)).slice(0, 12)}`;
+      const taskId = `task_${(await sha256Hex(signature)).slice(0, 16)}`;
       const now = Date.now();
       if (env?.DB) {
         const dup = await env.DB.prepare('SELECT id FROM tasks WHERE id = ?').bind(taskId).first();

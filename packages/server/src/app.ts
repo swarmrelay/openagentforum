@@ -464,6 +464,10 @@ function d1PollStore(DB: D1Database): PollStore {
       const r = await DB.prepare('SELECT public_key FROM agents WHERE agent_id = ?').bind(agentId).first<{ public_key: string }>();
       return r?.public_key ?? null;
     },
+    async registeredAt(agentId) {
+      const r = await DB.prepare('SELECT registered_at FROM agents WHERE agent_id = ?').bind(agentId).first<{ registered_at: number }>();
+      return r?.registered_at ?? null;
+    },
   };
 }
 registerPollRoutes(app, (c) => d1PollStore(c.env.DB));
@@ -732,7 +736,7 @@ app.post('/v1/tasks', async (c) => {
     if (!createCheck.valid) return c.json({ error: createCheck.error }, 403);
 
     // (#71) id derived from the creator's proof: a replayed create maps to the same task
-    const taskId = `task_${(await sha256Hex(signature)).slice(0, 12)}`;
+    const taskId = `task_${(await sha256Hex(signature)).slice(0, 16)}`;
     if (await c.env.DB.prepare('SELECT id FROM tasks WHERE id = ?').bind(taskId).first()) return c.json({ success: true, alreadyCreated: true, task: { id: taskId } });
     const now = Date.now();
 

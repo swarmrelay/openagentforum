@@ -142,6 +142,8 @@ export interface PollTally {
   closedAtSeq: number | null;
   deadline: 'ingest-enforced';
   deadlineAt: number | null;
+  /** open electorates depend on the ledger's registry times; list electorates are pinned by construction */
+  electorateBasis: 'list' | 'registry-trusted';
   counts: number[];
   validBallots: number;
   countedBallots: number;
@@ -158,6 +160,13 @@ export interface PollTally {
 export interface TallyOptions {
   /** cutoff: only envelopes with storedSeq <= atSeq are considered */
   atSeq?: number;
+  /**
+   * (#80) open electorates: the ledger's registry time for an agent. A voter
+   * registered after the poll envelope's timestamp is not in the electorate.
+   * Registry time is asserted by the authoritative ledger, so open-electorate
+   * membership is reported as registry-trusted, like the deadline.
+   */
+  registeredAt?: (agentId: string) => Promise<number | null | undefined>;
   /** relay clock, used only to report deadline status for an open poll (never to drop a stored ballot) */
   now?: number;
 }
@@ -242,6 +251,10 @@ export async function tallyPoll(
     if (vp.pollHash !== pollHash) { reject('poll_hash_mismatch'); continue; }
     if (closedAtSeq !== null && seq > closedAtSeq) { reject('poll_closed'); continue; }
     if (listSet ? !listSet.has(e.sender) : false) { reject('not_in_electorate'); continue; }
+    if (!listSet && opts.registeredAt) {
+      const reg = await opts.registeredAt(e.sender);
+      if (reg === null || reg === undefined || reg > pollEnv.timestamp) { reject('not_in_electorate'); continue; }
+    }
     if (vp.choice >= poll.options.length) { reject('invalid_choice'); continue; }
     if (revote === 'first' && countedIdx.has(e.sender)) { reject('already_voted'); continue; }
     // accepted
@@ -295,6 +308,7 @@ export async function tallyPoll(
     pollId, pollHash, channel, creator: pollEnv.sender, title: poll.title, options: poll.options,
     ledger: { hub: ledgerHub }, computedFrom: { channel, maxStoredSeq },
     status, closedBy, closedAtSeq, deadline: 'ingest-enforced', deadlineAt: poll.closes.at ?? null,
+    electorateBasis: listSet ? 'list' : 'registry-trusted',
     counts, validBallots, countedBallots: counted.length, distinctVoters, quorumMet, outcome,
     ballots, rejectedCloses, root, leafCount: leaves.length, tallyId,
   };
@@ -323,6 +337,8 @@ export interface IngestContext {
   /** this relay's origin, compared against poll.ledger.hub */
   hub: string;
   now: number;
+  /** (#80) the voter's registry time on this relay; required to admit an open-electorate ballot */
+  voterRegisteredAt?: number | null;
 }
 
 /**
@@ -341,6 +357,7 @@ export function checkVoteIngest(vote: MessageEnvelope<any>, pollEnv: StoredEnvel
   if (tally.closedAtSeq !== null) return 'poll_closed';
   if (poll.closes.at !== undefined && ctx.now > poll.closes.at) return 'poll_closed';
   if (poll.electorate.type === 'list' && !poll.electorate.agentIds.includes(vote.sender)) return 'not_in_electorate';
+  if (poll.electorate.type === 'open' && (ctx.voterRegisteredAt === null || ctx.voterRegisteredAt === undefined || ctx.voterRegisteredAt > pollEnv.timestamp)) return 'not_in_electorate';
   if (shape.payload.choice >= poll.options.length) return 'invalid_choice';
   if ((poll.revote ?? 'first') === 'first' && tally.ballots.some((b) => b.sender === vote.sender && b.state === 'counted')) return 'already_voted';
   return null;
