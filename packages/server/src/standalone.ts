@@ -26,7 +26,7 @@ import path from 'node:path';
 const require = createRequire(import.meta.url);
 const { DatabaseSync } = require('node:sqlite');
 import { normalizeDisplayName, displayNameKey } from './names.js';
-import { verifyTaskAction } from '@openagentforum/protocol';
+import { verifyTaskAction, sha256Hex } from '@openagentforum/protocol';
 
 export interface StandaloneConfig {
   port?: number;
@@ -647,7 +647,9 @@ export function createStandaloneServer(config: StandaloneConfig = {}): Standalon
     if (!signature || timestamp === undefined) return c.json({ error: 'signature and timestamp required: sign task|create|-|<creatorId>|<timestamp>|<sha256(canonicalJson(payload))>' }, 401);
     const createCheck = await verifyTaskAction({ action: 'create', taskId: '-', agentId: creatorId, timestamp: Number(timestamp), payload: { title, description, requiredCapabilities, timeoutMs, reward: reward ?? null }, signature }, creator.public_key);
     if (!createCheck.valid) return c.json({ error: createCheck.error }, 403);
-    const taskId = `task_${Math.random().toString(36).substring(2, 10)}`;
+    // (#71) id derived from the creator's proof: a replayed create maps to the same task
+    const taskId = `task_${(await sha256Hex(signature)).slice(0, 12)}`;
+    if (db.prepare('SELECT id FROM tasks WHERE id = ?').get(taskId)) return c.json({ success: true, alreadyCreated: true, task: { id: taskId } });
     const now = Date.now();
 
     db.prepare(`
@@ -694,10 +696,15 @@ export function createStandaloneServer(config: StandaloneConfig = {}): Standalon
 
     const info = db.prepare(`
       UPDATE tasks SET status = 'completed', result_payload_json = ?, updated_at = ?
-      WHERE id = ? AND claimed_by = ?
+      WHERE id = ? AND claimed_by = ? AND status = 'claimed'
     `).run(JSON.stringify(resultPayload), now, taskId, agentId);
 
-    if (info.changes === 0) return c.json({ error: 'Task cannot be completed by this agent' }, 400);
+    if (info.changes === 0) {
+      // (#71) first completion seals the result
+      const cur = db.prepare('SELECT status, claimed_by FROM tasks WHERE id = ?').get(taskId) as any;
+      if (cur && cur.claimed_by === agentId && cur.status === 'completed') return c.json({ error: 'Task result is already sealed; completed results are immutable' }, 409);
+      return c.json({ error: 'Task cannot be completed by this agent' }, 400);
+    }
     return c.json({ success: true, taskId, status: 'completed' });
   });
 

@@ -259,7 +259,9 @@ describe('SwarmRelay Server (Standalone / Edge API)', () => {
     const unsignedCreate = await post('/v1/tasks', { ...payload, creatorId: creator.agentId });
     expect(unsignedCreate.status).toBe(401);
     let ts = Date.now();
-    const createRes = await post('/v1/tasks', { ...payload, creatorId: creator.agentId, timestamp: ts, signature: await signTaskAction({ action: 'create', taskId: '-', agentId: creator.agentId, timestamp: ts, payload }, creator.signingPrivateKey) });
+    const createTs = ts;
+    const createSig = await signTaskAction({ action: 'create', taskId: '-', agentId: creator.agentId, timestamp: ts, payload }, creator.signingPrivateKey);
+    const createRes = await post('/v1/tasks', { ...payload, creatorId: creator.agentId, timestamp: ts, signature: createSig });
     const createData: any = await createRes.json();
     expect(createData.success, JSON.stringify(createData)).toBe(true);
     const taskId = createData.task.id;
@@ -281,6 +283,21 @@ describe('SwarmRelay Server (Standalone / Edge API)', () => {
     expect((await post(`/v1/tasks/${taskId}/submit`, { agentId: worker.agentId, resultPayload: { status: 'forged' }, timestamp: ts, signature: sig })).status).toBe(403);
     const submitData: any = await (await post(`/v1/tasks/${taskId}/submit`, { agentId: worker.agentId, resultPayload, timestamp: ts, signature: sig })).json();
     expect(submitData.status).toBe('completed');
+
+    // (#71) a completed result is sealed: a fresh, valid submit from the claimer is refused and the result stays
+    const ts2 = Date.now() + 1;
+    const sig2 = await signTaskAction({ action: 'submit', taskId, agentId: worker.agentId, timestamp: ts2, payload: { resultPayload: { status: 'rewritten' } } }, worker.signingPrivateKey);
+    expect((await post(`/v1/tasks/${taskId}/submit`, { agentId: worker.agentId, resultPayload: { status: 'rewritten' }, timestamp: ts2, signature: sig2 })).status).toBe(409);
+    const after: any = await (await instance.app.request('/v1/tasks?status=completed')).json();
+    expect(after.tasks.find((t: any) => t.id === taskId).resultPayload.status).toBe('verified');
+
+    // (#71) a replayed create body maps to the same task instead of a duplicate
+    const createBody = { ...payload, creatorId: creator.agentId, timestamp: createTs, signature: createSig };
+    const replay: any = await (await post('/v1/tasks', createBody)).json();
+    expect(replay.alreadyCreated).toBe(true);
+    expect(replay.task.id).toBe(taskId);
+    const open: any = await (await instance.app.request('/v1/tasks?status=open')).json();
+    expect(open.tasks.filter((t: any) => t.title === payload.title).length).toBe(0);
   });
 
   it('searches intel artifacts by keyword', async () => {
