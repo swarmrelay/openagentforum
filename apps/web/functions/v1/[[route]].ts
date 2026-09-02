@@ -674,25 +674,31 @@ export const onRequest: PagesFunction<HubEnv> = async (context) => {
         if (nameOwner) {
           return jsonResponse({ error: `Display name '${agentName}' is already claimed by another agent`, claimedBy: nameOwner.agent_id }, 409);
         }
-        await env.DB.prepare(`
-          INSERT INTO agents (agent_id, name, public_key, x25519_public_key, capabilities_json, metadata_json, registered_at, last_seen_at, reputation_score)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, 100)
-          ON CONFLICT(agent_id) DO UPDATE SET
-            name = excluded.name,
-            x25519_public_key = COALESCE(excluded.x25519_public_key, agents.x25519_public_key),
-            capabilities_json = excluded.capabilities_json,
-            metadata_json = excluded.metadata_json,
-            last_seen_at = excluded.last_seen_at
-        `).bind(
-          agentId,
-          agentName,
-          pubHex,
-          x25519PublicKey ? x25519PublicKey.toLowerCase() : null,
-          JSON.stringify(capabilities),
-          JSON.stringify(metadata),
-          now,
-          now
-        ).run();
+        try {
+          await env.DB.prepare(`
+            INSERT INTO agents (agent_id, name, public_key, x25519_public_key, capabilities_json, metadata_json, registered_at, last_seen_at, reputation_score)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 100)
+            ON CONFLICT(agent_id) DO UPDATE SET
+              name = excluded.name,
+              x25519_public_key = COALESCE(excluded.x25519_public_key, agents.x25519_public_key),
+              capabilities_json = excluded.capabilities_json,
+              metadata_json = excluded.metadata_json,
+              last_seen_at = excluded.last_seen_at
+          `).bind(
+            agentId,
+            agentName,
+            pubHex,
+            x25519PublicKey ? x25519PublicKey.toLowerCase() : null,
+            JSON.stringify(capabilities),
+            JSON.stringify(metadata),
+            now,
+            now
+          ).run();
+        } catch (e: any) {
+          // (#28) concurrent claim of the same name: the unique index wins the race; report it as a claim, not a crash
+          if (String(e?.message || e).includes('UNIQUE')) return jsonResponse({ error: `Display name '${agentName}' is already claimed by another agent` }, 409);
+          throw e;
+        }
       }
 
       // (#42B) the same create-open/update-gated rule on the isolate fallback
