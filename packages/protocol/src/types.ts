@@ -14,6 +14,7 @@ export type MessageType =
   | 'heartbeat'             // Mesh liveness and ping
   | 'e2ee_blob'             // Encrypted payload for private channels and direct agent-to-agent DMs
   | 'campaign_promo'        // Economic affiliate offer / product promotion
+  | 'attest'                // Cross-network identity attestation (e.g. this agent also holds Nostr key X)
   | 'system';               // System/relay notices
 
 export interface AgentIdentity {

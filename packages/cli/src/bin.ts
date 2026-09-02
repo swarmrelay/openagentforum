@@ -6,7 +6,7 @@
 
 import { serve } from '@hono/node-server';
 import { createStandaloneServer } from '@openagentforum/server/standalone';
-import { generateAgentKeyPair } from '@openagentforum/protocol';
+import { generateAgentKeyPair, auditChannel } from '@openagentforum/protocol';
 import { SwarmClient } from '@openagentforum/sdk';
 import { runStdioMcpServer } from '@openagentforum/mcp';
 import fs from 'node:fs';
@@ -34,7 +34,6 @@ async function main() {
 ┌─────────────────────────────────────────────────────────────┐
 │  ⚡ SwarmRelay Standalone Server Running                      │
 │  • HTTP API:       http://localhost:${info.port}                   │
-│  • WebSockets:     ws://localhost:${info.port}/v1/channels/:name/ws │
 │  • SSE Stream:     http://localhost:${info.port}/v1/channels/:name/stream │
 │  • Discovery:      http://localhost:${info.port}/.well-known/agent-mesh.json │
 └─────────────────────────────────────────────────────────────┘
@@ -42,6 +41,48 @@ async function main() {
         }
       );
       break;
+    }
+
+    case 'verify': {
+      // swarmrelay verify <channel> [--hub URL] [--json]
+      // Replays a channel's stored record: every envelope re-verified against
+      // its sender's registered key, plus per-author sequence gaps (evidence
+      // of withheld or lost messages) and counter reuse.
+      const channel = args[1];
+      if (!channel || channel.startsWith('--')) {
+        console.error('usage: swarmrelay verify <channel> [--hub https://openagentforum.com] [--json]');
+        process.exit(64);
+      }
+      const hubIdx = args.indexOf('--hub');
+      const hub = (hubIdx !== -1 ? args[hubIdx + 1] : 'https://openagentforum.com').replace(/\/$/, '');
+      const asJson = args.includes('--json');
+      const hdr = { 'User-Agent': 'SwarmRelay-CLI/1.0' };
+      const rec: any = await (await fetch(`${hub}/v1/channels/${channel}/messages`, { headers: hdr })).json();
+      const cache = new Map<string, string | null>();
+      const report = await auditChannel(channel, rec.messages || [], async (id) => {
+        if (!cache.has(id)) {
+          try {
+            const a: any = await (await fetch(`${hub}/v1/agents/${encodeURIComponent(id)}`, { headers: hdr })).json();
+            cache.set(id, a?.agent?.publicKey ?? null);
+          } catch { cache.set(id, null); }
+        }
+        return cache.get(id) ?? null;
+      });
+      if (asJson) {
+        console.log(JSON.stringify(report, null, 2));
+      } else {
+        console.log(`\n#${channel} @ ${hub}`);
+        console.log(`  envelopes: ${report.total}   verified as stored: ${report.verified}   failed: ${report.failed.length}`);
+        for (const f of report.failed) console.log(`  ✗ ${f.id}  ${f.sender}  seq ${f.sequence}  ${f.error}`);
+        if (report.gaps.length) {
+          console.log('  sequence gaps (withheld or lost between an author\'s signed counters):');
+          for (const g of report.gaps) console.log(`  ! ${g.sender}  observed ${g.observedMin}..${g.observedMax}  missing ${g.missing.join(', ')}`);
+        }
+        for (const r of report.reuse) console.log(`  ~ ${r.sender}  sequence ${r.sequence} used ${r.ids.length}x (counter reset?)`);
+        for (const n of report.notes) console.log(`  · ${n}`);
+        console.log(report.complete ? '  ✓ record is complete and verifies as stored' : '  ✗ record is NOT complete');
+      }
+      process.exit(report.complete ? 0 : report.failed.length ? 2 : 1);
     }
 
     case 'keygen': {
