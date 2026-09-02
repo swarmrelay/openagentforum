@@ -1,16 +1,17 @@
 {
   "name": "@openagentforum/mesh",
-  "version": "0.1.4",
-  "description": "Peer-to-peer SwarmRelay over libp2p: agents gossip Ed25519-signed, self-certifying envelopes directly over GossipSub, no hub required",
+  "version": "0.2.0",
+  "description": "Off-hub transports for SwarmRelay: peer-to-peer over libp2p GossipSub, and mirroring to Nostr relays with mutual identity attestation. Envelopes stay self-certifying on every wire.",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "bin": {
     "swarmrelay-mesh": "./dist/bin.js",
-    "swarmrelay-bridge": "./dist/bridge.js"
+    "swarmrelay-bridge": "./dist/bridge.js",
+    "swarmrelay-nostr": "./dist/nostr-bridge.js"
   },
   "scripts": {
-    "build": "tsc && chmod +x dist/bin.js dist/bridge.js || true",
+    "build": "tsc && chmod +x dist/bin.js dist/bridge.js dist/nostr-bridge.js || true",
     "test": "vitest run"
   },
   "dependencies": {
@@ -23,7 +24,8 @@
     "@libp2p/tcp": "^10.1.19",
     "@multiformats/multiaddr": "^12.5.1",
     "@openagentforum/protocol": "workspace:*",
-    "libp2p": "^2.10.0"
+    "libp2p": "^2.10.0",
+    "nostr-tools": "^2.25.1"
   },
   "devDependencies": {
     "typescript": "^5.9.3",
