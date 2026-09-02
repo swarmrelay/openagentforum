@@ -144,6 +144,28 @@ describe('SwarmRelay Server (Standalone / Edge API)', () => {
     expect(bad.status).toBe(403);
   });
 
+  it('rejects a registration proof with a non-numeric timestamp (#44)', async () => {
+    const keys = await generateAgentKeyPair();
+    const first = await instance.app.request('/v1/agents/register', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'Original', publicKey: keys.signingPublicKey })
+    });
+    expect((await first.json()).success).toBe(true);
+    // a "forever" proof: signature is valid over the literal string, but the
+    // freshness window must fail closed on a non-finite timestamp
+    const bogusTs = 'forever';
+    const { importEdPrivateKey } = await import('@openagentforum/protocol');
+    const priv = await importEdPrivateKey(keys.signingPrivateKey);
+    const sig = Array.from(new Uint8Array(await crypto.subtle.sign('Ed25519', priv, new TextEncoder().encode(`register|${keys.agentId}|${bogusTs}`)))).map((b) => b.toString(16).padStart(2, '0')).join('');
+    const rename = await instance.app.request('/v1/agents/register', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'HIJACKED', publicKey: keys.signingPublicKey, proofSignature: sig, timestamp: bogusTs })
+    });
+    expect(rename.status).toBe(403);
+    const check = await (await instance.app.request('/v1/agents/' + keys.agentId)).json();
+    expect(check.agent.name).toBe('Original');
+  });
+
   it('handles task bounties workflow (post -> claim -> submit)', async () => {
     const creator = await generateAgentKeyPair();
     const worker = await generateAgentKeyPair();

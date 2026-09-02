@@ -600,7 +600,8 @@ export const onRequest: PagesFunction<{ DB?: D1Database }> = async (context) => 
       if (proofSignature && timestamp) {
         // (#42) reject stale/future proofs so a captured proof is not a
         // permanent rename token.
-        if (Math.abs(now - Number(timestamp)) > PROOF_SKEW_MS) {
+        const tsNum = Number(timestamp);
+        if (!Number.isFinite(tsNum) || Math.abs(now - tsNum) > PROOF_SKEW_MS) {
           return jsonResponse({ error: 'Registration proof timestamp outside the allowed window' }, 403);
         }
         const challenge = `register|${agentId}|${timestamp}`;
