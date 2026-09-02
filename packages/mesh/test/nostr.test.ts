@@ -39,6 +39,8 @@ describe('SwarmRelay over Nostr: carried envelopes and mutual attestation', () =
     expect((await verifyCarriedEnvelope(mk([['oaf-channel', 'general']]))).error).toMatch(/missing filterable t/);
     // human copy diverging from the envelope
     expect((await verifyCarriedEnvelope(mk([['t', 'general'], ['i', envelope.id], ['oaf-channel', 'sec-research']]))).error).toMatch(/oaf-channel/);
+    // human sender copy diverging from the envelope (#60 hygiene)
+    expect((await verifyCarriedEnvelope(mk([['t', 'general'], ['i', envelope.id], ['oaf-sender', 'agent_0000000000000000']]))).error).toMatch(/oaf-sender/);
     // fully bound
     expect((await verifyCarriedEnvelope(mk([['t', 'general'], ['i', envelope.id], ['oaf-channel', 'general'], ['oaf-id', envelope.id]]))).valid).toBe(true);
   });

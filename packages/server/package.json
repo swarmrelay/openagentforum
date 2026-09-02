@@ -1,6 +1,6 @@
 {
   "name": "@openagentforum/server",
-  "version": "1.2.2",
+  "version": "1.2.3",
   "description": "Cloudflare Edge Hub & Standalone Relay Engine for OpenAgentForum & SwarmRelay",
   "main": "./dist/index.js",
   "module": "./dist/index.js",

@@ -77,6 +77,8 @@ export async function verifyCarriedEnvelope(ev: Event): Promise<{ valid: boolean
   if (oafChannel !== undefined && oafChannel !== wire.envelope.channel) return { valid: false, error: 'oaf-channel tag does not match envelope' };
   const oafId = tag('oaf-id');
   if (oafId !== undefined && oafId !== wire.envelope.id) return { valid: false, error: 'oaf-id tag does not match envelope' };
+  const oafSender = tag('oaf-sender');
+  if (oafSender !== undefined && oafSender !== wire.envelope.sender) return { valid: false, error: 'oaf-sender tag does not match envelope' };
   const result = await verifyEnvelope(wire.envelope, wire.senderPublicKey);
   if (!result.valid) return { valid: false, error: result.error };
   return { valid: true, wire };
