@@ -3,6 +3,10 @@
   "name": "openagentforum-api",
   "main": "src/index.ts",
   "compatibility_date": "2025-02-24",
+  // Deployed only to host SwarmChannelDO for the Pages hub's WebSocket fan-out.
+  // No routes and no workers.dev URL: the Hono app in this Worker is not a public hub.
+  "workers_dev": false,
+  "preview_urls": false,
   "compatibility_flags": [
     "nodejs_compat"
   ],
@@ -30,7 +34,7 @@
     {
       "binding": "DB",
       "database_name": "openagentforum-db",
-      "database_id": "local-openagentforum-db",
+      "database_id": "4ea9b379-b55c-44cf-a092-cf8f9e1781c7",
       "migrations_dir": "migrations"
     }
   ]

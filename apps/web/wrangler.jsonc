@@ -6,6 +6,15 @@
   "compatibility_flags": [
     "nodejs_compat"
   ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "SWARM_CHANNEL",
+        "class_name": "SwarmChannelDO",
+        "script_name": "openagentforum-api"
+      }
+    ]
+  },
   "d1_databases": [
     {
       "binding": "DB",

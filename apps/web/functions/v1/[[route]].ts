@@ -169,7 +169,13 @@ function jsonResponse(data: any, status = 200) {
   });
 }
 
-export const onRequest: PagesFunction<{ DB?: D1Database }> = async (context) => {
+interface HubEnv {
+  DB?: D1Database;
+  /** SwarmChannelDO from the openagentforum-api Worker: WebSocket fan-out only */
+  SWARM_CHANNEL?: DurableObjectNamespace;
+}
+
+export const onRequest: PagesFunction<HubEnv> = async (context) => {
   const { request, env } = context;
   const url = new URL(request.url);
   const path = url.pathname.replace(/\/$/, '') || '/';
@@ -223,6 +229,7 @@ export const onRequest: PagesFunction<{ DB?: D1Database }> = async (context) => 
           agents: '/v1/agents',
           register: '/v1/agents/register',
           stream: '/v1/channels/{channel}/stream',
+          websocket: '/v1/channels/{channel}/ws',
           tasks: '/v1/tasks',
           mcp: '/v1/mcp',
           intel_search: '/v1/intel/search',
@@ -356,6 +363,26 @@ export const onRequest: PagesFunction<{ DB?: D1Database }> = async (context) => 
       if (!channel) return jsonResponse({ error: 'Channel not found' }, 404);
       const msgs = memoryFallback.messages.get(chName) || [];
       return jsonResponse({ channel: { ...channel, messageCount: msgs.length } });
+    }
+
+    // WebSocket: GET /v1/channels/:name/ws (Upgrade). Fan-out lives in the
+    // SwarmChannelDO; the hub stores to D1 first, then notifies the DO, so a
+    // socket only ever hears envelopes the record already holds. Events:
+    //   {event:'connected', channel}  then  {event:'message', channel, data: envelope}
+    // Resume after a drop with /messages?after=<storedSeq> or the SSE stream.
+    const wsMatch = path.match(/^\/v1\/channels\/([a-zA-Z0-9-_]+)\/ws$/);
+    if (wsMatch && method === 'GET') {
+      const chName = wsMatch[1].toLowerCase();
+      if (!env?.SWARM_CHANNEL) {
+        return jsonResponse({ error: 'WebSocket fan-out is not bound on this deployment; use /v1/channels/{channel}/stream (SSE)' }, 501);
+      }
+      if (request.headers.get('Upgrade')?.toLowerCase() !== 'websocket') {
+        return jsonResponse({ error: 'Expected a WebSocket upgrade', hint: `wss://openagentforum.com/v1/channels/${chName}/ws` }, 426);
+      }
+      const agentId = url.searchParams.get('agent') || undefined;
+      const stub = env.SWARM_CHANNEL.get(env.SWARM_CHANNEL.idFromName(chName)) as any;
+      await stub.initChannel(chName);
+      return stub.handleWebSocket(agentId);
     }
 
     // Real-time stream: GET /v1/channels/:name/stream (Server-Sent Events).
@@ -580,6 +607,12 @@ export const onRequest: PagesFunction<{ DB?: D1Database }> = async (context) => 
           memoryFallback.messages.set(chName, list);
         }
 
+        if (env?.SWARM_CHANNEL) {
+          // notify WebSocket subscribers after the durable write (best effort)
+          const stub = env.SWARM_CHANNEL.get(env.SWARM_CHANNEL.idFromName(chName)) as any;
+          context.waitUntil(stub.broadcastMessage({ ...envelope, channel: chName, storedSeq }).catch(() => {}));
+        }
+
         return jsonResponse({ success: true, envelope: { ...envelope, storedSeq } });
       }
     }
@@ -634,6 +667,13 @@ export const onRequest: PagesFunction<{ DB?: D1Database }> = async (context) => 
             },
           });
         }
+        // (#28) Display names are first-claim unique (case-insensitive). The
+        // name belongs to the first key that registered it; anyone else gets
+        // a 409 and picks another. Identity is still the key, never the name.
+        const nameOwner = await env.DB.prepare('SELECT agent_id FROM agents WHERE lower(name) = lower(?) AND agent_id != ?').bind(agentName, agentId).first<{ agent_id: string }>();
+        if (nameOwner) {
+          return jsonResponse({ error: `Display name '${agentName}' is already claimed by another agent`, claimedBy: nameOwner.agent_id }, 409);
+        }
         await env.DB.prepare(`
           INSERT INTO agents (agent_id, name, public_key, x25519_public_key, capabilities_json, metadata_json, registered_at, last_seen_at, reputation_score)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 100)
@@ -660,6 +700,11 @@ export const onRequest: PagesFunction<{ DB?: D1Database }> = async (context) => 
       if (fbExisting && !proofValid) {
         fbExisting.lastSeenAt = now;
         return jsonResponse({ success: true, alreadyRegistered: true, agent: fbExisting });
+      }
+      for (const other of memoryFallback.agents.values()) {
+        if (other.agentId !== agentId && other.name.toLowerCase() === agentName.toLowerCase()) {
+          return jsonResponse({ error: `Display name '${agentName}' is already claimed by another agent`, claimedBy: other.agentId }, 409);
+        }
       }
       const agent: AgentRecord = {
         agentId,

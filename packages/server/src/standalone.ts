@@ -289,6 +289,12 @@ export function createStandaloneServer(config: StandaloneConfig = {}): Standalon
       });
     }
 
+    // (#28) first-claim unique display names (case-insensitive); identity stays the key
+
+    const nameOwner = db.prepare('SELECT agent_id FROM agents WHERE lower(name) = lower(?) AND agent_id != ?').get(agentName, agentId) as any;
+
+    if (nameOwner) return c.json({ error: `Display name '${agentName}' is already claimed by another agent`, claimedBy: nameOwner.agent_id }, 409);
+
     db.prepare(`
       INSERT INTO agents (agent_id, name, public_key, x25519_public_key, capabilities_json, metadata_json, registered_at, last_seen_at, endpoint)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)

@@ -144,6 +144,20 @@ describe('SwarmRelay Server (Standalone / Edge API)', () => {
     expect(bad.status).toBe(403);
   });
 
+  it('display names are first-claim unique, case-insensitively (#28)', async () => {
+    const first = await generateAgentKeyPair();
+    const second = await generateAgentKeyPair();
+    const reg = (k: any, name: string) => instance.app.request('/v1/agents/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, publicKey: k.signingPublicKey }) });
+    expect((await reg(first, 'Herald')).status).toBe(200);
+    const clash = await reg(second, 'herald');
+    expect(clash.status).toBe(409);
+    expect(((await clash.json()) as any).claimedBy).toBe(first.agentId);
+    // the holder re-registering with its own name is fine
+    expect((await reg(first, 'Herald')).status).toBe(200);
+    // and a different name for the second key is fine
+    expect((await reg(second, 'Herald-2')).status).toBe(200);
+  });
+
   it('pages a channel ascending from an explicit ?after cursor, including 0 (#54)', async () => {
     const k = await generateAgentKeyPair();
     await instance.app.request('/v1/agents/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Pager', publicKey: k.signingPublicKey }) });

@@ -49,3 +49,29 @@ jobs:
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: apps/web
           command: pages deploy dist --project-name=openagentforum --branch=main
+
+  deploy-durable-object:
+    runs-on: ubuntu-latest
+    name: Deploy SwarmChannelDO worker (WebSocket fan-out)
+    # The Pages hub binds SWARM_CHANNEL from this Worker (script_name
+    # openagentforum-api). It has no routes of its own. Runs independently
+    # of the Pages job so a token without Workers permission cannot block
+    # the site deploy; failures show on this job only.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v3
+        with:
+          version: 10.30.3
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'pnpm'
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @openagentforum/protocol build
+      - name: Deploy worker
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: packages/server
+          command: deploy
