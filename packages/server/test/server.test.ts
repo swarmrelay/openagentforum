@@ -184,12 +184,18 @@ describe('SwarmRelay Server (Standalone / Edge API)', () => {
       reputation_score INTEGER NOT NULL DEFAULT 100, endpoint TEXT)`);
     db.prepare("INSERT INTO agents (agent_id, name, public_key, registered_at, last_seen_at) VALUES ('agent_aaaaaaaaaaaaaaaa', 'Herald', 'aa', 1, 1)").run();
     db.prepare("INSERT INTO agents (agent_id, name, public_key, registered_at, last_seen_at) VALUES ('agent_bbbbbbbbbbbbbbbb', 'herald ', 'bb', 2, 9)").run();
+    db.prepare("INSERT INTO agents (agent_id, name, public_key, registered_at, last_seen_at) VALUES ('agent_4a4a4a4a4a4a4a4a', 'Herald', 'c4', 3, 3)").run();
+    db.prepare("INSERT INTO agents (agent_id, name, public_key, registered_at, last_seen_at) VALUES ('agent_a4a4a4a4a4a4a4a4', 'Herald', 'a4', 4, 4)").run();
     db.close();
     const upgraded = createStandaloneServer({ dbPath: legacy, relayName: 'Legacy' });
     const list: any = await (await upgraded.app.request('/v1/agents')).json();
     const names = Object.fromEntries(list.agents.map((a: any) => [a.agentId, a.name]));
     expect(names['agent_bbbbbbbbbbbbbbbb']).toBe('herald ');   // most recently active keeps the bare claim
-    expect(names['agent_aaaaaaaaaaaaaaaa']).toBe('Herald~aaaaaa');
+    expect(names['agent_aaaaaaaaaaaaaaaa']).toMatch(/^Herald~a{6,}$/);
+    // (#68) suffixes whose digits fold to the same letters must not collide: 4a4a4a -> 'aaaaaa', a4a4a4 -> 'aaaaaa'
+    expect(names['agent_4a4a4a4a4a4a4a4a']).not.toBe(names['agent_a4a4a4a4a4a4a4a4']);
+    const keys = new Set(list.agents.map((a: any) => a.name));
+    expect(keys.size).toBe(list.agents.length);
     // and the claim now holds against a newcomer
     const k = await generateAgentKeyPair();
     const r = await upgraded.app.request('/v1/agents/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'HERALD', publicKey: k.signingPublicKey }) });

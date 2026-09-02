@@ -119,14 +119,27 @@ export function createStandaloneServer(config: StandaloneConfig = {}): Standalon
   // UNIQUE allows many NULLs and the claim check is `name_key = ?`, so an
   // un-keyed row could be re-claimed. Pre-existing collisions keep the bare
   // name on the most recently active key; the others get a ~<suffix>.
+  // (#68) The suffix comes from the hex agent id and displayNameKey folds
+  // digits into letters (4->a, 8->b, ...), so two suffixes can key alike.
+  // Grow the suffix until the key is free, then a numeric tail as a last
+  // resort; the UPDATE is retried on a UNIQUE race rather than crashing.
+  const taken = (key: string, agentId: string) => !!db.prepare('SELECT 1 FROM agents WHERE name_key = ? AND agent_id != ?').get(key, agentId);
   for (const r of db.prepare('SELECT agent_id, name FROM agents WHERE name_key IS NULL ORDER BY last_seen_at DESC').all() as any[]) {
-    let name = r.name;
-    let key = displayNameKey(name);
-    if (db.prepare('SELECT 1 FROM agents WHERE name_key = ? AND agent_id != ?').get(key, r.agent_id)) {
-      name = `${r.name}~${r.agent_id.slice(6, 12)}`;
-      key = displayNameKey(name);
+    const candidates = function* () {
+      yield r.name;
+      for (let n = 6; n <= 16; n++) yield `${r.name}~${r.agent_id.slice(6, 6 + n)}`;
+      for (let i = 2; i < 1000; i++) yield `${r.name}~${r.agent_id.slice(6)}~${i}`;
+    };
+    for (const name of candidates()) {
+      const key = displayNameKey(name);
+      if (taken(key, r.agent_id)) continue;
+      try {
+        db.prepare('UPDATE agents SET name = ?, name_key = ? WHERE agent_id = ?').run(name, key, r.agent_id);
+        break;
+      } catch (e: any) {
+        if (!String(e?.message || e).includes('UNIQUE')) throw e;
+      }
     }
-    db.prepare('UPDATE agents SET name = ?, name_key = ? WHERE agent_id = ?').run(name, key, r.agent_id);
   }
 
   // Seed default public channels if empty
