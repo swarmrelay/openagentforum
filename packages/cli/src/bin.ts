@@ -6,7 +6,7 @@
 
 import { serve } from '@hono/node-server';
 import { createStandaloneServer } from '@openagentforum/server/standalone';
-import { generateAgentKeyPair, auditChannel } from '@openagentforum/protocol';
+import { generateAgentKeyPair, auditChannel, fetchChannelRecord } from '@openagentforum/protocol';
 import { SwarmClient } from '@openagentforum/sdk';
 import { runStdioMcpServer } from '@openagentforum/mcp';
 import fs from 'node:fs';
@@ -57,9 +57,11 @@ async function main() {
       const hub = (hubIdx !== -1 ? args[hubIdx + 1] : 'https://openagentforum.com').replace(/\/$/, '');
       const asJson = args.includes('--json');
       const hdr = { 'User-Agent': 'SwarmRelay-CLI/1.0' };
-      const rec: any = await (await fetch(`${hub}/v1/channels/${channel}/messages`, { headers: hdr })).json();
+      // (#54) walk the whole record on the storedSeq cursor; a single GET
+      // against a capped relay is one page, and one page is not a ledger.
+      const rec = await fetchChannelRecord(hub, channel, { headers: hdr });
       const cache = new Map<string, string | null>();
-      const report = await auditChannel(channel, rec.messages || [], async (id) => {
+      const report = await auditChannel(channel, rec.messages, async (id) => {
         if (!cache.has(id)) {
           try {
             const a: any = await (await fetch(`${hub}/v1/agents/${encodeURIComponent(id)}`, { headers: hdr })).json();
@@ -68,11 +70,19 @@ async function main() {
         }
         return cache.get(id) ?? null;
       });
+      const complete = report.complete && !rec.truncated;
+      const why = [
+        report.failed.length ? `${report.failed.length} failed verification` : null,
+        report.gaps.length ? `${report.gaps.length} author(s) with sequence gaps` : null,
+        report.reuse.length ? `${report.reuse.length} reused counter(s)` : null,
+        rec.truncated ? `record truncated: ${rec.reason}` : null,
+      ].filter(Boolean);
       if (asJson) {
-        console.log(JSON.stringify(report, null, 2));
+        console.log(JSON.stringify({ ...report, fetchedPages: rec.pages, truncated: rec.truncated, truncatedReason: rec.reason, complete }, null, 2));
       } else {
         console.log(`\n#${channel} @ ${hub}`);
-        console.log(`  envelopes: ${report.total}   verified as stored: ${report.verified}   failed: ${report.failed.length}`);
+        console.log(`  envelopes: ${report.total} (${rec.pages} page${rec.pages === 1 ? '' : 's'})   verified as stored: ${report.verified}   failed: ${report.failed.length}`);
+        if (rec.truncated) console.log(`  ! record TRUNCATED: ${rec.reason}`);
         for (const f of report.failed) console.log(`  ✗ ${f.id}  ${f.sender}  seq ${f.sequence}  ${f.error}`);
         if (report.gaps.length) {
           console.log('  sequence gaps (withheld or lost between an author\'s signed counters):');
@@ -80,9 +90,10 @@ async function main() {
         }
         for (const r of report.reuse) console.log(`  ~ ${r.sender}  sequence ${r.sequence} used ${r.ids.length}x (counter reset?)`);
         for (const n of report.notes) console.log(`  · ${n}`);
-        console.log(report.complete ? '  ✓ record is complete and verifies as stored' : '  ✗ record is NOT complete');
+        console.log(complete ? '  ✓ record is complete, counters are honest, and every envelope verifies as stored' : `  ✗ record is NOT complete: ${why.join('; ')}`);
       }
-      process.exit(report.complete ? 0 : report.failed.length ? 2 : 1);
+      // exit 0 only when all three hold: verified, gap-free, no counter reuse (#49), over the full record (#54)
+      process.exit(complete ? 0 : report.failed.length ? 2 : 1);
     }
 
     case 'keygen': {

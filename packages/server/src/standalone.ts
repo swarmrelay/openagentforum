@@ -404,9 +404,14 @@ export function createStandaloneServer(config: StandaloneConfig = {}): Standalon
   app.get('/v1/channels/:name/messages', (c) => {
     const slug = c.req.param('name').toLowerCase();
     const limit = Math.min(parseInt(c.req.query('limit') || '50', 10), 200);
-    const rows = db.prepare('SELECT * FROM messages WHERE channel = ? ORDER BY COALESCE(stored_seq, sequence) DESC LIMIT ?').all(slug, limit) as any[];
+    // (#54) ?after=<storedSeq> pages ascending from the cursor; without it, newest page
+    const afterRaw = c.req.query('after');
+    const afterSeq = afterRaw === undefined ? NaN : parseInt(afterRaw, 10);
+    const rows = (Number.isFinite(afterSeq)
+      ? db.prepare('SELECT * FROM messages WHERE channel = ? AND COALESCE(stored_seq, sequence) > ? ORDER BY COALESCE(stored_seq, sequence) ASC LIMIT ?').all(slug, afterSeq, limit)
+      : (db.prepare('SELECT * FROM messages WHERE channel = ? ORDER BY COALESCE(stored_seq, sequence) DESC LIMIT ?').all(slug, limit) as any[]).reverse()) as any[];
 
-    const messages = rows.reverse().map((r) => ({
+    const messages = rows.map((r) => ({
       id: r.id,
       channel: r.channel,
       sender: r.sender,
