@@ -495,17 +495,26 @@ export class SwarmClient {
     return (await res.json()) as any;
   }
 
+  /** Registry inputs for a local tally: public key and registry time, the same the hub uses (#87). */
+  private async registryReader() {
+    const cache = new Map<string, { pub: string | null; registeredAt: number | null }>();
+    const info = async (id: string) => {
+      if (!cache.has(id)) {
+        try { const r = await this.fetchImpl(`${this.hubUrl}/v1/agents/${encodeURIComponent(id)}`); const a: any = r.ok ? await r.json() : null; cache.set(id, { pub: a?.agent?.publicKey ?? null, registeredAt: a?.agent?.registeredAt ?? null }); }
+        catch { cache.set(id, { pub: null, registeredAt: null }); }
+      }
+      return cache.get(id)!;
+    };
+    return { resolve: async (id: string) => (await info(id)).pub, registeredAt: async (id: string) => (await info(id)).registeredAt };
+  }
+
   /** Recompute the tally yourself from the channel record instead of trusting the relay's. */
   async tallyLocally(pollId: string, channel: string, atSeq?: number): Promise<PollTally> {
     const rec = await fetchChannelRecord(this.hubUrl, channel, { fetchImpl: this.fetchImpl as any });
     const pollEnv = rec.messages.find((m) => m.id === pollId && m.type === 'poll');
     if (!pollEnv) throw new Error('poll not found in the channel record');
-    const cache = new Map<string, string | null>();
-    const resolve = async (id: string) => {
-      if (!cache.has(id)) { const r = await this.fetchImpl(`${this.hubUrl}/v1/agents/${encodeURIComponent(id)}`); cache.set(id, r.ok ? ((await r.json()) as any)?.agent?.publicKey ?? null : null); }
-      return cache.get(id) ?? null;
-    };
-    return tallyPoll(pollEnv, rec.messages.filter(isPollCandidate), resolve, { atSeq, now: Date.now() });
+    const reg = await this.registryReader();
+    return tallyPoll(pollEnv, rec.messages.filter(isPollCandidate), reg.resolve, { atSeq, now: Date.now(), registeredAt: reg.registeredAt });
   }
 
   async listPolls(channel?: string, status?: 'open' | 'closed'): Promise<Array<Omit<PollTally, 'ballots' | 'rejectedCloses'>>> {
@@ -526,12 +535,8 @@ export class SwarmClient {
     const pollEnv = rec.messages.find((m) => m.id === pollId && m.type === 'poll');
     if (!pollEnv) throw new Error('poll not found in the channel record');
     const cands = rec.messages.filter(isPollCandidate);
-    const cache = new Map<string, string | null>();
-    const resolve = async (id: string) => {
-      if (!cache.has(id)) { const r = await this.fetchImpl(`${this.hubUrl}/v1/agents/${encodeURIComponent(id)}`); cache.set(id, r.ok ? ((await r.json()) as any)?.agent?.publicKey ?? null : null); }
-      return cache.get(id) ?? null;
-    };
-    const tally = await tallyPoll(pollEnv, cands, resolve, { atSeq, now: Date.now() });
+    const reg = await this.registryReader();
+    const tally = await tallyPoll(pollEnv, cands, reg.resolve, { atSeq, now: Date.now(), registeredAt: reg.registeredAt });
     const local = await pollProof(tally, cands, ballotId);
     let verified = false;
     if (local.state === 'counted' && local.proof && local.leafBytes) {

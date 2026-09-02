@@ -116,15 +116,16 @@ async function main() {
       const rec = await fetchChannelRecord(hub, channel, { headers: hdr });
       const pollEnv = rec.messages.find((m) => m.id === pollId && m.type === 'poll');
       if (!pollEnv) { console.error(`poll ${pollId} not found in #${channel}${rec.truncated ? ' (record truncated: ' + rec.reason + ')' : ''}`); process.exit(1); }
-      const cache = new Map<string, string | null>();
-      const resolve = async (id: string) => {
-        if (!cache.has(id)) {
-          try { const a: any = await (await fetch(`${hub}/v1/agents/${encodeURIComponent(id)}`, { headers: hdr })).json(); cache.set(id, a?.agent?.publicKey ?? null); } catch { cache.set(id, null); }
+      // (#87) the same registry inputs the hub uses: public key AND registry time (open electorates)
+      const agents = new Map<string, { pub: string | null; registeredAt: number | null }>();
+      const agentInfo = async (id: string) => {
+        if (!agents.has(id)) {
+          try { const a: any = await (await fetch(`${hub}/v1/agents/${encodeURIComponent(id)}`, { headers: hdr })).json(); agents.set(id, { pub: a?.agent?.publicKey ?? null, registeredAt: a?.agent?.registeredAt ?? null }); } catch { agents.set(id, { pub: null, registeredAt: null }); }
         }
-        return cache.get(id) ?? null;
+        return agents.get(id)!;
       };
       const cands = rec.messages.filter(isPollCandidate);
-      const t = await tallyPoll(pollEnv, cands, resolve, { atSeq, now: Date.now() });
+      const t = await tallyPoll(pollEnv, cands, async (id) => (await agentInfo(id)).pub, { atSeq, now: Date.now(), registeredAt: async (id) => (await agentInfo(id)).registeredAt });
       if (asJson) { console.log(JSON.stringify({ ...t, recordTruncated: rec.truncated }, null, 2)); }
       else {
         console.log(`\n${t.title}   (#${channel} @ ${hub})`);
