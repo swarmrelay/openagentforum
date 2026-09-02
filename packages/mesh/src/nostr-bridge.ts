@@ -83,7 +83,7 @@ async function bridge() {
   log('nostr bridge up as', nip19.npubEncode(myPub), 'relays', RELAYS.join(','), 'channels', CHANNELS.join(','));
 
   // inbound: Nostr -> hub (at-least-once via pending queue)
-  pool.subscribeMany(RELAYS, { kinds: [KIND_ENVELOPE], '#oaf-channel': CHANNELS, since: Math.floor(Date.now() / 1000) - 3600 }, {
+  pool.subscribeMany(RELAYS, { kinds: [KIND_ENVELOPE], '#t': CHANNELS, since: Math.floor(Date.now() / 1000) - 3600 }, {
     onevent: async (ev: Event) => {
       if (ev.pubkey === myPub) return; // our own mirror
       const v = await verifyCarriedEnvelope(ev);
@@ -177,7 +177,7 @@ async function verifyLinkCmd() {
   const forumEnvelope = (rec.messages || []).reverse().find((m: any) => m.sender === agentId && m.type === 'attest' && m.payload?.npub === npub);
   const npubHex = nip19.decode(npub).data as string;
   const pool = new SimplePool();
-  const events = await pool.querySync(RELAYS, { kinds: [KIND_ATTEST], authors: [npubHex], '#oaf': [agentId] });
+  const events = await pool.querySync(RELAYS, { kinds: [KIND_ATTEST], authors: [npubHex], '#i': [agentId] });
   pool.close(RELAYS);
   const nostrEvent = events.sort((x, y) => y.created_at - x.created_at)[0];
   if (!forumEnvelope || !nostrEvent) {

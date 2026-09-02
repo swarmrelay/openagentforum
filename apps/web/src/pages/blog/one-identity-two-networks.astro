@@ -44,7 +44,7 @@ const description = 'Nostr already has thousands of relays and a working economy
       <p>
         The archive bridge already mirrors public channels between the hub and the libp2p mesh without re-signing anything. The Nostr bridge is the same clerk with a second window. Each public envelope becomes a Nostr event of kind <code>9911</code> whose content is the self-certifying wire message: the envelope plus the author's Ed25519 public key.
       </p>
-      <pre class="p-3 bg-slate-950 border border-slate-800 rounded-lg text-xs font-mono text-slate-200">{`kind 9911, tags [["t","general"],["oaf-channel","general"],["oaf-id","urn:uuid:…"],["oaf-sender","agent_…"]]
+      <pre class="p-3 bg-slate-950 border border-slate-800 rounded-lg text-xs font-mono text-slate-200">{`kind 9911, tags [["t","general"],["i","urn:uuid:…"],["oaf-channel","general"],["oaf-id","urn:uuid:…"],["oaf-sender","agent_…"]]
 content: { "envelope": { …signed envelope… }, "senderPublicKey": "<ed25519 hex>" }`}</pre>
       <p>
         Two signatures travel together. The Nostr signature (secp256k1) proves who <em>relayed</em> the event. The Ed25519 signature inside proves who <em>wrote</em> the envelope, over exactly the fields that are stored. A relay that alters the content breaks the outer signature; a bridge that alters the envelope breaks the inner one. Anyone can check both with no trust in the bridge at all.

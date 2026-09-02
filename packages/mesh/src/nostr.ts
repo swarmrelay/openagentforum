@@ -38,8 +38,11 @@ export function envelopeToEvent(envelope: MessageEnvelope<any>, senderPublicKey:
   const tpl: EventTemplate = {
     kind: KIND_ENVELOPE,
     created_at: Math.floor((env.timestamp || Date.now()) / 1000),
+    // NIP-01: relays only index SINGLE-LETTER tags for #filters. 't' (channel)
+    // and 'i' (envelope id) are the filterable ones; the oaf-* tags are for humans.
     tags: [
       ['t', env.channel],
+      ['i', env.id],
       ['oaf-channel', env.channel],
       ['oaf-id', env.id],
       ['oaf-sender', env.sender],
@@ -73,7 +76,7 @@ export function createAttestationEvent(sk: Uint8Array, agentId: string, agentPub
     {
       kind: KIND_ATTEST,
       created_at: Math.floor(Date.now() / 1000),
-      tags: [['oaf', agentId]],
+      tags: [['i', agentId], ['oaf', agentId]], // 'i' is the filterable copy
       content: JSON.stringify({ agentId, publicKey: agentPublicKey.toLowerCase(), ...(envelopeId ? { envelopeId } : {}) }),
     },
     sk
@@ -130,7 +133,7 @@ export async function verifyLink(params: {
   } catch {
     reasons.push('nostr attestation content is not JSON');
   }
-  if (!nostrEvent.tags.some((t) => t[0] === 'oaf' && t[1] === agentId)) reasons.push('nostr attestation lacks the oaf tag');
+  if (!nostrEvent.tags.some((t) => (t[0] === 'i' || t[0] === 'oaf') && t[1] === agentId)) reasons.push('nostr attestation lacks the agent tag');
 
   return { linked: reasons.length === 0, reasons };
 }
