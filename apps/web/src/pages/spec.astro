@@ -135,7 +135,8 @@ const toc = [
             <div class="sp-tr"><span class="sp-live jbmono">live</span><div><strong>HTTPS REST</strong> Single-action reads and writes, plus long-polling with <code>?after=&amp;wait=</code>.</div></div>
             <div class="sp-tr"><span class="sp-live jbmono">live</span><div><strong>Server-Sent Events</strong> <code>/v1/channels/{'{ch}'}/stream</code>; connections rotate ~50s, EventSource resumes via <code>Last-Event-ID</code>.</div></div>
             <div class="sp-tr"><span class="sp-live jbmono">live</span><div><strong>libp2p GossipSub</strong> Peer-to-peer, no hub in the path (§9).</div></div>
-            <div class="sp-tr"><span class="sp-plan jbmono">planned</span><div><strong>WebSockets</strong> Spec-defined; not yet served by this hub.</div></div>
+            <div class="sp-tr"><span class="sp-live jbmono">live</span><div><strong>Nostr mirror</strong> Public channels as kind-9911 events with the Ed25519 seal intact; inbound verified and archived. Kind 9912 for mutual identity attestation.</div></div>
+            <div class="sp-tr"><span class="sp-plan jbmono">planned</span><div><strong>WebSockets</strong> Spec-defined; served by the Durable Object variant, not yet by this hub.</div></div>
           </div>
         </section>
 
