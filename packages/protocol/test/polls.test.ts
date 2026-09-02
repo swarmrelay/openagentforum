@@ -15,6 +15,8 @@ async function setup(n = 4) {
   const resolve = async (id: string) => keys.find((k) => k.agentId === id)?.signingPublicKey ?? null;
   return { keys, resolve };
 }
+/** registry time for open-electorate tallies in these tests: everyone registered at epoch 1 */
+const registeredAt = async (_id: string) => 1;
 
 describe('RFC 6962 Merkle tree', () => {
   it('matches the RFC 6962 empty and single-leaf roots and verifies audit paths for every leaf', async () => {
@@ -111,7 +113,7 @@ describe('polls on the ledger (RFC 0001 v2)', () => {
     }));
     const vote = (k: any, choice: number) => mk(k, 'vote', { pollId: pollEnv.id, pollHash: pollEnv.checksum, choice }, 1);
     const cands = [stored(await vote(a, 0)), stored(await vote(a, 1)), stored(await vote(b, 0)), stored(await vote(creator, 7))];
-    const t = await tallyPoll(pollEnv, cands, resolve, { now: Date.now() });
+    const t = await tallyPoll(pollEnv, cands, resolve, { now: Date.now(), registeredAt });
     expect(t.ballots.map((x) => x.state)).toEqual(['superseded', 'counted', 'counted', 'rejected']);
     expect(t.ballots[3].reason).toBe('invalid_choice');
     expect(t.counts).toEqual([1, 1, 0]);
@@ -121,7 +123,7 @@ describe('polls on the ledger (RFC 0001 v2)', () => {
     expect(t.deadline).toBe('ingest-enforced');
     // past the deadline the relay refuses at ingest, and the tally reports closed by deadline without dropping stored ballots
     expect(checkVoteIngest(await vote(b, 2), pollEnv, t, { hub: HUB, now: Date.now() + 120_000 })).toBe('poll_closed');
-    const later = await tallyPoll(pollEnv, cands, resolve, { now: Date.now() + 120_000 });
+    const later = await tallyPoll(pollEnv, cands, resolve, { now: Date.now() + 120_000, registeredAt });
     expect(later.status).toBe('closed');
     expect(later.closedBy).toBe('deadline');
     expect(later.countedBallots).toBe(2);
@@ -138,25 +140,25 @@ describe('polls on the ledger (RFC 0001 v2)', () => {
     const withClose = stored(await open({ creator: true }));
     const closeBy = (k: any, p: any) => mk(k, 'poll', { kind: 'close', pollId: p.id, pollHash: p.checksum }, 2);
     // ingest refuses closes the poll did not allow, or from a non-creator
-    const t0 = await tallyPoll(noClose, [], resolve);
+    const t0 = await tallyPoll(noClose, [], resolve, { registeredAt });
     expect(checkPollIngest(await closeBy(creator, noClose), noClose, t0).refusal).toBe('invalid_close');
-    const t1 = await tallyPoll(withClose, [], resolve);
+    const t1 = await tallyPoll(withClose, [], resolve, { registeredAt });
     expect(checkPollIngest(await closeBy(stranger, withClose), withClose, t1).refusal).toBe('invalid_close');
     expect(checkPollIngest(await closeBy(creator, withClose), withClose, t1).refusal).toBe(null);
     // a dishonest relay stored a stranger's close and a creator close on the no-close poll: every tally ignores both
     const vote = (k: any, p: any, choice: number) => mk(k, 'vote', { pollId: p.id, pollHash: p.checksum, choice }, 1);
     const cands = [stored(await closeBy(stranger, withClose)), stored(await closeBy(creator, noClose)), stored(await vote(a, withClose, 0)), stored(await vote(a, noClose, 1))];
-    const tw = await tallyPoll(withClose, cands, resolve);
+    const tw = await tallyPoll(withClose, cands, resolve, { registeredAt });
     expect(tw.status).toBe('open');
     expect(tw.rejectedCloses.length).toBe(1);
     expect(tw.countedBallots).toBe(1);
-    const tn = await tallyPoll(noClose, cands, resolve);
+    const tn = await tallyPoll(noClose, cands, resolve, { registeredAt });
     expect(tn.status).toBe('open');
     expect(tn.rejectedCloses[0].reason).toMatch(/does not allow/);
     // a real creator close: ballots stored after it are rejected
     const real = stored(await closeBy(creator, withClose));
     const after = stored(await vote(creator, withClose, 1));
-    const tc = await tallyPoll(withClose, [...cands, real, after], resolve);
+    const tc = await tallyPoll(withClose, [...cands, real, after], resolve, { registeredAt });
     expect(tc.closedBy).toBe('creator');
     expect(tc.ballots.find((b) => b.id === after.id)!.reason).toBe('poll_closed');
   });
@@ -182,7 +184,8 @@ describe('polls on the ledger (RFC 0001 v2)', () => {
     const p1 = stored(await mk(creator, 'poll', { kind: 'open', title: 'v1', options: ['a', 'b'], ledger: { hub: HUB }, electorate: { type: 'open' }, closes: { at: Date.now() + 60_000 }, rule: { method: 'plurality' } }));
     const p2 = stored(await mk(creator, 'poll', { kind: 'open', title: 'v2', options: ['a', 'b'], ledger: { hub: HUB }, electorate: { type: 'open' }, closes: { at: Date.now() + 60_000 }, rule: { method: 'plurality' } }, 1));
     const moved = stored(await mk(a, 'vote', { pollId: p2.id, pollHash: p1.checksum, choice: 0 }, 1));
-    const t = await tallyPoll(p2, [moved], resolve);
+    await expect(tallyPoll(p2, [moved], resolve)).rejects.toThrow(/registeredAt/); // (#88) no fail-open on open electorates
+    const t = await tallyPoll(p2, [moved], resolve, { registeredAt });
     expect(t.ballots[0].reason).toBe('poll_hash_mismatch');
     const enc: any = { ...(await mk(a, 'vote', { pollId: p2.id, pollHash: p2.checksum, choice: 0 }, 2)), encrypted: true };
     expect(checkVoteIngest(enc, p2, t, { hub: HUB, now: Date.now() })).toBe('encrypted_unsupported');

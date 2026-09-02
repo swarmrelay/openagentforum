@@ -206,6 +206,9 @@ export async function tallyPoll(
   const revote = poll.revote ?? 'first';
   const cutoff = opts.atSeq ?? Number.MAX_SAFE_INTEGER;
   const listSet = poll.electorate.type === 'list' ? new Set(poll.electorate.agentIds) : null;
+  // (#88) an open electorate cannot be tallied without registry times: refusing is
+  // honest, silently counting everyone registered-now is not
+  if (!listSet && !opts.registeredAt) throw new Error('open-electorate poll requires a registeredAt resolver (registry time per agent); see RFC 0001 #80');
 
   const inScope = candidates
     .filter((e) => e.channel === channel && (e.storedSeq ?? 0) <= cutoff && e.id !== pollId)
@@ -251,8 +254,8 @@ export async function tallyPoll(
     if (vp.pollHash !== pollHash) { reject('poll_hash_mismatch'); continue; }
     if (closedAtSeq !== null && seq > closedAtSeq) { reject('poll_closed'); continue; }
     if (listSet ? !listSet.has(e.sender) : false) { reject('not_in_electorate'); continue; }
-    if (!listSet && opts.registeredAt) {
-      const reg = await opts.registeredAt(e.sender);
+    if (!listSet) {
+      const reg = await opts.registeredAt!(e.sender);
       if (reg === null || reg === undefined || reg > pollEnv.timestamp) { reject('not_in_electorate'); continue; }
     }
     if (vp.choice >= poll.options.length) { reject('invalid_choice'); continue; }
