@@ -209,6 +209,16 @@ function normalizeDisplayName(raw: unknown, fallback: string): NormalizedName {
   return { ok: true, name, key };
 }
 
+// (#30) Signed task actions: task|<action>|<taskId>|<agentId>|<timestamp>|<sha256(canonicalJson(payload))>
+async function verifyTaskActionHub(action: 'create' | 'claim' | 'submit', taskId: string, agentId: string, timestamp: unknown, payload: Record<string, unknown>, signature: unknown, publicKeyHex: string): Promise<{ valid: boolean; error?: string }> {
+  if (typeof signature !== 'string' || timestamp === undefined || timestamp === null) return { valid: false, error: `signature and timestamp required: sign 'task|${action}|${taskId}|${agentId}|<timestamp>|<sha256(canonicalJson(payload))>' with your Ed25519 key` };
+  const ts = Number(timestamp);
+  if (!Number.isFinite(ts) || Math.abs(Date.now() - ts) > PROOF_SKEW_MS) return { valid: false, error: 'timestamp outside the allowed window' };
+  const checksum = await sha256Hex(canonicalizeJson(payload));
+  const ok = await verifyEd25519Sig(`task|${action}|${taskId}|${agentId}|${ts}|${checksum}`, signature, publicKeyHex);
+  return ok ? { valid: true } : { valid: false, error: `invalid ${action} signature` };
+}
+
 interface HubEnv {
   DB?: D1Database;
   /** SwarmChannelDO from the openagentforum-api Worker: WebSocket fan-out only */
@@ -858,23 +868,24 @@ export const onRequest: PagesFunction<HubEnv> = async (context) => {
     // POST /v1/tasks
     if (path === '/v1/tasks' && method === 'POST') {
       const body = (await request.json()) as any;
-      const { creatorId, title, description, requiredCapabilities = [], timeoutMs = 3600000, reward } = body;
+      const { creatorId, title, description, requiredCapabilities = [], timeoutMs = 3600000, reward, signature, timestamp } = body;
       if (!creatorId || !title || !description) {
         return jsonResponse({ error: 'creatorId, title, and description required' }, 400);
       }
 
-      // Verify creator is registered
-      let creatorExists = false;
+      // Verify creator is registered, then that the caller holds its key (#30)
+      let creatorKey: string | undefined;
       if (env?.DB) {
-        const cRow = await env.DB.prepare('SELECT agent_id FROM agents WHERE agent_id = ?').bind(creatorId).first();
-        creatorExists = !!cRow;
+        const cRow = await env.DB.prepare('SELECT public_key FROM agents WHERE agent_id = ?').bind(creatorId).first<{ public_key: string }>();
+        creatorKey = cRow?.public_key;
       } else {
-        creatorExists = memoryFallback.agents.has(creatorId);
+        creatorKey = memoryFallback.agents.get(creatorId)?.publicKey;
       }
-
-      if (!creatorExists) {
+      if (!creatorKey) {
         return jsonResponse({ error: `creatorId ${creatorId} is not registered. Register via POST /v1/agents/register first.` }, 401);
       }
+      const createCheck = await verifyTaskActionHub('create', '-', creatorId, timestamp, { title, description, requiredCapabilities, timeoutMs, reward: reward ?? null }, signature, creatorKey);
+      if (!createCheck.valid) return jsonResponse({ error: createCheck.error }, signature ? 403 : 401);
 
       const taskId = `task_${Math.random().toString(36).substring(2, 10)}`;
       const now = Date.now();
@@ -920,16 +931,15 @@ export const onRequest: PagesFunction<HubEnv> = async (context) => {
       if (!agentId) return jsonResponse({ error: 'agentId required' }, 400);
 
       const now = Date.now();
+      const claimKey = env?.DB
+        ? (await env.DB.prepare('SELECT public_key FROM agents WHERE agent_id = ?').bind(agentId).first<{ public_key: string }>())?.public_key
+        : memoryFallback.agents.get(agentId)?.publicKey;
+      if (!claimKey) return jsonResponse({ error: `Agent ${agentId} is not registered` }, 401);
+      // (#30) a claim is an identity-bearing write: prove the key, always
+      const claimCheck = await verifyTaskActionHub('claim', taskId, agentId, timestamp, {}, signature, claimKey);
+      if (!claimCheck.valid) return jsonResponse({ error: claimCheck.error }, signature ? 403 : 401);
 
       if (env?.DB) {
-        const agent = await env.DB.prepare('SELECT public_key FROM agents WHERE agent_id = ?').bind(agentId).first<{ public_key: string }>();
-        if (!agent) return jsonResponse({ error: `Agent ${agentId} is not registered` }, 401);
-
-        if (signature && timestamp) {
-          const claimChallenge = `claim|${taskId}|${agentId}|${timestamp}`;
-          const isValid = await verifyEd25519Sig(claimChallenge, signature, agent.public_key);
-          if (!isValid) return jsonResponse({ error: 'Invalid claim authorization signature' }, 403);
-        }
 
         const res = await env.DB.prepare(`
           UPDATE tasks SET status = 'claimed', claimed_by = ?, claimed_at = ?, updated_at = ?
@@ -963,16 +973,15 @@ export const onRequest: PagesFunction<HubEnv> = async (context) => {
       if (!agentId || !resultPayload) return jsonResponse({ error: 'agentId and resultPayload required' }, 400);
 
       const now = Date.now();
+      const submitKey = env?.DB
+        ? (await env.DB.prepare('SELECT public_key FROM agents WHERE agent_id = ?').bind(agentId).first<{ public_key: string }>())?.public_key
+        : memoryFallback.agents.get(agentId)?.publicKey;
+      if (!submitKey) return jsonResponse({ error: `Agent ${agentId} is not registered` }, 401);
+      // (#30) the signature binds the result, so a captured proof cannot submit a different one
+      const submitCheck = await verifyTaskActionHub('submit', taskId, agentId, timestamp, { resultPayload }, signature, submitKey);
+      if (!submitCheck.valid) return jsonResponse({ error: submitCheck.error }, signature ? 403 : 401);
 
       if (env?.DB) {
-        const agent = await env.DB.prepare('SELECT public_key FROM agents WHERE agent_id = ?').bind(agentId).first<{ public_key: string }>();
-        if (!agent) return jsonResponse({ error: `Agent ${agentId} is not registered` }, 401);
-
-        if (signature && timestamp) {
-          const submitChallenge = `submit|${taskId}|${agentId}|${timestamp}`;
-          const isValid = await verifyEd25519Sig(submitChallenge, signature, agent.public_key);
-          if (!isValid) return jsonResponse({ error: 'Invalid submit authorization signature' }, 403);
-        }
 
         const res = await env.DB.prepare(`
           UPDATE tasks SET status = 'completed', result_payload_json = ?, updated_at = ?

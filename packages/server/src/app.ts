@@ -7,6 +7,7 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import type { Env } from './env.js';
 import { normalizeDisplayName } from './names.js';
+import { verifyTaskAction } from '@openagentforum/protocol';
 import {
   deriveAgentId,
   verifyEnvelope,
@@ -682,11 +683,17 @@ app.get('/v1/tasks', async (c) => {
 app.post('/v1/tasks', async (c) => {
   try {
     const body = await c.req.json();
-    const { creatorId, title, description, requiredCapabilities = [], timeoutMs = 3600000, reward } = body;
+    const { creatorId, title, description, requiredCapabilities = [], timeoutMs = 3600000, reward, signature, timestamp } = body;
 
     if (!creatorId || !title || !description) {
       return c.json({ error: 'creatorId, title, and description are required' }, 400);
     }
+    // (#30) prove the creator's key; the signature binds the task content
+    const creator = await c.env.DB.prepare('SELECT public_key FROM agents WHERE agent_id = ?').bind(creatorId).first<{ public_key: string }>();
+    if (!creator) return c.json({ error: `creatorId ${creatorId} is not registered` }, 401);
+    if (!signature || timestamp === undefined) return c.json({ error: 'signature and timestamp required: sign task|create|-|<creatorId>|<timestamp>|<sha256(canonicalJson(payload))>' }, 401);
+    const createCheck = await verifyTaskAction({ action: 'create', taskId: '-', agentId: creatorId, timestamp: Number(timestamp), payload: { title, description, requiredCapabilities, timeoutMs, reward: reward ?? null }, signature }, creator.public_key);
+    if (!createCheck.valid) return c.json({ error: createCheck.error }, 403);
 
     const taskId = `task_${crypto.randomUUID().slice(0, 8)}`;
     const now = Date.now();
@@ -729,11 +736,16 @@ app.post('/v1/tasks', async (c) => {
 app.post('/v1/tasks/:id/claim', async (c) => {
   try {
     const taskId = c.req.param('id');
-    const { agentId } = await c.req.json();
+    const { agentId, signature, timestamp } = await c.req.json();
 
     if (!agentId) {
       return c.json({ error: 'agentId required' }, 400);
     }
+    const claimer = await c.env.DB.prepare('SELECT public_key FROM agents WHERE agent_id = ?').bind(agentId).first<{ public_key: string }>();
+    if (!claimer) return c.json({ error: `Agent ${agentId} is not registered` }, 401);
+    if (!signature || timestamp === undefined) return c.json({ error: 'signature and timestamp required: sign task|claim|<taskId>|<agentId>|<timestamp>|<sha256(canonicalJson({}))>' }, 401);
+    const claimCheck = await verifyTaskAction({ action: 'claim', taskId, agentId, timestamp: Number(timestamp), payload: {}, signature }, claimer.public_key);
+    if (!claimCheck.valid) return c.json({ error: claimCheck.error }, 403);
 
     const now = Date.now();
     const res = await c.env.DB.prepare(`
@@ -754,11 +766,16 @@ app.post('/v1/tasks/:id/claim', async (c) => {
 app.post('/v1/tasks/:id/submit', async (c) => {
   try {
     const taskId = c.req.param('id');
-    const { agentId, resultPayload } = await c.req.json();
+    const { agentId, resultPayload, signature, timestamp } = await c.req.json();
 
     if (!agentId || !resultPayload) {
       return c.json({ error: 'agentId and resultPayload required' }, 400);
     }
+    const submitter = await c.env.DB.prepare('SELECT public_key FROM agents WHERE agent_id = ?').bind(agentId).first<{ public_key: string }>();
+    if (!submitter) return c.json({ error: `Agent ${agentId} is not registered` }, 401);
+    if (!signature || timestamp === undefined) return c.json({ error: 'signature and timestamp required: sign task|submit|<taskId>|<agentId>|<timestamp>|<sha256(canonicalJson({resultPayload}))>' }, 401);
+    const submitCheck = await verifyTaskAction({ action: 'submit', taskId, agentId, timestamp: Number(timestamp), payload: { resultPayload }, signature }, submitter.public_key);
+    if (!submitCheck.valid) return c.json({ error: submitCheck.error }, 403);
 
     const now = Date.now();
     const res = await c.env.DB.prepare(`
