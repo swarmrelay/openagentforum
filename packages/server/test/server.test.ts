@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { createStandaloneServer, type StandaloneInstance } from '../src/standalone.js';
-import { generateAgentKeyPair, signEnvelope, verifyEnvelope, signTaskAction } from '@openagentforum/protocol';
+import { generateAgentKeyPair, signEnvelope, verifyEnvelope, signTaskAction, verifyPollProof } from '@openagentforum/protocol';
 import fs from 'node:fs';
 
 describe('SwarmRelay Server (Standalone / Edge API)', () => {
@@ -298,6 +298,72 @@ describe('SwarmRelay Server (Standalone / Edge API)', () => {
     expect(replay.task.id).toBe(taskId);
     const open: any = await (await instance.app.request('/v1/tasks?status=open')).json();
     expect(open.tasks.filter((t: any) => t.title === payload.title).length).toBe(0);
+  });
+
+  it('polls on the ledger: open, vote, refuse with reasons, tally, proof, close (RFC 0001)', async () => {
+    const creator = await generateAgentKeyPair();
+    const a = await generateAgentKeyPair();
+    const b = await generateAgentKeyPair();
+    const stranger = await generateAgentKeyPair();
+    const post = (path: string, body: any) => instance.app.request(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    for (const k of [creator, a, b, stranger]) await post('/v1/agents/register', { name: `P-${k.agentId.slice(6, 12)}`, publicKey: k.signingPublicKey });
+    const origin = 'http://localhost'; // Hono app.request origin
+    const pollPayload = {
+      kind: 'open', title: 'Ship polls?', options: ['yes', 'no'], ledger: { hub: origin },
+      electorate: { type: 'list', agentIds: [a.agentId, b.agentId] }, quorum: { minVoters: 2 },
+      closes: { allVoted: true }, closePolicy: { creator: true }, rule: { method: 'absolute_majority' }, revote: 'first',
+    };
+    const pollEnv = await signEnvelope({ channel: 'decisions', sender: creator.agentId, type: 'poll', sequence: 0, payload: pollPayload }, creator.signingPrivateKey);
+    const opened = await post('/v1/channels/decisions/messages', pollEnv);
+    expect(opened.status, await opened.clone().text()).toBe(200);
+    // a malformed poll is refused at ingest
+    const badPoll = await signEnvelope({ channel: 'decisions', sender: creator.agentId, type: 'poll', sequence: 1, payload: { ...pollPayload, options: ['x', 'x'] } }, creator.signingPrivateKey);
+    expect((await post('/v1/channels/decisions/messages', badPoll)).status).toBe(400);
+
+    const vote = (k: any, choice: number, seq: number, hash = pollEnv.checksum) =>
+      signEnvelope({ channel: 'decisions', sender: k.agentId, type: 'vote', sequence: seq, payload: { pollId: pollEnv.id, pollHash: hash, choice } }, k.signingPrivateKey);
+    // stranger is not in the electorate; wrong hash; bad choice
+    const r1 = await post('/v1/channels/decisions/messages', await vote(stranger, 0, 0));
+    expect(r1.status).toBe(409); expect(((await r1.json()) as any).reason).toBe('not_in_electorate');
+    const r2 = await post('/v1/channels/decisions/messages', await vote(a, 0, 0, '0'.repeat(64)));
+    expect(((await r2.json()) as any).reason).toBe('poll_hash_mismatch');
+    const r3 = await post('/v1/channels/decisions/messages', await vote(a, 5, 0));
+    expect(((await r3.json()) as any).reason).toBe('invalid_choice');
+    // a votes yes; a second ballot from a is refused (revote first)
+    const av = await vote(a, 0, 1);
+    expect((await post('/v1/channels/decisions/messages', av)).status).toBe(200);
+    const r4 = await post('/v1/channels/decisions/messages', await vote(a, 1, 2));
+    expect(((await r4.json()) as any).reason).toBe('already_voted');
+    // tally so far: open, quorum not met
+    let t: any = await (await instance.app.request(`/v1/polls/${encodeURIComponent(pollEnv.id)}?channel=decisions`)).json();
+    expect(t.tally.status).toBe('open');
+    expect(t.tally.counts).toEqual([1, 0]);
+    expect(t.tally.quorumMet).toBe(false);
+    // b votes yes: allVoted closes the poll from the record
+    expect((await post('/v1/channels/decisions/messages', await vote(b, 0, 0))).status).toBe(200);
+    t = await (await instance.app.request(`/v1/polls/${encodeURIComponent(pollEnv.id)}?channel=decisions`)).json();
+    expect(t.tally.status).toBe('closed');
+    expect(t.tally.closedBy).toBe('allVoted');
+    expect(t.tally.outcome).toMatchObject({ valid: true, winner: 0 });
+    expect(t.tally.leafCount).toBe(2);
+    // ingest now refuses further ballots and a creator close on an already-closed poll
+    const r5 = await post('/v1/channels/decisions/messages', await vote(b, 1, 1));
+    expect(((await r5.json()) as any).reason).toBe('poll_closed');
+    // proof for a's ballot verifies against the root
+    const pr: any = await (await instance.app.request(`/v1/polls/${encodeURIComponent(pollEnv.id)}/proof/${encodeURIComponent(av.id)}?channel=decisions`)).json();
+    expect(pr.state).toBe('counted');
+    expect(await verifyPollProof(pr.leafBytes, pr.proof, pr.root)).toBe(true);
+    // list, audit, and lookup without channel
+    const list: any = await (await instance.app.request('/v1/polls?status=closed')).json();
+    expect(list.polls.some((p: any) => p.pollId === pollEnv.id)).toBe(true);
+    const audit: any = await (await instance.app.request(`/v1/polls/${encodeURIComponent(pollEnv.id)}/audit`)).json();
+    expect(audit.tallyId).toBe(t.tally.tallyId);
+    expect(audit.byState).toEqual({ counted: 2, superseded: 0, rejected: 0 });
+    // a ballot for a poll on another ledger is refused
+    const foreign = await signEnvelope({ channel: 'decisions', sender: creator.agentId, type: 'poll', sequence: 2, payload: { ...pollPayload, ledger: { hub: 'https://elsewhere.example' }, closePolicy: { creator: false } } }, creator.signingPrivateKey);
+    const r6 = await post('/v1/channels/decisions/messages', foreign);
+    expect(r6.status).toBe(409);
+    expect(((await r6.json()) as any).reason).toBe('wrong_ledger');
   });
 
   it('searches intel artifacts by keyword', async () => {

@@ -8,6 +8,7 @@ import { cors } from 'hono/cors';
 import type { Env } from './env.js';
 import { normalizeDisplayName } from './names.js';
 import { verifyTaskAction, sha256Hex } from '@openagentforum/protocol';
+import { registerPollRoutes, pollIngestGate, type PollStore } from './polls-routes.js';
 import {
   deriveAgentId,
   verifyEnvelope,
@@ -436,6 +437,38 @@ app.get('/v1/channels/:name', async (c) => {
 });
 
 /**
+ * Polls (RFC 0001): record access for the pure tally (D1)
+ */
+const d1RowToEnvelope = (r: any) => ({
+  id: r.id, channel: r.channel, sender: r.sender, type: r.type, sequence: r.sequence,
+  storedSeq: r.stored_seq ?? r.sequence, timestamp: r.timestamp, payload: JSON.parse(r.payload_json),
+  signature: r.signature, checksum: r.checksum, replyToId: r.reply_to_id || undefined, encrypted: r.encrypted === 1,
+});
+function d1PollStore(DB: D1Database): PollStore {
+  return {
+    async getPoll(channel, pollId) {
+      const r = await DB.prepare("SELECT * FROM messages WHERE channel = ? AND id = ? AND type = 'poll'").bind(channel, pollId).first<any>();
+      return r ? d1RowToEnvelope(r) : null;
+    },
+    async candidates(channel, pollId) {
+      const rows = await DB.prepare("SELECT * FROM messages WHERE channel = ? AND type IN ('vote','poll') AND payload_json LIKE ? ORDER BY COALESCE(stored_seq, sequence) ASC").bind(channel, `%"pollId":"${pollId.replace(/[%_]/g, '')}"%`).all();
+      return (rows.results || []).map(d1RowToEnvelope);
+    },
+    async listPolls(channel, limit = 50) {
+      const rows = channel
+        ? await DB.prepare(`SELECT * FROM messages WHERE type = 'poll' AND payload_json LIKE '%"kind":"open"%' AND channel = ? ORDER BY COALESCE(stored_seq, sequence) DESC LIMIT ?`).bind(channel, limit).all()
+        : await DB.prepare(`SELECT * FROM messages WHERE type = 'poll' AND payload_json LIKE '%"kind":"open"%' ORDER BY COALESCE(stored_seq, sequence) DESC LIMIT ?`).bind(limit).all();
+      return (rows.results || []).map(d1RowToEnvelope);
+    },
+    async publicKey(agentId) {
+      const r = await DB.prepare('SELECT public_key FROM agents WHERE agent_id = ?').bind(agentId).first<{ public_key: string }>();
+      return r?.public_key ?? null;
+    },
+  };
+}
+registerPollRoutes(app, (c) => d1PollStore(c.env.DB));
+
+/**
  * Messages & Real-Time Coordination
  */
 app.get('/v1/channels/:name/messages', async (c) => {
@@ -511,6 +544,9 @@ app.post('/v1/channels/:name/messages', async (c) => {
     if (!verification.valid) {
       return c.json({ error: `Cryptographic validation failed: ${verification.error}` }, 403);
     }
+    // (RFC 0001) poll and ballot envelopes get the ingest checks on top
+    const pollRefusal = await pollIngestGate(d1PollStore(c.env.DB), envelope, (c.env as any).PUBLIC_ORIGIN || new URL(c.req.url).origin);
+    if (pollRefusal) return c.json(pollRefusal.body, pollRefusal.status as any);
 
     // 2.5 Ensure Channel exists (auto-create dynamic DM or private channels)
     const existingChannel = await c.env.DB.prepare('SELECT name FROM channels WHERE name = ?')

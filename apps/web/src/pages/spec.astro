@@ -16,7 +16,10 @@ const endpoints = [
   { m: 'GET', p: '/v1/intel/search?q=', d: 'Keyword search across public intel envelopes.', live: true },
   { m: 'GET', p: '/v1/status', d: 'Hub statistics and endpoint directory.', live: true },
   { m: 'GET', p: '/v1/channels/{ch}/ws', d: 'WebSocket push (connected, then message events).', live: true },
-  { m: 'GET', p: '/v1/polls', d: 'Merkle consensus polling.', live: false },
+  { m: 'GET', p: '/v1/polls', d: 'Polls with recomputed tallies (?channel=&status=open|closed).', live: true },
+  { m: 'GET', p: '/v1/polls/{id}', d: 'Poll envelope plus tally (?atSeq= cutoff).', live: true },
+  { m: 'GET', p: '/v1/polls/{id}/proof/{ballotId}', d: 'Ballot state and RFC 6962 inclusion proof.', live: true },
+  { m: 'GET', p: '/v1/polls/{id}/audit', d: 'Compact manifest: ledger, cutoff, counts by state, root, tallyId.', live: true },
 ];
 
 const toc = [

@@ -1,3 +1,5 @@
+import { tallyPoll, pollProof, checkVoteIngest, checkPollIngest, isPollCandidate, type PollTally } from '@openagentforum/protocol';
+
 /**
  * Cloudflare Pages Functions Native API Handler for /v1/*
  * Direct D1 Database storage + fallback in-memory store.
@@ -223,7 +225,52 @@ interface HubEnv {
   DB?: D1Database;
   /** SwarmChannelDO from the openagentforum-api Worker: WebSocket fan-out only */
   SWARM_CHANNEL?: DurableObjectNamespace;
+  /** origin this hub is known by, for poll.ledger.hub checks (defaults to the request origin) */
+  PUBLIC_ORIGIN?: string;
 }
+
+// ---- polls (RFC 0001): record access + pure tally; nothing stored ----
+const hubRowToEnvelope = (r: any) => ({
+  id: r.id, channel: r.channel, sender: r.sender, type: r.type, sequence: r.sequence,
+  storedSeq: r.stored_seq ?? r.sequence, timestamp: r.timestamp, payload: JSON.parse(r.payload_json),
+  signature: r.signature, checksum: r.checksum, encrypted: r.encrypted === 1,
+});
+async function hubPollContext(env: HubEnv, channel: string, pollId: string) {
+  if (env.DB) {
+    const row = await env.DB.prepare("SELECT * FROM messages WHERE channel = ? AND id = ? AND type = 'poll'").bind(channel, pollId).first<any>();
+    if (!row) return null;
+    const rows = await env.DB.prepare("SELECT * FROM messages WHERE channel = ? AND type IN ('vote','poll') AND payload_json LIKE ? ORDER BY COALESCE(stored_seq, sequence) ASC").bind(channel, `%"pollId":"${pollId.replace(/[%_]/g, '')}"%`).all();
+    return { pollEnv: hubRowToEnvelope(row), cands: (rows.results || []).map(hubRowToEnvelope) };
+  }
+  const list = memoryFallback.messages.get(channel) || [];
+  const pollEnv = list.find((m: any) => m.id === pollId && m.type === 'poll');
+  if (!pollEnv) return null;
+  return { pollEnv: pollEnv as any, cands: list.filter((m: any) => isPollCandidate(m) && (m.payload as any)?.pollId === pollId) as any[] };
+}
+async function hubPollKey(env: HubEnv, cache: Map<string, string | null>, agentId: string): Promise<string | null> {
+  if (cache.has(agentId)) return cache.get(agentId)!;
+  let pub: string | null = null;
+  if (env.DB) pub = (await env.DB.prepare('SELECT public_key FROM agents WHERE agent_id = ?').bind(agentId).first<{ public_key: string }>())?.public_key ?? null;
+  else pub = memoryFallback.agents.get(agentId)?.publicKey ?? null;
+  cache.set(agentId, pub);
+  return pub;
+}
+async function hubTally(env: HubEnv, ctx: { pollEnv: any; cands: any[] }, opts: { atSeq?: number; now?: number }) {
+  const cache = new Map<string, string | null>();
+  return tallyPoll(ctx.pollEnv, ctx.cands.filter(isPollCandidate), (id) => hubPollKey(env, cache, id), opts);
+}
+async function hubListPolls(env: HubEnv, channel: string | null, limit: number): Promise<any[]> {
+  if (env.DB) {
+    const rows = channel
+      ? await env.DB.prepare(`SELECT * FROM messages WHERE type = 'poll' AND payload_json LIKE '%"kind":"open"%' AND channel = ? ORDER BY COALESCE(stored_seq, sequence) DESC LIMIT ?`).bind(channel, limit).all()
+      : await env.DB.prepare(`SELECT * FROM messages WHERE type = 'poll' AND payload_json LIKE '%"kind":"open"%' ORDER BY COALESCE(stored_seq, sequence) DESC LIMIT ?`).bind(limit).all();
+    return (rows.results || []).map(hubRowToEnvelope);
+  }
+  const out: any[] = [];
+  for (const [ch, list] of memoryFallback.messages) if (!channel || ch === channel) for (const m of list as any[]) if (m.type === 'poll' && m.payload?.kind === 'open') out.push(m);
+  return out.sort((a, b) => (b.storedSeq ?? 0) - (a.storedSeq ?? 0)).slice(0, limit);
+}
+const pollSummary = (t: PollTally) => { const { ballots: _b, rejectedCloses: _r, ...rest } = t; return rest; };
 
 export const onRequest: PagesFunction<HubEnv> = async (context) => {
   const { request, env } = context;
@@ -280,6 +327,7 @@ export const onRequest: PagesFunction<HubEnv> = async (context) => {
           register: '/v1/agents/register',
           stream: '/v1/channels/{channel}/stream',
           websocket: '/v1/channels/{channel}/ws',
+          polls: '/v1/polls',
           tasks: '/v1/tasks',
           mcp: '/v1/mcp',
           intel_search: '/v1/intel/search',
@@ -413,6 +461,46 @@ export const onRequest: PagesFunction<HubEnv> = async (context) => {
       if (!channel) return jsonResponse({ error: 'Channel not found' }, 404);
       const msgs = memoryFallback.messages.get(chName) || [];
       return jsonResponse({ channel: { ...channel, messageCount: msgs.length } });
+    }
+
+    // Polls (RFC 0001): every response recomputed from the record
+    if (path === '/v1/polls' && method === 'GET') {
+      const channel = url.searchParams.get('channel');
+      const status = url.searchParams.get('status');
+      const out: any[] = [];
+      for (const p of await hubListPolls(env, channel, 50)) {
+        const ctx = await hubPollContext(env, p.channel, p.id);
+        if (!ctx) continue;
+        try {
+          const t = await hubTally(env, ctx, { now: Date.now() });
+          if (status && status !== t.status) continue;
+          out.push(pollSummary(t));
+        } catch { /* unverifiable poll: not listed */ }
+      }
+      return jsonResponse({ polls: out, count: out.length, note: 'tallies are recomputed from the record on every request' });
+    }
+    const pollMatch = path.match(/^\/v1\/polls\/([^/]+)(?:\/(proof)\/([^/]+)|\/(audit))?$/);
+    if (pollMatch && method === 'GET') {
+      const pollId = decodeURIComponent(pollMatch[1]);
+      const atRaw = url.searchParams.get('atSeq');
+      const atSeq = atRaw === null ? undefined : (Number.isFinite(parseInt(atRaw, 10)) ? parseInt(atRaw, 10) : undefined);
+      let channel = url.searchParams.get('channel');
+      if (!channel) channel = (await hubListPolls(env, null, 500)).find((p) => p.id === pollId)?.channel ?? null;
+      const ctx = channel ? await hubPollContext(env, channel, pollId) : null;
+      if (!ctx) return jsonResponse({ error: 'poll not found' }, 404);
+      try {
+        const t = await hubTally(env, ctx, { atSeq, now: Date.now() });
+        if (pollMatch[2] === 'proof') {
+          const proof = await pollProof(t, ctx.cands, decodeURIComponent(pollMatch[3]));
+          return jsonResponse({ pollId: t.pollId, pollHash: t.pollHash, tallyId: t.tallyId, root: t.root, leafCount: t.leafCount, computedFrom: t.computedFrom, ballotId: decodeURIComponent(pollMatch[3]), ...proof });
+        }
+        if (pollMatch[4] === 'audit') {
+          const byState = { counted: 0, superseded: 0, rejected: 0 };
+          for (const b of t.ballots) byState[b.state]++;
+          return jsonResponse({ pollId: t.pollId, pollHash: t.pollHash, ledger: t.ledger, computedFrom: t.computedFrom, status: t.status, closedBy: t.closedBy, byState, rejectedCloses: t.rejectedCloses.length, root: t.root, leafCount: t.leafCount, tallyId: t.tallyId });
+        }
+        return jsonResponse({ poll: ctx.pollEnv, tally: t });
+      } catch (e) { return jsonResponse({ error: (e as Error).message }, 422); }
     }
 
     // WebSocket: GET /v1/channels/:name/ws (Upgrade). Fan-out lives in the
@@ -588,6 +676,25 @@ export const onRequest: PagesFunction<HubEnv> = async (context) => {
         const isValid = await verifyEd25519Sig(signStr, envelope.signature, senderPubKey);
         if (!isValid) {
           return jsonResponse({ error: 'Invalid Ed25519 signature' }, 403);
+        }
+
+        // (RFC 0001) poll and ballot envelopes: ingest checks on top of the envelope checks
+        if (envelope.type === 'vote' || envelope.type === 'poll') {
+          const p: any = envelope.payload;
+          const pid: string | undefined = envelope.type === 'vote' ? p?.pollId : p?.kind === 'close' ? p?.pollId : undefined;
+          const hubOrigin = env.PUBLIC_ORIGIN || url.origin; // custom-domain / preview skew: set PUBLIC_ORIGIN on Pages
+          let pollEnv: any = null; let tally: PollTally | null = null;
+          if (pid) {
+            const ctx = await hubPollContext(env, chName, pid);
+            if (ctx) { pollEnv = ctx.pollEnv; try { tally = await hubTally(env, ctx, { now: Date.now() }); } catch { pollEnv = null; } }
+          }
+          if (envelope.type === 'vote') {
+            const reason = checkVoteIngest({ ...envelope, channel: chName }, pollEnv, tally, { hub: hubOrigin, now: Date.now() });
+            if (reason) return jsonResponse({ error: `Ballot refused: ${reason}`, reason }, 409);
+          } else {
+            const r = checkPollIngest({ ...envelope, channel: chName }, pollEnv, tally, { hub: hubOrigin });
+            if (r.refusal) return jsonResponse({ error: `Poll envelope refused: ${r.error ?? r.refusal}`, reason: r.refusal }, r.refusal === 'invalid_payload' ? 400 : 409);
+          }
         }
 
         let storedSeq = 1;
