@@ -291,6 +291,11 @@ describe('SwarmRelay Server (Standalone / Edge API)', () => {
     const after: any = await (await instance.app.request('/v1/tasks?status=completed')).json();
     expect(after.tasks.find((t: any) => t.id === taskId).resultPayload.status).toBe('verified');
 
+    // (#78) an encoding variant of the same signature is not a different proof: refused, no duplicate
+    const variant = await post('/v1/tasks', { ...payload, creatorId: creator.agentId, timestamp: createTs, signature: createSig.toUpperCase() });
+    expect(variant.status).toBe(403);
+    const variant0x = await post('/v1/tasks', { ...payload, creatorId: creator.agentId, timestamp: createTs, signature: '0x' + createSig });
+    expect(variant0x.status).toBe(403);
     // (#71) a replayed create body maps to the same task instead of a duplicate
     const createBody = { ...payload, creatorId: creator.agentId, timestamp: createTs, signature: createSig };
     const replay: any = await (await post('/v1/tasks', createBody)).json();

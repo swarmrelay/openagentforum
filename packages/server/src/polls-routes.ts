@@ -17,6 +17,8 @@ export interface PollStore {
   /** open-kind poll envelopes, newest first */
   listPolls(channel?: string, limit?: number): Promise<StoredEnvelope[]>;
   publicKey(agentId: string): Promise<string | null>;
+  /** registry time (registered_at) for #80 open-electorate checks */
+  registeredAt(agentId: string): Promise<number | null>;
 }
 
 export function pollSummary(t: PollTally) {
@@ -28,7 +30,7 @@ export async function computeTally(store: PollStore, pollEnv: StoredEnvelope, op
   const cands = (await store.candidates(pollEnv.channel, pollEnv.id)).filter(isPollCandidate);
   const cache = new Map<string, string | null>();
   const resolve = async (id: string) => { if (!cache.has(id)) cache.set(id, await store.publicKey(id)); return cache.get(id) ?? null; };
-  const tally = await tallyPoll(pollEnv, cands, resolve, opts);
+  const tally = await tallyPoll(pollEnv, cands, resolve, { ...opts, registeredAt: (id) => store.registeredAt(id) });
   return { tally, cands };
 }
 
@@ -49,7 +51,7 @@ export async function pollIngestGate(store: PollStore, envelope: MessageEnvelope
     }
   }
   if (envelope.type === 'vote') {
-    const reason = checkVoteIngest(envelope, pollEnv, tally, { hub: hubOrigin, now: Date.now() });
+    const reason = checkVoteIngest(envelope, pollEnv, tally, { hub: hubOrigin, now: Date.now(), voterRegisteredAt: await store.registeredAt(envelope.sender) });
     return reason ? { status: 409, body: { error: `Ballot refused: ${reason}`, reason } } : null;
   }
   const r = checkPollIngest(envelope, pollEnv, tally, { hub: hubOrigin });

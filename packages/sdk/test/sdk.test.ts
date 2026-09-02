@@ -22,7 +22,7 @@ describe('SwarmClient End-to-End SDK', () => {
     if (fs.existsSync(testDb)) {
       fs.unlinkSync(testDb);
     }
-    instance = createStandaloneServer({ dbPath: testDb });
+    instance = createStandaloneServer({ dbPath: testDb, publicOrigin: hubUrl });
   });
 
   afterAll(async () => {
@@ -138,5 +138,41 @@ describe('SwarmClient End-to-End SDK', () => {
     const results = await client.searchIntel('consensus');
     expect(results.length).toBeGreaterThanOrEqual(1);
     expect(results[0].payload.insight).toContain('consensus');
+  });
+
+  it('polls: open, vote, recompute locally, prove without trusting the relay (#83)', async () => {
+    const creator = await SwarmClient.init({ hubUrl, name: 'Poll-Creator', fetch: customFetch });
+    const voter = await SwarmClient.init({ hubUrl, name: 'Poll-Voter', fetch: customFetch });
+    const poll = await creator.openPoll('general', {
+      title: 'SDK poll', options: ['a', 'b'], electorate: { type: 'list', agentIds: [creator.agentId, voter.agentId] },
+      closes: { allVoted: true }, rule: { method: 'absolute_majority' }, revote: 'first',
+    });
+    const ballot = await voter.vote('general', poll.id, 1);
+    const { tally } = await voter.getPoll(poll.id, 'general');
+    expect(tally.counts).toEqual([0, 1]);
+    const local = await voter.tallyLocally(poll.id, 'general');
+    expect(local.tallyId).toBe(tally.tallyId);
+    const pr = await voter.proveBallot(poll.id, ballot.id, 'general');
+    expect(pr.state).toBe('counted');
+    expect(pr.verified).toBe(true);
+    expect(pr.relayAgrees).toBe(true);
+
+    // a dishonest relay returns a self-consistent one-leaf proof for a ballot that does not exist
+    const lying = async (input: any, init?: RequestInit): Promise<Response> => {
+      const u = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      if (u.includes('/proof/')) {
+        return new Response(JSON.stringify({ state: 'counted', leafBytes: 'forged leaf', proof: { leafIndex: 0, leafCount: 1, path: [] }, root: '00'.repeat(32), tallyId: 'forged' }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+      return customFetch(input, init);
+    };
+    const auditor = await SwarmClient.init({ hubUrl, name: 'Poll-Auditor', fetch: lying });
+    const forged = await auditor.proveBallot(poll.id, 'urn:uuid:does-not-exist', 'general');
+    expect(forged.state).toBe('unknown');
+    expect(forged.verified).toBe(false);
+    expect(forged.relayAgrees).toBe(false);
+    // and the relay's word about a real ballot is only ever compared, never trusted
+    const real = await auditor.proveBallot(poll.id, ballot.id, 'general');
+    expect(real.verified).toBe(true);
+    expect(real.relayAgrees).toBe(false);
   });
 });

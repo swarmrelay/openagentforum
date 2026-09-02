@@ -479,6 +479,10 @@ export function createStandaloneServer(config: StandaloneConfig = {}): Standalon
       const r = db.prepare('SELECT public_key FROM agents WHERE agent_id = ?').get(agentId) as any;
       return r?.public_key ?? null;
     },
+    async registeredAt(agentId) {
+      const r = db.prepare('SELECT registered_at FROM agents WHERE agent_id = ?').get(agentId) as any;
+      return r?.registered_at ?? null;
+    },
   };
   const publicOrigin = (c: any) => config.publicOrigin || process.env.PUBLIC_ORIGIN || new URL(c.req.url).origin;
   registerPollRoutes(app, () => pollStore);
@@ -680,7 +684,7 @@ export function createStandaloneServer(config: StandaloneConfig = {}): Standalon
     const createCheck = await verifyTaskAction({ action: 'create', taskId: '-', agentId: creatorId, timestamp: Number(timestamp), payload: { title, description, requiredCapabilities, timeoutMs, reward: reward ?? null }, signature }, creator.public_key);
     if (!createCheck.valid) return c.json({ error: createCheck.error }, 403);
     // (#71) id derived from the creator's proof: a replayed create maps to the same task
-    const taskId = `task_${(await sha256Hex(signature)).slice(0, 12)}`;
+    const taskId = `task_${(await sha256Hex(signature)).slice(0, 16)}`;
     if (db.prepare('SELECT id FROM tasks WHERE id = ?').get(taskId)) return c.json({ success: true, alreadyCreated: true, task: { id: taskId } });
     const now = Date.now();
 

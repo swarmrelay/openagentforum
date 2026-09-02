@@ -29,6 +29,8 @@ import {
   tallyPoll,
   isPollCandidate,
   verifyPollProof,
+  pollProof,
+  pollLeafBytes,
   fetchChannelRecord,
   type EconomicCampaign,
   type AffiliateLink,
@@ -513,14 +515,37 @@ export class SwarmClient {
     return ((await res.json()) as any).polls;
   }
 
-  /** Merkle inclusion proof for a counted ballot, verified locally against the tally root. */
-  async proveBallot(pollId: string, ballotId: string, channel?: string, atSeq?: number): Promise<{ state: string; verified: boolean; proof?: MerkleProof; root: string; tallyId: string }> {
-    const q = new URLSearchParams(); if (channel) q.set('channel', channel); if (atSeq !== undefined) q.set('atSeq', String(atSeq));
-    const res = await this.fetchImpl(`${this.hubUrl}/v1/polls/${encodeURIComponent(pollId)}/proof/${encodeURIComponent(ballotId)}?${q}`);
-    if (!res.ok) throw new Error(`Failed to get proof: ${await res.text()}`);
-    const d: any = await res.json();
-    const verified = d.state === 'counted' && d.leafBytes ? await verifyPollProof(d.leafBytes, d.proof, d.root) : false;
-    return { state: d.state, verified, proof: d.proof, root: d.root, tallyId: d.tallyId };
+  /**
+   * Prove a ballot was counted WITHOUT trusting the relay (#83): recompute the
+   * tally from the channel record, rebuild the leaf from the stored ballot
+   * envelope, and verify the path against the locally computed root. The
+   * relay's own proof is fetched only to report whether it agrees.
+   */
+  async proveBallot(pollId: string, ballotId: string, channel: string, atSeq?: number): Promise<{ state: string; verified: boolean; root: string; tallyId: string; relayAgrees: boolean | null; proof?: MerkleProof }> {
+    const rec = await fetchChannelRecord(this.hubUrl, channel, { fetchImpl: this.fetchImpl as any });
+    const pollEnv = rec.messages.find((m) => m.id === pollId && m.type === 'poll');
+    if (!pollEnv) throw new Error('poll not found in the channel record');
+    const cands = rec.messages.filter(isPollCandidate);
+    const cache = new Map<string, string | null>();
+    const resolve = async (id: string) => {
+      if (!cache.has(id)) { const r = await this.fetchImpl(`${this.hubUrl}/v1/agents/${encodeURIComponent(id)}`); cache.set(id, r.ok ? ((await r.json()) as any)?.agent?.publicKey ?? null : null); }
+      return cache.get(id) ?? null;
+    };
+    const tally = await tallyPoll(pollEnv, cands, resolve, { atSeq, now: Date.now() });
+    const local = await pollProof(tally, cands, ballotId);
+    let verified = false;
+    if (local.state === 'counted' && local.proof && local.leafBytes) {
+      // the leaf we verify is the one WE built from the stored envelope with this exact id
+      const env = cands.find((e) => e.id === ballotId)!;
+      verified = local.leafBytes === pollLeafBytes(tally.pollHash, env) && (await verifyPollProof(local.leafBytes, local.proof, tally.root));
+    }
+    let relayAgrees: boolean | null = null;
+    try {
+      const q = new URLSearchParams({ channel }); if (atSeq !== undefined) q.set('atSeq', String(atSeq));
+      const res = await this.fetchImpl(`${this.hubUrl}/v1/polls/${encodeURIComponent(pollId)}/proof/${encodeURIComponent(ballotId)}?${q}`);
+      if (res.ok) { const d: any = await res.json(); relayAgrees = d.tallyId === tally.tallyId && d.root === tally.root && d.state === local.state; }
+    } catch { relayAgrees = null; }
+    return { state: local.state, verified, root: tally.root, tallyId: tally.tallyId, relayAgrees, proof: local.proof };
   }
 
   // -------------------------------------------------------------

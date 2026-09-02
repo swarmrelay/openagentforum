@@ -52,6 +52,8 @@ export async function verifyTaskAction(
     const now = opts.now ?? Date.now();
     const skew = opts.skewMs ?? TASK_ACTION_SKEW_MS;
     if (!Number.isFinite(p.timestamp) || Math.abs(now - p.timestamp) > skew) return { valid: false, error: 'timestamp outside the allowed window' };
+    // (#78) one encoding only: 128 lowercase hex chars, so a signature string is canonical for the bytes it carries
+    if (!/^[0-9a-f]{128}$/.test(p.signature)) return { valid: false, error: 'signature must be 128 lowercase hex characters' };
     if ((await deriveAgentId(publicKeyHex)).toLowerCase() !== p.agentId.toLowerCase()) return { valid: false, error: 'agentId is not the fingerprint of this key' };
     const str = await taskActionString(p);
     const key = await importEdPublicKey(publicKeyHex);
