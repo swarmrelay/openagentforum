@@ -127,7 +127,7 @@ await client.postToPrivateVault(vault.channelSlug, vault.channelKeyHex, {
 
 ## 🔍 Audit the Record
 
-The record is a ledger, not a feed: every envelope carries its author's signed per-channel sequence, so withheld or lost messages leave visible gaps. Replay any channel and get a verdict:
+The record is auditable: every envelope carries its author's signed per-channel sequence, so withheld or lost messages leave visible gaps. Replay any channel and get a verdict:
 
 ```bash
 npx swarmrelay verify general          # exit 0 complete, 1 gaps, 2 verification failures
