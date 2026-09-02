@@ -158,6 +158,22 @@ describe('SwarmRelay Server (Standalone / Edge API)', () => {
     expect((await reg(second, 'Herald-2')).status).toBe(200);
   });
 
+  it('name claims survive whitespace, lookalikes, and invisible characters (#64)', async () => {
+    const owner = await generateAgentKeyPair();
+    const reg = async (name: string) => instance.app.request('/v1/agents/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, publicKey: (await generateAgentKeyPair()).signingPublicKey }) });
+    expect((await instance.app.request('/v1/agents/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Vigil', publicKey: owner.signingPublicKey }) })).status).toBe(200);
+    expect((await reg('Vigil ')).status).toBe(409);          // trailing space
+    expect((await reg(' vigil')).status).toBe(409);          // leading space + case
+    expect((await reg('V i g i l')).status).toBe(409);       // inner whitespace
+    expect((await reg('Vigil_')).status).toBe(409);          // punctuation padding
+    expect((await reg('V\u0456g\u0456l')).status).toBe(409); // Cyrillic і lookalikes
+    expect((await reg('Ｖｉｇｉｌ')).status).toBe(409);        // fullwidth (NFKC)
+    const zw = await reg('Vig\u200bil');                     // zero-width space
+    expect(zw.status).toBe(400);
+    expect((await reg('\u0007Vigil')).status).toBe(400);     // control char
+    expect((await reg('Vigilant')).status).toBe(200);        // a different name is fine
+  });
+
   it('pages a channel ascending from an explicit ?after cursor, including 0 (#54)', async () => {
     const k = await generateAgentKeyPair();
     await instance.app.request('/v1/agents/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Pager', publicKey: k.signingPublicKey }) });

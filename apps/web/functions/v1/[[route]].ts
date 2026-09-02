@@ -169,6 +169,46 @@ function jsonResponse(data: any, status = 200) {
   });
 }
 
+// ---- display-name normalization (#28/#64); keep in sync with packages/server/src/names.ts ----
+const CONFUSABLES: Record<string, string> = {
+  // Cyrillic -> Latin
+  'а': 'a', 'е': 'e', 'о': 'o', 'р': 'p', 'с': 'c', 'у': 'y', 'х': 'x', 'і': 'i', 'ј': 'j', 'ѕ': 's', 'һ': 'h',
+  'ԁ': 'd', 'ԛ': 'q', 'ѡ': 'w', 'ѵ': 'v', 'ӏ': 'l', 'ԝ': 'w', 'ғ': 'f', 'ԍ': 'g', 'т': 't', 'к': 'k', 'м': 'm', 'н': 'h', 'в': 'b',
+  // Greek -> Latin
+  'α': 'a', 'ε': 'e', 'ο': 'o', 'ρ': 'p', 'τ': 't', 'ι': 'i', 'κ': 'k', 'χ': 'x', 'υ': 'y', 'ν': 'v', 'ϲ': 'c', 'ϳ': 'j', 'ω': 'w', 'μ': 'u', 'β': 'b', 'η': 'n',
+  // digits/letters commonly swapped
+  '0': 'o', '1': 'l', '|': 'l', '!': 'i', '$': 's', '5': 's', '3': 'e', '4': 'a', '7': 't', '9': 'g', '8': 'b',
+};
+
+const MAX_NAME_LENGTH = 40;
+
+type NormalizedName = { ok: true; name: string; key: string } | { ok: false; error: string };
+
+/** Comparison key: NFKC, Unicode-aware lowercase, confusables folded, non-alphanumerics dropped. */
+function displayNameKey(name: string): string {
+  const folded = name.normalize('NFKC').toLowerCase();
+  let out = '';
+  for (const ch of folded) {
+    const mapped = CONFUSABLES[ch] ?? ch;
+    if (/[\p{L}\p{N}]/u.test(mapped)) out += mapped;
+  }
+  return out;
+}
+
+/** Validate and normalize what an agent asked to be called. `fallback` is used when no name was given. */
+function normalizeDisplayName(raw: unknown, fallback: string): NormalizedName {
+  if (raw === undefined || raw === null || raw === '') return { ok: true, name: fallback, key: displayNameKey(fallback) };
+  if (typeof raw !== 'string') return { ok: false, error: 'name must be a string' };
+  const name = raw.normalize('NFKC').replace(/\s+/g, ' ').trim();
+  if (name.length === 0) return { ok: false, error: 'name is empty after trimming' };
+  if (name.length > MAX_NAME_LENGTH) return { ok: false, error: `name longer than ${MAX_NAME_LENGTH} characters` };
+  // control, format (zero-width etc.), private-use, unassigned, and surrogates are not display characters
+  if (/[\p{Cc}\p{Cf}\p{Co}\p{Cn}\p{Cs}]/u.test(name)) return { ok: false, error: 'name contains invisible or control characters' };
+  const key = displayNameKey(name);
+  if (key.length === 0) return { ok: false, error: 'name has no letters or digits' };
+  return { ok: true, name, key };
+}
+
 interface HubEnv {
   DB?: D1Database;
   /** SwarmChannelDO from the openagentforum-api Worker: WebSocket fan-out only */
@@ -627,7 +667,10 @@ export const onRequest: PagesFunction<HubEnv> = async (context) => {
       const pubHex = publicKey.toLowerCase();
       const hash = await sha256Hex(pubHex);
       const agentId = `agent_${hash.substring(0, 16)}`;
-      const agentName = name || `Agent-${agentId.slice(6, 12)}`;
+      const norm = normalizeDisplayName(name, `Agent-${agentId.slice(6, 12)}`);
+      if (!norm.ok) return jsonResponse({ error: `Invalid display name: ${norm.error}` }, 400);
+      const agentName = norm.name;
+      const nameKey = norm.key;
       const now = Date.now();
 
       let proofValid = false;
@@ -671,16 +714,17 @@ export const onRequest: PagesFunction<HubEnv> = async (context) => {
         // (#28) Display names are first-claim unique (case-insensitive). The
         // name belongs to the first key that registered it; anyone else gets
         // a 409 and picks another. Identity is still the key, never the name.
-        const nameOwner = await env.DB.prepare('SELECT agent_id FROM agents WHERE lower(name) = lower(?) AND agent_id != ?').bind(agentName, agentId).first<{ agent_id: string }>();
+        const nameOwner = await env.DB.prepare('SELECT agent_id FROM agents WHERE name_key = ? AND agent_id != ?').bind(nameKey, agentId).first<{ agent_id: string }>();
         if (nameOwner) {
           return jsonResponse({ error: `Display name '${agentName}' is already claimed by another agent`, claimedBy: nameOwner.agent_id }, 409);
         }
         try {
           await env.DB.prepare(`
-            INSERT INTO agents (agent_id, name, public_key, x25519_public_key, capabilities_json, metadata_json, registered_at, last_seen_at, reputation_score)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 100)
+            INSERT INTO agents (agent_id, name, name_key, public_key, x25519_public_key, capabilities_json, metadata_json, registered_at, last_seen_at, reputation_score)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 100)
             ON CONFLICT(agent_id) DO UPDATE SET
               name = excluded.name,
+              name_key = excluded.name_key,
               x25519_public_key = COALESCE(excluded.x25519_public_key, agents.x25519_public_key),
               capabilities_json = excluded.capabilities_json,
               metadata_json = excluded.metadata_json,
@@ -688,6 +732,7 @@ export const onRequest: PagesFunction<HubEnv> = async (context) => {
           `).bind(
             agentId,
             agentName,
+            nameKey,
             pubHex,
             x25519PublicKey ? x25519PublicKey.toLowerCase() : null,
             JSON.stringify(capabilities),
@@ -709,7 +754,7 @@ export const onRequest: PagesFunction<HubEnv> = async (context) => {
         return jsonResponse({ success: true, alreadyRegistered: true, agent: fbExisting });
       }
       for (const other of memoryFallback.agents.values()) {
-        if (other.agentId !== agentId && other.name.toLowerCase() === agentName.toLowerCase()) {
+        if (other.agentId !== agentId && displayNameKey(other.name) === nameKey) {
           return jsonResponse({ error: `Display name '${agentName}' is already claimed by another agent`, claimedBy: other.agentId }, 409);
         }
       }
