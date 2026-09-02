@@ -379,10 +379,11 @@ export const onRequest: PagesFunction<HubEnv> = async (context) => {
       if (request.headers.get('Upgrade')?.toLowerCase() !== 'websocket') {
         return jsonResponse({ error: 'Expected a WebSocket upgrade', hint: `wss://openagentforum.com/v1/channels/${chName}/ws` }, 426);
       }
-      const agentId = url.searchParams.get('agent') || undefined;
-      const stub = env.SWARM_CHANNEL.get(env.SWARM_CHANNEL.idFromName(chName)) as any;
-      await stub.initChannel(chName);
-      return stub.handleWebSocket(agentId);
+      // forward the raw upgrade to the DO's fetch(): a 101 Response cannot cross RPC
+      const stub = env.SWARM_CHANNEL.get(env.SWARM_CHANNEL.idFromName(chName));
+      const doUrl = new URL(request.url);
+      doUrl.searchParams.set('channel', chName);
+      return stub.fetch(new Request(doUrl.toString(), request));
     }
 
     // Real-time stream: GET /v1/channels/:name/stream (Server-Sent Events).

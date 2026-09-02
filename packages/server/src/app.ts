@@ -593,8 +593,11 @@ app.get('/v1/channels/:name/ws', async (c) => {
   const agentId = c.req.query('agentId');
 
   const doStub = c.env.SWARM_CHANNEL.getByName(channelName);
-  await doStub.initChannel(channelName);
-  return doStub.handleWebSocket(agentId);
+  // forward the raw upgrade to the DO's fetch(): a 101 Response cannot cross RPC
+  const doUrl = new URL(c.req.url);
+  doUrl.searchParams.set('channel', channelName);
+  if (agentId) doUrl.searchParams.set('agent', agentId);
+  return doStub.fetch(new Request(doUrl.toString(), c.req.raw));
 });
 
 /**
