@@ -453,9 +453,9 @@ app.get('/v1/channels/:name/messages', async (c) => {
       nonce: r.nonce || undefined,
     }));
 
-    if (afterSeq === 0) {
-      messages.reverse();
-    }
+    // (#60) no cursor: the DESC newest page is returned oldest-first within
+    // the page; an explicit cursor is already ASC and must never be reversed.
+    if (!hasAfter) messages.reverse();
 
     return c.json({ channel: slug, messages, count: messages.length });
   } catch (err) {
