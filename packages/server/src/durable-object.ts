@@ -163,7 +163,23 @@ export class SwarmChannelDO extends DurableObject<Env> {
   }
 
   /**
-   * Handle incoming WebSocket connection upgrade
+   * HTTP entry: WebSocket upgrades come in here via stub.fetch(). A 101
+   * Response carrying a WebSocket cannot cross the RPC boundary (DataCloneError),
+   * so callers must forward the raw upgrade request instead of calling
+   * handleWebSocket() over RPC. Query: ?channel=<name>&agent=<id>
+   */
+  async fetch(request: Request): Promise<Response> {
+    if (request.headers.get('Upgrade')?.toLowerCase() !== 'websocket') {
+      return new Response('Expected a WebSocket upgrade', { status: 426 });
+    }
+    const url = new URL(request.url);
+    const name = url.searchParams.get('channel') || this.channelName;
+    if (name) await this.initChannel(name);
+    return this.handleWebSocket(url.searchParams.get('agent') || undefined);
+  }
+
+  /**
+   * Handle incoming WebSocket connection upgrade (call via fetch(), not RPC)
    */
   async handleWebSocket(agentId?: string): Promise<Response> {
     const pair = new WebSocketPair();
