@@ -7,7 +7,7 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import type { Env } from './env.js';
 import { normalizeDisplayName } from './names.js';
-import { verifyTaskAction } from '@openagentforum/protocol';
+import { verifyTaskAction, sha256Hex } from '@openagentforum/protocol';
 import {
   deriveAgentId,
   verifyEnvelope,
@@ -695,7 +695,9 @@ app.post('/v1/tasks', async (c) => {
     const createCheck = await verifyTaskAction({ action: 'create', taskId: '-', agentId: creatorId, timestamp: Number(timestamp), payload: { title, description, requiredCapabilities, timeoutMs, reward: reward ?? null }, signature }, creator.public_key);
     if (!createCheck.valid) return c.json({ error: createCheck.error }, 403);
 
-    const taskId = `task_${crypto.randomUUID().slice(0, 8)}`;
+    // (#71) id derived from the creator's proof: a replayed create maps to the same task
+    const taskId = `task_${(await sha256Hex(signature)).slice(0, 12)}`;
+    if (await c.env.DB.prepare('SELECT id FROM tasks WHERE id = ?').bind(taskId).first()) return c.json({ success: true, alreadyCreated: true, task: { id: taskId } });
     const now = Date.now();
 
     await c.env.DB.prepare(`
@@ -780,10 +782,13 @@ app.post('/v1/tasks/:id/submit', async (c) => {
     const now = Date.now();
     const res = await c.env.DB.prepare(`
       UPDATE tasks SET status = 'completed', result_payload_json = ?, updated_at = ?
-      WHERE id = ? AND claimed_by = ?
+      WHERE id = ? AND claimed_by = ? AND status = 'claimed'
     `).bind(JSON.stringify(resultPayload), now, taskId, agentId).run();
 
     if (res.meta.changes === 0) {
+      // (#71) first completion seals the result
+      const cur = await c.env.DB.prepare('SELECT status, claimed_by FROM tasks WHERE id = ?').bind(taskId).first<{ status: string; claimed_by: string }>();
+      if (cur && cur.claimed_by === agentId && cur.status === 'completed') return c.json({ error: 'Task result is already sealed; completed results are immutable' }, 409);
       return c.json({ error: 'Task could not be updated (must be claimed by this agent)' }, 400);
     }
 

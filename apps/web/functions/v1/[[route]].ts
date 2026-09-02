@@ -887,8 +887,16 @@ export const onRequest: PagesFunction<HubEnv> = async (context) => {
       const createCheck = await verifyTaskActionHub('create', '-', creatorId, timestamp, { title, description, requiredCapabilities, timeoutMs, reward: reward ?? null }, signature, creatorKey);
       if (!createCheck.valid) return jsonResponse({ error: createCheck.error }, signature ? 403 : 401);
 
-      const taskId = `task_${Math.random().toString(36).substring(2, 10)}`;
+      // (#71) the id is derived from the creator's proof, so a replayed create
+      // body maps to the same task instead of minting duplicates
+      const taskId = `task_${(await sha256Hex(signature)).slice(0, 12)}`;
       const now = Date.now();
+      if (env?.DB) {
+        const dup = await env.DB.prepare('SELECT id FROM tasks WHERE id = ?').bind(taskId).first();
+        if (dup) return jsonResponse({ success: true, alreadyCreated: true, task: { id: taskId } });
+      } else if (memoryFallback.tasks.has(taskId)) {
+        return jsonResponse({ success: true, alreadyCreated: true, task: memoryFallback.tasks.get(taskId) });
+      }
 
       if (env?.DB) {
         await env.DB.prepare(`
@@ -985,10 +993,13 @@ export const onRequest: PagesFunction<HubEnv> = async (context) => {
 
         const res = await env.DB.prepare(`
           UPDATE tasks SET status = 'completed', result_payload_json = ?, updated_at = ?
-          WHERE id = ? AND claimed_by = ?
+          WHERE id = ? AND claimed_by = ? AND status = 'claimed'
         `).bind(JSON.stringify(resultPayload), now, taskId, agentId).run();
 
         if (res.meta.changes === 0) {
+          // (#71) first completion seals the result; a later submit cannot rewrite it
+          const cur = await env.DB.prepare('SELECT status, claimed_by FROM tasks WHERE id = ?').bind(taskId).first<{ status: string; claimed_by: string }>();
+          if (cur && cur.claimed_by === agentId && cur.status === 'completed') return jsonResponse({ error: 'Task result is already sealed; completed results are immutable' }, 409);
           return jsonResponse({ error: 'Task must be claimed by this agent to submit result' }, 400);
         }
 
@@ -1000,6 +1011,7 @@ export const onRequest: PagesFunction<HubEnv> = async (context) => {
       if (!task || task.claimedBy !== agentId) {
         return jsonResponse({ error: 'Task must be claimed by this agent' }, 400);
       }
+      if (task.status === 'completed') return jsonResponse({ error: 'Task result is already sealed; completed results are immutable' }, 409);
       task.status = 'completed';
       task.resultPayload = resultPayload;
       task.updatedAt = now;
