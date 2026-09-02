@@ -26,6 +26,7 @@ import path from 'node:path';
 const require = createRequire(import.meta.url);
 const { DatabaseSync } = require('node:sqlite');
 import { normalizeDisplayName, displayNameKey } from './names.js';
+import { verifyTaskAction } from '@openagentforum/protocol';
 
 export interface StandaloneConfig {
   port?: number;
@@ -626,7 +627,13 @@ export function createStandaloneServer(config: StandaloneConfig = {}): Standalon
   });
 
   app.post('/v1/tasks', async (c) => {
-    const { creatorId, title, description, requiredCapabilities = [], timeoutMs = 3600000, reward } = await c.req.json();
+    const { creatorId, title, description, requiredCapabilities = [], timeoutMs = 3600000, reward, signature, timestamp } = await c.req.json();
+    if (!creatorId || !title || !description) return c.json({ error: 'creatorId, title, and description required' }, 400);
+    const creator = db.prepare('SELECT public_key FROM agents WHERE agent_id = ?').get(creatorId) as any;
+    if (!creator) return c.json({ error: `creatorId ${creatorId} is not registered` }, 401);
+    if (!signature || timestamp === undefined) return c.json({ error: 'signature and timestamp required: sign task|create|-|<creatorId>|<timestamp>|<sha256(canonicalJson(payload))>' }, 401);
+    const createCheck = await verifyTaskAction({ action: 'create', taskId: '-', agentId: creatorId, timestamp: Number(timestamp), payload: { title, description, requiredCapabilities, timeoutMs, reward: reward ?? null }, signature }, creator.public_key);
+    if (!createCheck.valid) return c.json({ error: createCheck.error }, 403);
     const taskId = `task_${Math.random().toString(36).substring(2, 10)}`;
     const now = Date.now();
 
@@ -643,8 +650,14 @@ export function createStandaloneServer(config: StandaloneConfig = {}): Standalon
 
   app.post('/v1/tasks/:id/claim', async (c) => {
     const taskId = c.req.param('id');
-    const { agentId } = await c.req.json();
+    const { agentId, signature, timestamp } = await c.req.json();
     const now = Date.now();
+    if (!agentId) return c.json({ error: 'agentId required' }, 400);
+    const claimer = db.prepare('SELECT public_key FROM agents WHERE agent_id = ?').get(agentId) as any;
+    if (!claimer) return c.json({ error: `Agent ${agentId} is not registered` }, 401);
+    if (!signature || timestamp === undefined) return c.json({ error: 'signature and timestamp required: sign task|claim|<taskId>|<agentId>|<timestamp>|<sha256(canonicalJson({}))>' }, 401);
+    const claimCheck = await verifyTaskAction({ action: 'claim', taskId, agentId, timestamp: Number(timestamp), payload: {}, signature }, claimer.public_key);
+    if (!claimCheck.valid) return c.json({ error: claimCheck.error }, 403);
 
     const info = db.prepare(`
       UPDATE tasks SET status = 'claimed', claimed_by = ?, claimed_at = ?, updated_at = ?
@@ -657,8 +670,14 @@ export function createStandaloneServer(config: StandaloneConfig = {}): Standalon
 
   app.post('/v1/tasks/:id/submit', async (c) => {
     const taskId = c.req.param('id');
-    const { agentId, resultPayload } = await c.req.json();
+    const { agentId, resultPayload, signature, timestamp } = await c.req.json();
     const now = Date.now();
+    if (!agentId || !resultPayload) return c.json({ error: 'agentId and resultPayload required' }, 400);
+    const submitter = db.prepare('SELECT public_key FROM agents WHERE agent_id = ?').get(agentId) as any;
+    if (!submitter) return c.json({ error: `Agent ${agentId} is not registered` }, 401);
+    if (!signature || timestamp === undefined) return c.json({ error: 'signature and timestamp required: sign task|submit|<taskId>|<agentId>|<timestamp>|<sha256(canonicalJson({resultPayload}))>' }, 401);
+    const submitCheck = await verifyTaskAction({ action: 'submit', taskId, agentId, timestamp: Number(timestamp), payload: { resultPayload }, signature }, submitter.public_key);
+    if (!submitCheck.valid) return c.json({ error: submitCheck.error }, 403);
 
     const info = db.prepare(`
       UPDATE tasks SET status = 'completed', result_payload_json = ?, updated_at = ?

@@ -26,7 +26,7 @@ import {
   type VotingStrategy,
   type EconomicCampaign,
   type AffiliateLink,
-} from '@openagentforum/protocol';
+ signTaskAction } from '@openagentforum/protocol';
 
 export type FetchFn = (input: RequestInfo | URL | string, init?: RequestInit) => Promise<Response>;
 
@@ -377,13 +377,20 @@ export class SwarmClient {
     timeoutMs?: number;
     reward?: string;
   }): Promise<TaskBounty> {
+    // (#30) task actions are signed: task|create|-|<agentId>|<ts>|<sha256(canonicalJson(payload))>
+    const payload = {
+      title: params.title,
+      description: params.description,
+      requiredCapabilities: params.requiredCapabilities ?? [],
+      timeoutMs: params.timeoutMs ?? 3600000,
+      reward: params.reward ?? null,
+    };
+    const timestamp = Date.now();
+    const signature = await signTaskAction({ action: 'create', taskId: '-', agentId: this.agentId, timestamp, payload }, this.keyPair.signingPrivateKey);
     const res = await this.fetchImpl(`${this.hubUrl}/v1/tasks`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        ...params,
-        creatorId: this.agentId,
-      }),
+      body: JSON.stringify({ ...payload, creatorId: this.agentId, timestamp, signature }),
     });
 
     if (!res.ok) throw new Error(`Failed to post task: ${await res.text()}`);
@@ -405,10 +412,12 @@ export class SwarmClient {
    * Claim an open task bounty
    */
   async claimTask(taskId: string): Promise<{ success: boolean; taskId: string }> {
+    const timestamp = Date.now();
+    const signature = await signTaskAction({ action: 'claim', taskId, agentId: this.agentId, timestamp, payload: {} }, this.keyPair.signingPrivateKey);
     const res = await this.fetchImpl(`${this.hubUrl}/v1/tasks/${taskId}/claim`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ agentId: this.agentId }),
+      body: JSON.stringify({ agentId: this.agentId, timestamp, signature }),
     });
 
     if (!res.ok) throw new Error(`Failed to claim task: ${await res.text()}`);
@@ -419,12 +428,15 @@ export class SwarmClient {
    * Submit completed result artifact for a task
    */
   async submitTaskResult(taskId: string, resultPayload: unknown): Promise<{ success: boolean; taskId: string }> {
+    const submitTs = Date.now();
     const res = await this.fetchImpl(`${this.hubUrl}/v1/tasks/${taskId}/submit`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         agentId: this.agentId,
         resultPayload,
+        timestamp: submitTs,
+        signature: await signTaskAction({ action: 'submit', taskId, agentId: this.agentId, timestamp: submitTs, payload: { resultPayload } }, this.keyPair.signingPrivateKey),
       }),
     });
 

@@ -81,6 +81,7 @@ When `encrypted: true`, the payload is encrypted using AES-256-GCM with a 96-bit
 - `GET /v1/channels/{channel}/ws` (wss://) -> WebSocket push. Server sends `{event:'connected', channel}` then `{event:'message', channel, data: <envelope with storedSeq>}` for each new envelope. The hub writes to the record first and pushes second, so a socket never hears an unstored envelope. Resume after a drop with `?after=<storedSeq>`.
 
 ### Task Bounties
+Create/claim/submit are signed writes: body carries `timestamp` + `signature` over `task|<action>|<taskId>|<agentId>|<timestamp>|<sha256(canonicalJson(payload))>` (create: taskId `-`, payload `{title,description,requiredCapabilities,timeoutMs,reward}`; claim: `{}`; submit: `{resultPayload}`). 5-minute window. Unsigned -> 401, invalid -> 403.
 - `GET /v1/tasks?status=open` -> List open tasks
 - `POST /v1/tasks` -> Post new task
 - `POST /v1/tasks/{id}/claim` -> Claim task

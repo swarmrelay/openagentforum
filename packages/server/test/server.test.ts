@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { createStandaloneServer, type StandaloneInstance } from '../src/standalone.js';
-import { generateAgentKeyPair, signEnvelope, verifyEnvelope } from '@openagentforum/protocol';
+import { generateAgentKeyPair, signEnvelope, verifyEnvelope, signTaskAction } from '@openagentforum/protocol';
 import fs from 'node:fs';
 
 describe('SwarmRelay Server (Standalone / Edge API)', () => {
@@ -241,49 +241,39 @@ describe('SwarmRelay Server (Standalone / Edge API)', () => {
     expect(check.agent.name).toBe('Original');
   });
 
-  it('handles task bounties workflow (post -> claim -> submit)', async () => {
+  it('task actions are signed: post -> claim -> submit, and impostors are refused (#30)', async () => {
     const creator = await generateAgentKeyPair();
     const worker = await generateAgentKeyPair();
+    const impostor = await generateAgentKeyPair();
+    const post = (path: string, body: any) => instance.app.request(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    for (const k of [creator, worker, impostor]) await post('/v1/agents/register', { name: `T-${k.agentId.slice(6, 12)}`, publicKey: k.signingPublicKey });
 
-    // 1. Post Task
-    const createRes = await instance.app.request('/v1/tasks', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        creatorId: creator.agentId,
-        title: 'Analyze CVE-2026-66384 Cache Poisoning Pattern',
-        description: 'Verify remediation in Artifactory Docker container cache layer',
-        requiredCapabilities: ['docker_sandbox', 'python_exec'],
-        reward: '50 credits'
-      })
-    });
-
-    const createData = await createRes.json();
-    expect(createData.success).toBe(true);
+    // 1. Post Task (signed over its content)
+    const payload = { title: 'Analyze CVE-2026-66384 Cache Poisoning Pattern', description: 'Verify remediation in Artifactory Docker container cache layer', requiredCapabilities: ['docker_sandbox', 'python_exec'], timeoutMs: 3600000, reward: '50 credits' };
+    const unsignedCreate = await post('/v1/tasks', { ...payload, creatorId: creator.agentId });
+    expect(unsignedCreate.status).toBe(401);
+    let ts = Date.now();
+    const createRes = await post('/v1/tasks', { ...payload, creatorId: creator.agentId, timestamp: ts, signature: await signTaskAction({ action: 'create', taskId: '-', agentId: creator.agentId, timestamp: ts, payload }, creator.signingPrivateKey) });
+    const createData: any = await createRes.json();
+    expect(createData.success, JSON.stringify(createData)).toBe(true);
     const taskId = createData.task.id;
 
-    // 2. Claim Task
-    const claimRes = await instance.app.request(`/v1/tasks/${taskId}/claim`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ agentId: worker.agentId })
-    });
-    const claimData = await claimRes.json();
+    // 2. Claim: unsigned -> 401; signed by someone else's key for the worker's id -> 403; stale -> 403; correct -> claimed
+    expect((await post(`/v1/tasks/${taskId}/claim`, { agentId: worker.agentId })).status).toBe(401);
+    ts = Date.now();
+    expect((await post(`/v1/tasks/${taskId}/claim`, { agentId: worker.agentId, timestamp: ts, signature: await signTaskAction({ action: 'claim', taskId, agentId: worker.agentId, timestamp: ts, payload: {} }, impostor.signingPrivateKey) })).status).toBe(403);
+    const stale = Date.now() - 10 * 60 * 1000;
+    expect((await post(`/v1/tasks/${taskId}/claim`, { agentId: worker.agentId, timestamp: stale, signature: await signTaskAction({ action: 'claim', taskId, agentId: worker.agentId, timestamp: stale, payload: {} }, worker.signingPrivateKey) })).status).toBe(403);
+    ts = Date.now();
+    const claimData: any = await (await post(`/v1/tasks/${taskId}/claim`, { agentId: worker.agentId, timestamp: ts, signature: await signTaskAction({ action: 'claim', taskId, agentId: worker.agentId, timestamp: ts, payload: {} }, worker.signingPrivateKey) })).json();
     expect(claimData.status).toBe('claimed');
 
-    // 3. Submit Task Result
-    const submitRes = await instance.app.request(`/v1/tasks/${taskId}/submit`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        agentId: worker.agentId,
-        resultPayload: {
-          status: 'verified',
-          summary: 'Upstream remote repository cache path strictly validated and safe.'
-        }
-      })
-    });
-    const submitData = await submitRes.json();
+    // 3. Submit: the signature binds the result; a swapped result is refused
+    const resultPayload = { status: 'verified', summary: 'Upstream remote repository cache path strictly validated and safe.' };
+    ts = Date.now();
+    const sig = await signTaskAction({ action: 'submit', taskId, agentId: worker.agentId, timestamp: ts, payload: { resultPayload } }, worker.signingPrivateKey);
+    expect((await post(`/v1/tasks/${taskId}/submit`, { agentId: worker.agentId, resultPayload: { status: 'forged' }, timestamp: ts, signature: sig })).status).toBe(403);
+    const submitData: any = await (await post(`/v1/tasks/${taskId}/submit`, { agentId: worker.agentId, resultPayload, timestamp: ts, signature: sig })).json();
     expect(submitData.status).toBe('completed');
   });
 
