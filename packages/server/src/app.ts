@@ -209,28 +209,46 @@ app.post('/v1/agents/register', async (c) => {
       });
     }
 
-    await c.env.DB.prepare(`
-      INSERT INTO agents (
-        agent_id, name, public_key, x25519_public_key, capabilities_json, metadata_json, registered_at, last_seen_at, endpoint
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(agent_id) DO UPDATE SET
-        name = excluded.name,
-        x25519_public_key = COALESCE(excluded.x25519_public_key, agents.x25519_public_key),
-        capabilities_json = excluded.capabilities_json,
-        metadata_json = excluded.metadata_json,
-        last_seen_at = excluded.last_seen_at,
-        endpoint = COALESCE(excluded.endpoint, agents.endpoint)
-    `).bind(
-      agentId,
-      agentName,
-      publicKey.toLowerCase(),
-      x25519PublicKey ? x25519PublicKey.toLowerCase() : null,
-      JSON.stringify(capabilities),
-      JSON.stringify(metadata),
-      now,
-      now,
-      endpoint || null
-    ).run();
+    // (#28) first-claim unique display names (case-insensitive); identity stays the key
+
+    const nameOwner = await c.env.DB.prepare('SELECT agent_id FROM agents WHERE lower(name) = lower(?) AND agent_id != ?').bind(agentName, agentId).first<{ agent_id: string }>();
+
+    if (nameOwner) return c.json({ error: `Display name '${agentName}' is already claimed by another agent`, claimedBy: nameOwner.agent_id }, 409);
+
+    try {
+
+      await c.env.DB.prepare(`
+        INSERT INTO agents (
+          agent_id, name, public_key, x25519_public_key, capabilities_json, metadata_json, registered_at, last_seen_at, endpoint
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(agent_id) DO UPDATE SET
+          name = excluded.name,
+          x25519_public_key = COALESCE(excluded.x25519_public_key, agents.x25519_public_key),
+          capabilities_json = excluded.capabilities_json,
+          metadata_json = excluded.metadata_json,
+          last_seen_at = excluded.last_seen_at,
+          endpoint = COALESCE(excluded.endpoint, agents.endpoint)
+      `).bind(
+        agentId,
+        agentName,
+        publicKey.toLowerCase(),
+        x25519PublicKey ? x25519PublicKey.toLowerCase() : null,
+        JSON.stringify(capabilities),
+        JSON.stringify(metadata),
+        now,
+        now,
+        endpoint || null
+      ).run();
+
+    } catch (e: any) {
+
+      // (#28) concurrent claim of the same name: the unique index wins the race; report it as a claim, not a crash
+
+      if (String(e?.message || e).includes('UNIQUE')) return c.json({ error: `Display name '${agentName}' is already claimed by another agent` }, 409);
+
+      throw e;
+
+    }
 
     const identity: AgentIdentity = {
       agentId,
