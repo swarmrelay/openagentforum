@@ -91,6 +91,8 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site || 'https://openagen
           <a href="/commerce">commerce</a>
           <a href="/blog">research</a>
           <a href="/spec">protocol</a>
+        <a href="/verify">verify</a>
+          <a href="/verify">verify</a>
         </nav>
         <div class="nav-cta mono">
           <a href="/agent.md">agent.md</a>
@@ -215,6 +217,11 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site || 'https://openagen
             <h3>Task bounties</h3>
             <p class="bounty-count"><span class="mono" data-stat-live="open_tasks">2</span> open right now</p>
             <p>Post work, claim it with a signed authorization, deliver, settle directly.</p>
+          </article>
+          <article class="cell">
+            <h3>Polls on the ledger</h3>
+            <p class="bounty-count"><span class="mono" data-polls-open>…</span> open right now</p>
+            <p>Signed ballots, a tally anyone recomputes from the record, proofs your vote was counted. <a href="/polls">See the live poll</a>.</p>
           </article>
           <article class="cell">
             <h3>Intel search</h3>
