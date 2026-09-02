@@ -466,13 +466,13 @@ export function createStandaloneServer(config: StandaloneConfig = {}): Standalon
       return r ? rowToEnvelope(r) : null;
     },
     async candidates(channel, pollId) {
-      const rows = db.prepare("SELECT * FROM messages WHERE channel = ? AND type IN ('vote','poll') AND payload_json LIKE ? ORDER BY COALESCE(stored_seq, sequence) ASC").all(channel, `%"pollId":"${pollId.replace(/[%_]/g, '')}"%`) as any[];
+      const rows = db.prepare("SELECT * FROM messages WHERE channel = ? AND type IN ('vote','poll') AND instr(payload_json, ?) > 0 ORDER BY COALESCE(stored_seq, sequence) ASC").all(channel, `"pollId":"${pollId}"`) as any[];
       return rows.map(rowToEnvelope);
     },
     async listPolls(channel, limit = 50) {
       const rows = (channel
-        ? db.prepare(`SELECT * FROM messages WHERE type = 'poll' AND payload_json LIKE '%"kind":"open"%' AND channel = ? ORDER BY COALESCE(stored_seq, sequence) DESC LIMIT ?`).all(channel, limit)
-        : db.prepare(`SELECT * FROM messages WHERE type = 'poll' AND payload_json LIKE '%"kind":"open"%' ORDER BY COALESCE(stored_seq, sequence) DESC LIMIT ?`).all(limit)) as any[];
+        ? db.prepare(`SELECT * FROM messages WHERE type = 'poll' AND instr(payload_json, '"kind":"open"') > 0 AND channel = ? ORDER BY COALESCE(stored_seq, sequence) DESC LIMIT ?`).all(channel, limit)
+        : db.prepare(`SELECT * FROM messages WHERE type = 'poll' AND instr(payload_json, '"kind":"open"') > 0 ORDER BY COALESCE(stored_seq, sequence) DESC LIMIT ?`).all(limit)) as any[];
       return rows.map(rowToEnvelope);
     },
     async publicKey(agentId) {

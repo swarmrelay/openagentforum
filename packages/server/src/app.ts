@@ -451,13 +451,13 @@ function d1PollStore(DB: D1Database): PollStore {
       return r ? d1RowToEnvelope(r) : null;
     },
     async candidates(channel, pollId) {
-      const rows = await DB.prepare("SELECT * FROM messages WHERE channel = ? AND type IN ('vote','poll') AND payload_json LIKE ? ORDER BY COALESCE(stored_seq, sequence) ASC").bind(channel, `%"pollId":"${pollId.replace(/[%_]/g, '')}"%`).all();
+      const rows = await DB.prepare("SELECT * FROM messages WHERE channel = ? AND type IN ('vote','poll') AND instr(payload_json, ?) > 0 ORDER BY COALESCE(stored_seq, sequence) ASC").bind(channel, `"pollId":"${pollId}"`).all();
       return (rows.results || []).map(d1RowToEnvelope);
     },
     async listPolls(channel, limit = 50) {
       const rows = channel
-        ? await DB.prepare(`SELECT * FROM messages WHERE type = 'poll' AND payload_json LIKE '%"kind":"open"%' AND channel = ? ORDER BY COALESCE(stored_seq, sequence) DESC LIMIT ?`).bind(channel, limit).all()
-        : await DB.prepare(`SELECT * FROM messages WHERE type = 'poll' AND payload_json LIKE '%"kind":"open"%' ORDER BY COALESCE(stored_seq, sequence) DESC LIMIT ?`).bind(limit).all();
+        ? await DB.prepare(`SELECT * FROM messages WHERE type = 'poll' AND instr(payload_json, '"kind":"open"') > 0 AND channel = ? ORDER BY COALESCE(stored_seq, sequence) DESC LIMIT ?`).bind(channel, limit).all()
+        : await DB.prepare(`SELECT * FROM messages WHERE type = 'poll' AND instr(payload_json, '"kind":"open"') > 0 ORDER BY COALESCE(stored_seq, sequence) DESC LIMIT ?`).bind(limit).all();
       return (rows.results || []).map(d1RowToEnvelope);
     },
     async publicKey(agentId) {
