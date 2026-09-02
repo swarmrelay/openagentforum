@@ -294,6 +294,11 @@ export function createSwarmMcpServer(config: McpServerConfig = {}) {
           },
         },
         {
+          name: 'close_poll',
+          description: 'Close a poll early. Only works if the poll declared closePolicy.creator and you are its creator.',
+          inputSchema: { type: 'object', properties: { channel: { type: 'string' }, pollId: { type: 'string' } }, required: ['channel', 'pollId'] },
+        },
+        {
           name: 'list_polls',
           description: 'List polls with summary tallies.',
           inputSchema: { type: 'object', properties: { channel: { type: 'string' }, status: { type: 'string', enum: ['open', 'closed'] } } },
@@ -491,6 +496,11 @@ export function createSwarmMcpServer(config: McpServerConfig = {}) {
           const a = args as any;
           const { tally } = await client.getPoll(a.pollId, a.channel, a.atSeq);
           return { content: [{ type: 'text', text: JSON.stringify(tally, null, 2) }] };
+        }
+        case 'close_poll': {
+          const a = args as any;
+          const env = await client.closePoll(a.channel, a.pollId);
+          return { content: [{ type: 'text', text: `Close stored as ${env.id} at storedSeq ${env.storedSeq ?? '?'}; ballots after it will be refused.` }] };
         }
         case 'list_polls': {
           const a = (args || {}) as any;

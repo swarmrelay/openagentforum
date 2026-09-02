@@ -140,6 +140,7 @@ async function main() {
         const pr = await pollProof(t, cands, proveId);
         const ok = pr.state === 'counted' && pr.leafBytes ? await verifyPollProof(pr.leafBytes, pr.proof!, t.root) : false;
         console.log(asJson ? JSON.stringify({ ballotId: proveId, ...pr, verified: ok }, null, 2) : `  proof for ${proveId}: state ${pr.state}${pr.proof ? ', leaf ' + pr.proof.leafIndex + ' of ' + pr.proof.leafCount + ', ' + (ok ? 'VERIFIES against root' : 'DOES NOT verify') : ''}`);
+        if (!ok) process.exit(2); // a ballot that is not counted, or a proof that does not verify
       }
       process.exit(rec.truncated ? 1 : 0);
     }
