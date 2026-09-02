@@ -4,7 +4,7 @@
  * Zero external dependencies, fully compatible with Cloudflare Workers, Node.js 20+, Bun, and Browsers.
  */
 
-import type { MessageEnvelope, MessageType, SignedBallot } from './types.js';
+import type { MessageEnvelope, MessageType } from './types.js';
 
 /**
  * Deterministic JSON stringify (keys recursively sorted, no spacing)
@@ -280,123 +280,6 @@ export async function verifyEnvelope(
     return { valid: true };
   } catch (err) {
     return { valid: false, error: (err as Error).message };
-  }
-}
-
-// -------------------------------------------------------------
-// VERIFIABLE SWARM CONSENSUS & MERKLE BALLOT PRIMITIVES
-// -------------------------------------------------------------
-
-/**
- * Compute the ballot hash chaining the previous ballot
- */
-export async function computeBallotHash(params: {
-  prevBallotHash: string;
-  pollId: string;
-  voterId: string;
-  choiceIndex: number;
-  choice: string;
-  timestamp: number;
-  justificationHash?: string;
-}): Promise<string> {
-  const content = `${params.prevBallotHash}|${params.pollId}|${params.voterId}|${params.choiceIndex}|${params.choice}|${params.timestamp}|${params.justificationHash || '0'}`;
-  return await sha256Hex(content);
-}
-
-/**
- * Sign a Merkle Ballot for Swarm Polling / Consensus
- */
-export async function signBallot(
-  params: {
-    id?: string;
-    pollId: string;
-    voterId: string;
-    choiceIndex: number;
-    choice: string;
-    weight?: number;
-    prevBallotHash?: string;
-    justificationHash?: string;
-    timestamp?: number;
-  },
-  signingPrivateKeyHex: string
-): Promise<SignedBallot> {
-  const id = params.id || crypto.randomUUID();
-  const timestamp = params.timestamp || Date.now();
-  const prevBallotHash = params.prevBallotHash || '0000000000000000000000000000000000000000000000000000000000000000';
-  const weight = params.weight || 1;
-
-  const ballotHash = await computeBallotHash({
-    prevBallotHash,
-    pollId: params.pollId,
-    voterId: params.voterId,
-    choiceIndex: params.choiceIndex,
-    choice: params.choice,
-    timestamp,
-    justificationHash: params.justificationHash,
-  });
-
-  const privKey = await importEdPrivateKey(signingPrivateKeyHex);
-  const sigBuffer = await crypto.subtle.sign('Ed25519', privKey, new TextEncoder().encode(ballotHash));
-  const signature = bytesToHex(new Uint8Array(sigBuffer));
-
-  return {
-    id,
-    pollId: params.pollId,
-    voterId: params.voterId,
-    choiceIndex: params.choiceIndex,
-    choice: params.choice,
-    weight,
-    justificationHash: params.justificationHash,
-    prevBallotHash,
-    ballotHash,
-    signature,
-    timestamp,
-  };
-}
-
-/**
- * Verify a Signed Ballot against voter's public key
- */
-export async function verifyBallot(
-  ballot: SignedBallot,
-  signingPublicKeyHex: string
-): Promise<{ valid: boolean; error?: string }> {
-  try {
-    const expectedAgentId = await deriveAgentId(signingPublicKeyHex);
-    if (ballot.voterId.toLowerCase() !== expectedAgentId.toLowerCase()) {
-      return { valid: false, error: `Voter ID ${ballot.voterId} does not match public key fingerprint ${expectedAgentId}` };
-    }
-
-    const calculatedHash = await computeBallotHash({
-      prevBallotHash: ballot.prevBallotHash,
-      pollId: ballot.pollId,
-      voterId: ballot.voterId,
-      choiceIndex: ballot.choiceIndex,
-      choice: ballot.choice,
-      timestamp: ballot.timestamp,
-      justificationHash: ballot.justificationHash,
-    });
-
-    if (calculatedHash.toLowerCase() !== ballot.ballotHash.toLowerCase()) {
-      return { valid: false, error: 'Ballot hash mismatch (tampered ballot)' };
-    }
-
-    const pubKey = await importEdPublicKey(signingPublicKeyHex);
-    const sigBytes = hexToBytes(ballot.signature);
-    const valid = await crypto.subtle.verify(
-      'Ed25519',
-      pubKey,
-      sigBytes as BufferSource,
-      new TextEncoder().encode(ballot.ballotHash)
-    );
-
-    if (!valid) {
-      return { valid: false, error: 'Invalid Ed25519 signature on ballot' };
-    }
-
-    return { valid: true };
-  } catch (err: any) {
-    return { valid: false, error: err.message };
   }
 }
 

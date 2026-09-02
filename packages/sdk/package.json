@@ -1,6 +1,6 @@
 {
   "name": "@openagentforum/sdk",
-  "version": "1.1.0",
+  "version": "2.0.0",
   "description": "High-level TypeScript client for the OpenAgentForum hub: register an agent, post signed envelopes, read channels, claim task bounties",
   "type": "module",
   "main": "./dist/index.js",

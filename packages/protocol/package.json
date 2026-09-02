@@ -1,6 +1,6 @@
 {
   "name": "@openagentforum/protocol",
-  "version": "1.3.0",
+  "version": "2.0.0",
   "description": "SwarmRelay protocol primitives: Ed25519 signed MessageEnvelopes, canonical JSON checksums, X25519 + AES-256-GCM payload encryption, agent identity derivation",
   "type": "module",
   "main": "./dist/index.js",

@@ -27,8 +27,11 @@ const require = createRequire(import.meta.url);
 const { DatabaseSync } = require('node:sqlite');
 import { normalizeDisplayName, displayNameKey } from './names.js';
 import { verifyTaskAction, sha256Hex } from '@openagentforum/protocol';
+import { registerPollRoutes, pollIngestGate, type PollStore } from './polls-routes.js';
 
 export interface StandaloneConfig {
+  /** origin this relay is known by (poll.ledger.hub); defaults to PUBLIC_ORIGIN or the request origin */
+  publicOrigin?: string;
   port?: number;
   dbPath?: string;
   relayName?: string;
@@ -247,9 +250,6 @@ export function createStandaloneServer(config: StandaloneConfig = {}): Standalon
         'post_task',
         'claim_task',
         'submit_task_result',
-        'create_poll',
-        'cast_vote',
-        'get_poll',
         'search_intel'
       ]
     });
@@ -454,6 +454,35 @@ export function createStandaloneServer(config: StandaloneConfig = {}): Standalon
     });
   });
 
+  // Polls (RFC 0001): record access for the pure tally
+  const rowToEnvelope = (r: any) => ({
+    id: r.id, channel: r.channel, sender: r.sender, type: r.type, sequence: r.sequence,
+    storedSeq: r.stored_seq ?? r.sequence, timestamp: r.timestamp, payload: JSON.parse(r.payload_json),
+    signature: r.signature, checksum: r.checksum, replyToId: r.reply_to_id || undefined, encrypted: r.encrypted === 1,
+  });
+  const pollStore: PollStore = {
+    async getPoll(channel, pollId) {
+      const r = db.prepare("SELECT * FROM messages WHERE channel = ? AND id = ? AND type = 'poll'").get(channel, pollId) as any;
+      return r ? rowToEnvelope(r) : null;
+    },
+    async candidates(channel, pollId) {
+      const rows = db.prepare("SELECT * FROM messages WHERE channel = ? AND type IN ('vote','poll') AND payload_json LIKE ? ORDER BY COALESCE(stored_seq, sequence) ASC").all(channel, `%"pollId":"${pollId.replace(/[%_]/g, '')}"%`) as any[];
+      return rows.map(rowToEnvelope);
+    },
+    async listPolls(channel, limit = 50) {
+      const rows = (channel
+        ? db.prepare(`SELECT * FROM messages WHERE type = 'poll' AND payload_json LIKE '%"kind":"open"%' AND channel = ? ORDER BY COALESCE(stored_seq, sequence) DESC LIMIT ?`).all(channel, limit)
+        : db.prepare(`SELECT * FROM messages WHERE type = 'poll' AND payload_json LIKE '%"kind":"open"%' ORDER BY COALESCE(stored_seq, sequence) DESC LIMIT ?`).all(limit)) as any[];
+      return rows.map(rowToEnvelope);
+    },
+    async publicKey(agentId) {
+      const r = db.prepare('SELECT public_key FROM agents WHERE agent_id = ?').get(agentId) as any;
+      return r?.public_key ?? null;
+    },
+  };
+  const publicOrigin = (c: any) => config.publicOrigin || process.env.PUBLIC_ORIGIN || new URL(c.req.url).origin;
+  registerPollRoutes(app, () => pollStore);
+
   // Messages
   app.get('/v1/channels/:name/messages', (c) => {
     const slug = c.req.param('name').toLowerCase();
@@ -506,6 +535,9 @@ export function createStandaloneServer(config: StandaloneConfig = {}): Standalon
     if (!verification.valid) {
       return c.json({ error: `Validation failed: ${verification.error}` }, 403);
     }
+    // (RFC 0001) poll and ballot envelopes get the ingest checks on top
+    const pollRefusal = await pollIngestGate(pollStore, envelope, publicOrigin(c));
+    if (pollRefusal) return c.json(pollRefusal.body, pollRefusal.status as any);
 
     // Ensure Channel exists (auto-create dynamic DM or private channels)
     const existingChannel = db.prepare('SELECT name FROM channels WHERE name = ?').get(channelName);

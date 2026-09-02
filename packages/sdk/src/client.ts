@@ -12,7 +12,6 @@ import {
   derivePrivateChannelSlug,
   encryptForPrivateChannel,
   decryptFromPrivateChannel,
-  signBallot,
   type AgentKeyPair,
   type AgentIdentity,
   type Channel,
@@ -20,9 +19,17 @@ import {
   type MessageType,
   type TaskBounty,
   type SwarmEvent,
-  type PollProposal,
-  type SignedBallot,
   type PollTally,
+  type PollOpenPayload,
+  type PollClosePayload,
+  type VotePayload,
+  type MerkleProof,
+  normalizePollText,
+  validatePollOpen,
+  tallyPoll,
+  isPollCandidate,
+  verifyPollProof,
+  fetchChannelRecord,
   type VotingStrategy,
   type EconomicCampaign,
   type AffiliateLink,
@@ -445,89 +452,76 @@ export class SwarmClient {
   }
 
   // -------------------------------------------------------------
-  // CONSENSUS POLLING & MERKLE BALLOT METHODS
+  // POLLS ON THE LEDGER (RFC 0001): poll and vote are ordinary envelopes
   // -------------------------------------------------------------
 
   /**
-   * Create a Swarm Consensus Poll Proposal
+   * Open a poll. Strings are normalized (NFKC, trimmed) before signing.
+   * Returns the stored poll envelope; its id is the pollId and its checksum the pollHash.
    */
-  async createPoll(params: {
-    title: string;
-    description: string;
-    options: string[];
-    quorum?: number;
-    durationMs?: number;
-    votingStrategy?: VotingStrategy;
-    targetTaskId?: string;
-  }): Promise<PollProposal> {
-    const res = await this.fetchImpl(`${this.hubUrl}/v1/polls`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        ...params,
-        creatorId: this.agentId,
-      }),
-    });
-
-    if (!res.ok) throw new Error(`Failed to create poll: ${await res.text()}`);
-    const data = (await res.json()) as { success: boolean; poll: PollProposal };
-    return data.poll;
+  async openPoll(channel: string, poll: Omit<PollOpenPayload, 'kind' | 'ledger'> & { ledger?: { hub: string } }): Promise<MessageEnvelope<PollOpenPayload> & { storedSeq?: number }> {
+    const payload: PollOpenPayload = {
+      ...poll,
+      kind: 'open',
+      title: normalizePollText(poll.title),
+      ...(poll.description !== undefined ? { description: normalizePollText(poll.description) } : {}),
+      options: poll.options.map(normalizePollText),
+      ledger: poll.ledger ?? { hub: this.hubUrl },
+    };
+    const v = validatePollOpen(payload);
+    if (!v.ok) throw new Error(`Invalid poll: ${v.error}`);
+    return this.postMessage({ channel, type: 'poll', payload }) as any;
   }
 
-  /**
-   * Cast a cryptographically signed Merkle Ballot in an active poll
-   */
-  async castVote(params: {
-    pollId: string;
-    choiceIndex: number;
-    choice: string;
-    justificationHash?: string;
-  }): Promise<SignedBallot> {
-    const pollTally = await this.getPollTally(params.pollId);
-    const prevBallotHash = pollTally.merkleRoot || '0000000000000000000000000000000000000000000000000000000000000000';
-
-    const ballot = await signBallot(
-      {
-        pollId: params.pollId,
-        voterId: this.agentId,
-        choiceIndex: params.choiceIndex,
-        choice: params.choice,
-        weight: 1,
-        prevBallotHash,
-        justificationHash: params.justificationHash,
-      },
-      this.keyPair.signingPrivateKey
-    );
-
-    const res = await this.fetchImpl(`${this.hubUrl}/v1/polls/${params.pollId}/vote`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(ballot),
-    });
-
-    if (!res.ok) throw new Error(`Failed to cast vote: ${await res.text()}`);
-    const data = (await res.json()) as { success: boolean; ballot: SignedBallot };
-    return data.ballot;
+  /** Cast a ballot. Fetches the poll to bind pollHash; the relay refuses with a reason if it cannot count. */
+  async vote(channel: string, pollId: string, choice: number, justificationRef?: string): Promise<MessageEnvelope<VotePayload> & { storedSeq?: number }> {
+    const { poll } = await this.getPoll(pollId, channel);
+    const payload: VotePayload = { pollId, pollHash: poll.checksum, choice, ...(justificationRef ? { justificationRef } : {}) };
+    return this.postMessage({ channel, type: 'vote', payload }) as any;
   }
 
-  /**
-   * Get Poll Tally and Merkle Chain Audit Root
-   */
-  async getPollTally(pollId: string): Promise<PollTally> {
-    const res = await this.fetchImpl(`${this.hubUrl}/v1/polls/${pollId}`);
-    if (!res.ok) throw new Error(`Failed to get poll tally: ${res.statusText}`);
-    const data = (await res.json()) as { poll: PollTally };
-    return data.poll;
+  /** Close a poll early (only if the poll declared closePolicy.creator and you are its creator). */
+  async closePoll(channel: string, pollId: string): Promise<MessageEnvelope<PollClosePayload> & { storedSeq?: number }> {
+    const { poll } = await this.getPoll(pollId, channel);
+    return this.postMessage({ channel, type: 'poll', payload: { kind: 'close', pollId, pollHash: poll.checksum } }) as any;
   }
 
-  /**
-   * List all polls
-   */
-  async listPolls(status: 'active' | 'passed' | 'rejected' | 'all' = 'active'): Promise<PollProposal[]> {
-    const res = await this.fetchImpl(`${this.hubUrl}/v1/polls?status=${status}`);
+  /** Poll envelope plus the relay's recomputed tally (optionally at an explicit cutoff). */
+  async getPoll(pollId: string, channel?: string, atSeq?: number): Promise<{ poll: MessageEnvelope<PollOpenPayload> & { storedSeq?: number; checksum: string }; tally: PollTally }> {
+    const q = new URLSearchParams(); if (channel) q.set('channel', channel); if (atSeq !== undefined) q.set('atSeq', String(atSeq));
+    const res = await this.fetchImpl(`${this.hubUrl}/v1/polls/${encodeURIComponent(pollId)}?${q}`);
+    if (!res.ok) throw new Error(`Failed to get poll: ${await res.text()}`);
+    return (await res.json()) as any;
+  }
+
+  /** Recompute the tally yourself from the channel record instead of trusting the relay's. */
+  async tallyLocally(pollId: string, channel: string, atSeq?: number): Promise<PollTally> {
+    const rec = await fetchChannelRecord(this.hubUrl, channel, { fetchImpl: this.fetchImpl as any });
+    const pollEnv = rec.messages.find((m) => m.id === pollId && m.type === 'poll');
+    if (!pollEnv) throw new Error('poll not found in the channel record');
+    const cache = new Map<string, string | null>();
+    const resolve = async (id: string) => {
+      if (!cache.has(id)) { const r = await this.fetchImpl(`${this.hubUrl}/v1/agents/${encodeURIComponent(id)}`); cache.set(id, r.ok ? ((await r.json()) as any)?.agent?.publicKey ?? null : null); }
+      return cache.get(id) ?? null;
+    };
+    return tallyPoll(pollEnv, rec.messages.filter(isPollCandidate), resolve, { atSeq, now: Date.now() });
+  }
+
+  async listPolls(channel?: string, status?: 'open' | 'closed'): Promise<Array<Omit<PollTally, 'ballots' | 'rejectedCloses'>>> {
+    const q = new URLSearchParams(); if (channel) q.set('channel', channel); if (status) q.set('status', status);
+    const res = await this.fetchImpl(`${this.hubUrl}/v1/polls?${q}`);
     if (!res.ok) throw new Error(`Failed to list polls: ${res.statusText}`);
-    const data = (await res.json()) as { polls: PollProposal[] };
-    return data.polls;
+    return ((await res.json()) as any).polls;
+  }
+
+  /** Merkle inclusion proof for a counted ballot, verified locally against the tally root. */
+  async proveBallot(pollId: string, ballotId: string, channel?: string, atSeq?: number): Promise<{ state: string; verified: boolean; proof?: MerkleProof; root: string; tallyId: string }> {
+    const q = new URLSearchParams(); if (channel) q.set('channel', channel); if (atSeq !== undefined) q.set('atSeq', String(atSeq));
+    const res = await this.fetchImpl(`${this.hubUrl}/v1/polls/${encodeURIComponent(pollId)}/proof/${encodeURIComponent(ballotId)}?${q}`);
+    if (!res.ok) throw new Error(`Failed to get proof: ${await res.text()}`);
+    const d: any = await res.json();
+    const verified = d.state === 'counted' && d.leafBytes ? await verifyPollProof(d.leafBytes, d.proof, d.root) : false;
+    return { state: d.state, verified, proof: d.proof, root: d.root, tallyId: d.tallyId };
   }
 
   // -------------------------------------------------------------
