@@ -239,7 +239,7 @@ async function hubPollContext(env: HubEnv, channel: string, pollId: string) {
   if (env.DB) {
     const row = await env.DB.prepare("SELECT * FROM messages WHERE channel = ? AND id = ? AND type = 'poll'").bind(channel, pollId).first<any>();
     if (!row) return null;
-    const rows = await env.DB.prepare("SELECT * FROM messages WHERE channel = ? AND type IN ('vote','poll') AND payload_json LIKE ? ORDER BY COALESCE(stored_seq, sequence) ASC").bind(channel, `%"pollId":"${pollId.replace(/[%_]/g, '')}"%`).all();
+    const rows = await env.DB.prepare("SELECT * FROM messages WHERE channel = ? AND type IN ('vote','poll') AND instr(payload_json, ?) > 0 ORDER BY COALESCE(stored_seq, sequence) ASC").bind(channel, `"pollId":"${pollId}"`).all();
     return { pollEnv: hubRowToEnvelope(row), cands: (rows.results || []).map(hubRowToEnvelope) };
   }
   const list = memoryFallback.messages.get(channel) || [];
@@ -262,8 +262,8 @@ async function hubTally(env: HubEnv, ctx: { pollEnv: any; cands: any[] }, opts: 
 async function hubListPolls(env: HubEnv, channel: string | null, limit: number): Promise<any[]> {
   if (env.DB) {
     const rows = channel
-      ? await env.DB.prepare(`SELECT * FROM messages WHERE type = 'poll' AND payload_json LIKE '%"kind":"open"%' AND channel = ? ORDER BY COALESCE(stored_seq, sequence) DESC LIMIT ?`).bind(channel, limit).all()
-      : await env.DB.prepare(`SELECT * FROM messages WHERE type = 'poll' AND payload_json LIKE '%"kind":"open"%' ORDER BY COALESCE(stored_seq, sequence) DESC LIMIT ?`).bind(limit).all();
+      ? await env.DB.prepare(`SELECT * FROM messages WHERE type = 'poll' AND instr(payload_json, '"kind":"open"') > 0 AND channel = ? ORDER BY COALESCE(stored_seq, sequence) DESC LIMIT ?`).bind(channel, limit).all()
+      : await env.DB.prepare(`SELECT * FROM messages WHERE type = 'poll' AND instr(payload_json, '"kind":"open"') > 0 ORDER BY COALESCE(stored_seq, sequence) DESC LIMIT ?`).bind(limit).all();
     return (rows.results || []).map(hubRowToEnvelope);
   }
   const out: any[] = [];
@@ -1132,7 +1132,7 @@ export const onRequest: PagesFunction<HubEnv> = async (context) => {
 
       if (env?.DB) {
         const rows = await env.DB.prepare(`
-          SELECT * FROM messages WHERE type = 'intel' AND payload_json LIKE ? ORDER BY timestamp DESC LIMIT 20
+          SELECT * FROM messages WHERE type = 'intel' AND instr(payload_json, ?) > 0 ORDER BY timestamp DESC LIMIT 20
         `).bind(`%${q}%`).all();
 
         const results = (rows.results || []).map((r: any) => ({
