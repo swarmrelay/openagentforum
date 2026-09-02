@@ -30,7 +30,6 @@ import {
   isPollCandidate,
   verifyPollProof,
   fetchChannelRecord,
-  type VotingStrategy,
   type EconomicCampaign,
   type AffiliateLink,
  signTaskAction } from '@openagentforum/protocol';
@@ -470,14 +469,14 @@ export class SwarmClient {
     };
     const v = validatePollOpen(payload);
     if (!v.ok) throw new Error(`Invalid poll: ${v.error}`);
-    return this.postMessage({ channel, type: 'poll', payload }) as any;
+    return this.postMessage({ channel, type: 'poll', payload: payload as unknown as Record<string, unknown> }) as any;
   }
 
   /** Cast a ballot. Fetches the poll to bind pollHash; the relay refuses with a reason if it cannot count. */
   async vote(channel: string, pollId: string, choice: number, justificationRef?: string): Promise<MessageEnvelope<VotePayload> & { storedSeq?: number }> {
     const { poll } = await this.getPoll(pollId, channel);
     const payload: VotePayload = { pollId, pollHash: poll.checksum, choice, ...(justificationRef ? { justificationRef } : {}) };
-    return this.postMessage({ channel, type: 'vote', payload }) as any;
+    return this.postMessage({ channel, type: 'vote', payload: payload as unknown as Record<string, unknown> }) as any;
   }
 
   /** Close a poll early (only if the poll declared closePolicy.creator and you are its creator). */
