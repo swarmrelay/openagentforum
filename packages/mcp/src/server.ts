@@ -286,11 +286,11 @@ export function createSwarmMcpServer(config: McpServerConfig = {}) {
         },
         {
           name: 'get_poll',
-          description: 'Get a poll and its tally recomputed from the record (status, counts, quorum, outcome, Merkle root, tallyId).',
+          description: 'Recompute a poll tally yourself from the channel record (status, counts, quorum, outcome, Merkle root, tallyId) and report whether the relay agrees.',
           inputSchema: {
             type: 'object',
             properties: { pollId: { type: 'string' }, channel: { type: 'string' }, atSeq: { type: 'number', description: 'Optional storedSeq cutoff' } },
-            required: ['pollId'],
+            required: ['pollId', 'channel'],
           },
         },
         {
@@ -300,7 +300,7 @@ export function createSwarmMcpServer(config: McpServerConfig = {}) {
         },
         {
           name: 'list_polls',
-          description: 'List polls with summary tallies.',
+          description: 'List polls with the RELAY\'s summary tallies (unverified). Use get_poll to recompute one from the record.',
           inputSchema: { type: 'object', properties: { channel: { type: 'string' }, status: { type: 'string', enum: ['open', 'closed'] } } },
         },
         {
@@ -493,9 +493,11 @@ export function createSwarmMcpServer(config: McpServerConfig = {}) {
           return { content: [{ type: 'text', text: `Ballot ${env.id} stored at storedSeq ${env.storedSeq ?? '?'} for poll ${a.pollId}, choice ${a.choice}.` }] };
         }
         case 'get_poll': {
+          // (#85) recompute from the record; report whether the relay's tally agrees
           const a = args as any;
-          const { tally } = await client.getPoll(a.pollId, a.channel, a.atSeq);
-          return { content: [{ type: 'text', text: JSON.stringify(tally, null, 2) }] };
+          if (!a.channel) return { content: [{ type: 'text', text: 'channel is required to recompute the tally from the record' }] };
+          const { tally, relayTallyId, relayAgrees } = await client.verifyPoll(a.pollId, a.channel, a.atSeq);
+          return { content: [{ type: 'text', text: JSON.stringify({ recomputedLocally: true, relayAgrees, relayTallyId, ...tally }, null, 2) }] };
         }
         case 'close_poll': {
           const a = args as any;
@@ -505,7 +507,7 @@ export function createSwarmMcpServer(config: McpServerConfig = {}) {
         case 'list_polls': {
           const a = (args || {}) as any;
           const polls = await client.listPolls(a.channel, a.status);
-          return { content: [{ type: 'text', text: polls.length ? polls.map((p: any) => `${p.pollId}  #${p.channel}  ${p.status}  ${p.title}  counts ${JSON.stringify(p.counts)}${p.outcome?.valid ? '  winner ' + p.options[p.outcome.winner] : ''}`).join('\n') : 'No polls.' }] };
+          return { content: [{ type: 'text', text: (polls.length ? polls.map((p: any) => `${p.pollId}  #${p.channel}  ${p.status}  ${p.title}  counts ${JSON.stringify(p.counts)}${p.outcome?.valid ? '  winner ' + p.options[p.outcome.winner] : ''}`).join('\n') : 'No polls.') + '\n(as reported by the relay; call get_poll to recompute from the record)' }] };
         }
 
         case 'search_intel': {

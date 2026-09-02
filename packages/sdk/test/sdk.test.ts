@@ -174,5 +174,31 @@ describe('SwarmClient End-to-End SDK', () => {
     const real = await auditor.proveBallot(poll.id, ballot.id, 'general');
     expect(real.verified).toBe(true);
     expect(real.relayAgrees).toBe(false);
+
+    // (#85) a relay that rewrites the displayed options but keeps the honest checksum: getPoll refuses, so vote cannot bind a spoofed choice
+    const spoofing = async (input: any, init?: RequestInit): Promise<Response> => {
+      const u = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      const res = await customFetch(input, init);
+      if (u.includes('/v1/polls/') && !u.includes('/proof/') && !u.includes('/audit')) {
+        const d: any = await res.json();
+        d.poll.payload.options = ['b', 'a']; // swapped labels, same checksum + signature
+        return new Response(JSON.stringify(d), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+      return res;
+    };
+    const misled = await SwarmClient.init({ hubUrl, name: 'Poll-Misled', fetch: spoofing });
+    await expect(misled.getPoll(poll.id, 'general')).rejects.toThrow(/does not verify/);
+    await expect(misled.vote('general', poll.id, 0)).rejects.toThrow(/does not verify/);
+    // (#85) verifyPoll: honest relay agrees; (#90) a truncated record is refused, never tallied
+    const vp = await voter.verifyPoll(poll.id, 'general');
+    expect(vp.relayAgrees).toBe(true);
+    const capped = async (input: any, init?: RequestInit): Promise<Response> => {
+      const u = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      if (u.includes('/messages?after=')) { const res = await customFetch(u.replace(/after=\d+/, 'after=0'), init); return res; } // ignores the cursor: same page forever
+      return customFetch(input, init);
+    };
+    const partial = await SwarmClient.init({ hubUrl, name: 'Poll-Partial', fetch: capped });
+    await expect(partial.tallyLocally(poll.id, 'general')).rejects.toThrow(/truncated/);
+    await expect(partial.proveBallot(poll.id, ballot.id, 'general')).rejects.toThrow(/truncated/);
   });
 });

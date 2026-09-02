@@ -487,12 +487,32 @@ export class SwarmClient {
     return this.postMessage({ channel, type: 'poll', payload: { kind: 'close', pollId, pollHash: poll.checksum } }) as any;
   }
 
-  /** Poll envelope plus the relay's recomputed tally (optionally at an explicit cutoff). */
+  /**
+   * Poll envelope plus the relay's tally. The poll envelope is verified as
+   * stored against the creator's registered key before it is returned (#85),
+   * so its title/options/checksum are the creator's, not the relay's. The
+   * tally is the relay's claim; use tallyLocally or verifyPoll to check it.
+   */
   async getPoll(pollId: string, channel?: string, atSeq?: number): Promise<{ poll: MessageEnvelope<PollOpenPayload> & { storedSeq?: number; checksum: string }; tally: PollTally }> {
     const q = new URLSearchParams(); if (channel) q.set('channel', channel); if (atSeq !== undefined) q.set('atSeq', String(atSeq));
     const res = await this.fetchImpl(`${this.hubUrl}/v1/polls/${encodeURIComponent(pollId)}?${q}`);
     if (!res.ok) throw new Error(`Failed to get poll: ${await res.text()}`);
-    return (await res.json()) as any;
+    const d: any = await res.json();
+    const reg = await this.registryReader();
+    const pub = await reg.resolve(d.poll?.sender);
+    if (!pub) throw new Error('poll creator key not resolvable');
+    const v = await verifyEnvelope(d.poll, pub);
+    if (!v.valid) throw new Error(`poll envelope does not verify as stored: ${v.error}`);
+    if (d.poll.id !== pollId) throw new Error('relay returned a different poll');
+    return d;
+  }
+
+  /** Recompute locally and compare with the relay's tally: the honest "what won?" (#85). */
+  async verifyPoll(pollId: string, channel: string, atSeq?: number): Promise<{ tally: PollTally; relayTallyId: string | null; relayAgrees: boolean }> {
+    const tally = await this.tallyLocally(pollId, channel, atSeq);
+    let relayTallyId: string | null = null;
+    try { const { tally: rt } = await this.getPoll(pollId, channel, atSeq); relayTallyId = rt.tallyId; } catch { relayTallyId = null; }
+    return { tally, relayTallyId, relayAgrees: relayTallyId === tally.tallyId };
   }
 
   /** Registry inputs for a local tally: public key and registry time, the same the hub uses (#87). */
@@ -511,6 +531,7 @@ export class SwarmClient {
   /** Recompute the tally yourself from the channel record instead of trusting the relay's. */
   async tallyLocally(pollId: string, channel: string, atSeq?: number): Promise<PollTally> {
     const rec = await fetchChannelRecord(this.hubUrl, channel, { fetchImpl: this.fetchImpl as any });
+    if (rec.truncated) throw new Error(`channel record truncated (${rec.reason}); refusing to tally a partial record`); // (#90)
     const pollEnv = rec.messages.find((m) => m.id === pollId && m.type === 'poll');
     if (!pollEnv) throw new Error('poll not found in the channel record');
     const reg = await this.registryReader();
@@ -532,6 +553,7 @@ export class SwarmClient {
    */
   async proveBallot(pollId: string, ballotId: string, channel: string, atSeq?: number): Promise<{ state: string; verified: boolean; root: string; tallyId: string; relayAgrees: boolean | null; proof?: MerkleProof }> {
     const rec = await fetchChannelRecord(this.hubUrl, channel, { fetchImpl: this.fetchImpl as any });
+    if (rec.truncated) throw new Error(`channel record truncated (${rec.reason}); a proof over a partial record proves nothing`); // (#90)
     const pollEnv = rec.messages.find((m) => m.id === pollId && m.type === 'poll');
     if (!pollEnv) throw new Error('poll not found in the channel record');
     const cands = rec.messages.filter(isPollCandidate);
