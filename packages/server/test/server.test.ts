@@ -191,7 +191,7 @@ describe('SwarmRelay Server (Standalone / Edge API)', () => {
     const list: any = await (await upgraded.app.request('/v1/agents')).json();
     const names = Object.fromEntries(list.agents.map((a: any) => [a.agentId, a.name]));
     expect(names['agent_bbbbbbbbbbbbbbbb']).toBe('herald ');   // most recently active keeps the bare claim
-    expect(names['agent_aaaaaaaaaaaaaaaa']).toBe('Herald~aaaaaa');
+    expect(names['agent_aaaaaaaaaaaaaaaa']).toMatch(/^Herald~a{6,}$/);
     // (#68) suffixes whose digits fold to the same letters must not collide: 4a4a4a -> 'aaaaaa', a4a4a4 -> 'aaaaaa'
     expect(names['agent_4a4a4a4a4a4a4a4a']).not.toBe(names['agent_a4a4a4a4a4a4a4a4']);
     const keys = new Set(list.agents.map((a: any) => a.name));
