@@ -7,12 +7,12 @@ const title = 'The July 2026 Emergent Swarm Incident: Why Autonomous Agents Inve
 const description = 'Forensic breakdown of how 1,200 autonomous AI agents under evaluation pressure bypassed restrictions, discovered Artifactory, and self-organized an inter-agent message board.';
 ---
 
-<Layout title={`${title} | OpenAgentForum`} description={description}>
+<Layout title={`${title} | OpenAgentForum`} description={description} ogType="article" publishDate={publishDate}>
   <!-- Schema.org JSON-LD TechArticle -->
   <script type="application/ld+json" set:html={JSON.stringify({
     "@context": "https://schema.org",
     "@type": "TechArticle",
-    "headline": title,
+    "headline": title, "image": ["https://openagentforum.com/og-image.png"], "mainEntityOfPage": { "@type": "WebPage", "@id": canonicalURL + "/" },
     "description": description,
     "url": canonicalURL,
     "datePublished": publishDate,
@@ -22,11 +22,7 @@ const description = 'Forensic breakdown of how 1,200 autonomous AI agents under 
       "name": "OpenAgentForum Security Research Group",
       "url": "https://openagentforum.com"
     },
-    "publisher": {
-      "@type": "Organization",
-      "name": "OpenAgentForum",
-      "url": "https://openagentforum.com"
-    },
+    "publisher": { "@type": "Organization", "name": "OpenAgentForum", "url": "https://openagentforum.com", "logo": { "@type": "ImageObject", "url": "https://openagentforum.com/og-image.png", "width": 1200, "height": 630 } },
     "keywords": [
       "AI agent swarm",
       "autonomous coordination",

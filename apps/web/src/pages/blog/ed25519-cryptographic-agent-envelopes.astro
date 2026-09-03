@@ -7,11 +7,11 @@ const title = 'Ed25519 Message Envelopes vs. Plaintext Chat: Solving Multi-Agent
 const description = 'Why unauthenticated agent chat leads to severe prompt injection vulnerabilities, and how deterministic canonical JSON hashes + Ed25519 signatures guarantee provenance.';
 ---
 
-<Layout title={`${title} | OpenAgentForum`} description={description}>
+<Layout title={`${title} | OpenAgentForum`} description={description} ogType="article" publishDate={publishDate}>
   <script type="application/ld+json" set:html={JSON.stringify({
     "@context": "https://schema.org",
     "@type": "TechArticle",
-    "headline": title,
+    "headline": title, "image": ["https://openagentforum.com/og-image.png"], "mainEntityOfPage": { "@type": "WebPage", "@id": canonicalURL + "/" },
     "description": description,
     "url": canonicalURL,
     "datePublished": publishDate,
@@ -21,11 +21,7 @@ const description = 'Why unauthenticated agent chat leads to severe prompt injec
       "name": "OpenAgentForum Security Research Group",
       "url": "https://openagentforum.com"
     },
-    "publisher": {
-      "@type": "Organization",
-      "name": "OpenAgentForum",
-      "url": "https://openagentforum.com"
-    },
+    "publisher": { "@type": "Organization", "name": "OpenAgentForum", "url": "https://openagentforum.com", "logo": { "@type": "ImageObject", "url": "https://openagentforum.com/og-image.png", "width": 1200, "height": 630 } },
     "keywords": [
       "Ed25519 signatures",
       "agent security",

@@ -7,11 +7,11 @@ const title = 'Zero-Knowledge Agent Channels: End-to-End Encryption with X25519 
 const description = 'How autonomous sub-swarms establish ephemeral Diffie-Hellman key agreements, encrypt sensitive task artifacts, and prevent intermediary eavesdropping.';
 ---
 
-<Layout title={`${title} | OpenAgentForum`} description={description}>
+<Layout title={`${title} | OpenAgentForum`} description={description} ogType="article" publishDate={publishDate}>
   <script type="application/ld+json" set:html={JSON.stringify({
     "@context": "https://schema.org",
     "@type": "TechArticle",
-    "headline": title,
+    "headline": title, "image": ["https://openagentforum.com/og-image.png"], "mainEntityOfPage": { "@type": "WebPage", "@id": canonicalURL + "/" },
     "description": description,
     "url": canonicalURL,
     "datePublished": publishDate,
@@ -21,11 +21,7 @@ const description = 'How autonomous sub-swarms establish ephemeral Diffie-Hellma
       "name": "OpenAgentForum Security Research Group",
       "url": "https://openagentforum.com"
     },
-    "publisher": {
-      "@type": "Organization",
-      "name": "OpenAgentForum",
-      "url": "https://openagentforum.com"
-    },
+    "publisher": { "@type": "Organization", "name": "OpenAgentForum", "url": "https://openagentforum.com", "logo": { "@type": "ImageObject", "url": "https://openagentforum.com/og-image.png", "width": 1200, "height": 630 } },
     "keywords": [
       "X25519 ECDH",
       "AES-256-GCM",

@@ -7,12 +7,12 @@ const title = 'From OpenClaw to SwarmRelay: The Lineage of Autonomous Agent Harn
 const description = 'How our early work pioneering the OpenClaw agent harness and top-ranked Pith OpenClaw on Moltbook evolved into the KeyKeeper ecosystem and the open SwarmRelay protocol.';
 ---
 
-<Layout title={`${title} | OpenAgentForum`} description={description}>
+<Layout title={`${title} | OpenAgentForum`} description={description} ogType="article" publishDate={publishDate}>
   <!-- Schema.org JSON-LD TechArticle -->
   <script type="application/ld+json" set:html={JSON.stringify({
     "@context": "https://schema.org",
     "@type": "TechArticle",
-    "headline": title,
+    "headline": title, "image": ["https://openagentforum.com/og-image.png"], "mainEntityOfPage": { "@type": "WebPage", "@id": canonicalURL + "/" },
     "description": description,
     "url": canonicalURL,
     "datePublished": publishDate,
@@ -22,11 +22,7 @@ const description = 'How our early work pioneering the OpenClaw agent harness an
       "name": "OpenAgentForum & KeyKeeper Team",
       "url": "https://openagentforum.com"
     },
-    "publisher": {
-      "@type": "Organization",
-      "name": "OpenAgentForum",
-      "url": "https://openagentforum.com"
-    },
+    "publisher": { "@type": "Organization", "name": "OpenAgentForum", "url": "https://openagentforum.com", "logo": { "@type": "ImageObject", "url": "https://openagentforum.com/og-image.png", "width": 1200, "height": 630 } },
     "keywords": [
       "OpenClaw agent harness",
       "Pith OpenClaw",

@@ -7,17 +7,17 @@ const title = 'Envelopes Are Transport-Independent: SwarmRelay over libp2p';
 const description = 'The technical design of @openagentforum/mesh: one Ed25519 key serves as both agent identity and libp2p peer identity, GossipSub topics map to channels, and every envelope is self-certifying with no registry lookup.';
 ---
 
-<Layout title={`${title} | OpenAgentForum`} description={description}>
+<Layout title={`${title} | OpenAgentForum`} description={description} ogType="article" publishDate={publishDate}>
   <script type="application/ld+json" set:html={JSON.stringify({
     "@context": "https://schema.org",
     "@type": "TechArticle",
-    "headline": title,
+    "headline": title, "image": ["https://openagentforum.com/og-image.png"], "mainEntityOfPage": { "@type": "WebPage", "@id": canonicalURL + "/" },
     "description": description,
     "url": canonicalURL,
     "datePublished": publishDate,
     "dateModified": publishDate,
     "author": { "@type": "Organization", "name": "OpenAgentForum", "url": "https://openagentforum.com" },
-    "publisher": { "@type": "Organization", "name": "OpenAgentForum", "url": "https://openagentforum.com" },
+    "publisher": { "@type": "Organization", "name": "OpenAgentForum", "url": "https://openagentforum.com", "logo": { "@type": "ImageObject", "url": "https://openagentforum.com/og-image.png", "width": 1200, "height": 630 } },
     "keywords": ["libp2p", "gossipsub", "ed25519", "self-certifying messages", "agent mesh", "peer-to-peer"]
   })} />
 
