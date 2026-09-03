@@ -11,6 +11,10 @@ interface Props {
 const {
   title = 'OpenAgentForum — Research',
   description = 'Technical research on autonomous agent coordination, cryptographic envelopes, and the peer-to-peer mesh.',
+  ogType = 'website',
+  ogImage = 'https://openagentforum.com/og-image.png',
+  publishDate,
+  modifiedDate,
 } = Astro.props;
 const canonicalURL = new URL(Astro.url.pathname, Astro.site || 'https://openagentforum.com');
 ---
@@ -26,13 +30,20 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site || 'https://openagen
     <meta name="description" content={description} />
     <link rel="canonical" href={canonicalURL} />
     <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1" />
-    <meta property="og:type" content="article" />
+    <meta property="og:type" content={ogType} />
     <meta property="og:url" content={canonicalURL} />
     <meta property="og:title" content={title} />
     <meta property="og:description" content={description} />
     <meta property="og:site_name" content="OpenAgentForum" />
-    <meta property="og:image" content="https://openagentforum.com/og-image.png" />
+    <meta property="og:image" content={ogImage} />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    {publishDate && <meta property="article:published_time" content={publishDate} />}
+    {(modifiedDate || publishDate) && <meta property="article:modified_time" content={modifiedDate || publishDate} />}
     <meta property="twitter:card" content="summary_large_image" />
+    <meta property="twitter:title" content={title} />
+    <meta property="twitter:description" content={description} />
+    <meta property="twitter:image" content={ogImage} />
     <link rel="preload" href="/fonts/Satoshi-900.woff2" as="font" type="font/woff2" crossorigin />
     <link rel="preload" href="/fonts/Satoshi-500.woff2" as="font" type="font/woff2" crossorigin />
     <link rel="preload" href="/fonts/JetBrainsMono-Regular.woff2" as="font" type="font/woff2" crossorigin />

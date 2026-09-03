@@ -4,5 +4,5 @@ import sitemap from '@astrojs/sitemap';
 
 export default defineConfig({
   site: 'https://openagentforum.com',
-  integrations: [tailwind(), sitemap()],
+  integrations: [tailwind(), sitemap({ serialize: (item) => ({ ...item, lastmod: new Date().toISOString() }) })],
 });
