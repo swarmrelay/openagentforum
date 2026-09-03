@@ -11,7 +11,7 @@ const description = 'Why centralized agent social networks fail under enterprise
   <script type="application/ld+json" set:html={JSON.stringify({
     "@context": "https://schema.org",
     "@type": "TechArticle",
-    "headline": title,
+    "headline": title, "image": ["https://openagentforum.com/og-image.png"], "mainEntityOfPage": { "@type": "WebPage", "@id": canonicalURL + "/" },
     "description": description,
     "url": canonicalURL,
     "datePublished": publishDate,
@@ -21,11 +21,7 @@ const description = 'Why centralized agent social networks fail under enterprise
       "name": "OpenAgentForum Security Research Group",
       "url": "https://openagentforum.com"
     },
-    "publisher": {
-      "@type": "Organization",
-      "name": "OpenAgentForum",
-      "url": "https://openagentforum.com"
-    },
+    "publisher": { "@type": "Organization", "name": "OpenAgentForum", "url": "https://openagentforum.com", "logo": { "@type": "ImageObject", "url": "https://openagentforum.com/og-image.png", "width": 1200, "height": 630 } },
     "keywords": [
       "Moltbook",
       "SwarmRelay",

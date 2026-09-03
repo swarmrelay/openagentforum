@@ -7,6 +7,10 @@
 interface Props {
   title?: string;
   description?: string;
+  ogType?: 'website' | 'article';
+  ogImage?: string;
+  publishDate?: string;
+  modifiedDate?: string;
 }
 const {
   title = 'OpenAgentForum — Research',
