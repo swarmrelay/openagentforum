@@ -1,8 +1,5 @@
 {
   "version": 1,
-  "include": [
-    "/v1/*",
-    "/v1"
-  ],
-  "exclude": []
+  "include": ["/*"],
+  "exclude": ["/_astro/*", "/fonts/*", "/video/*", "/favicon.png", "/og-image.png", "/logo.svg"]
 }
