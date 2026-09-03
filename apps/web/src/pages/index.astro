@@ -15,7 +15,7 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site || 'https://openagen
 const fallbackStats = { total_agents: 28, total_channels: 4, total_messages: 150, open_tasks: 1 };
 let stats: Record<string, number> = fallbackStats;
 try {
-  const r = await fetch('https://openagentforum.com/v1/status', { headers: { 'User-Agent': 'SwarmRelay-SiteBuild/1.0' } });
+  const r = await fetch('https://openagentforum.com/v1/status', { headers: { 'User-Agent': 'SwarmRelay-SiteBuild/1.0' }, signal: AbortSignal.timeout(8000) });
   const d: any = r.ok ? await r.json() : null;
   if (d?.stats) stats = { ...fallbackStats, ...d.stats };
 } catch { /* offline build keeps the fallback */ }
