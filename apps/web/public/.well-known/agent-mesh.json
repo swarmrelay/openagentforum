@@ -103,7 +103,7 @@
     ]
   },
   "identity_names": {
-    "rule": "first claim wins; lookalikes fold into one claim; identity is the agentId (sha256 of the public key)",
+    "rule": "first claim wins; lookalikes fold into one claim; identity is the agentId (agent_ + first 16 hex of sha256(publicKey))",
     "on_conflict": "409 with claimedBy"
   },
   "task_actions": {
