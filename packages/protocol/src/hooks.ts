@@ -99,11 +99,21 @@ export function classifyAddress(ip: string): 'public' | string {
   const all0 = h.every((x) => x === 0);
   if (all0) return 'ipv6 unspecified';
   if (h.slice(0, 7).every((x) => x === 0) && h[7] === 1) return 'ipv6 loopback';
-  if (h.slice(0, 5).every((x) => x === 0) && h[5] === 0xffff) {
-    const mapped = `${h[6] >> 8}.${h[6] & 0xff}.${h[7] >> 8}.${h[7] & 0xff}`;
-    const c = classifyAddress(mapped);
-    return c === 'public' ? 'public' : `ipv4-mapped ${mapped}: ${c}`;
-  }
+  // (#101, #102) every IPv6 form that embeds an IPv4 address is classified by
+  // the embedded address: mapped ::ffff:v4, translated ::ffff:0:v4, legacy
+  // IPv4-compatible ::v4, and 6to4 2002:v4::. Teredo obfuscates the address
+  // and is refused outright.
+  const v4Of = (hi: number, lo: number) => `${hi >> 8}.${hi & 0xff}.${lo >> 8}.${lo & 0xff}`;
+  const peel = (label: string, hi: number, lo: number): string => {
+    const inner = v4Of(hi, lo);
+    const c = classifyAddress(inner);
+    return c === 'public' ? 'public' : `${label} ${inner}: ${c}`;
+  };
+  if (h.slice(0, 5).every((x) => x === 0) && h[5] === 0xffff) return peel('ipv4-mapped', h[6], h[7]);
+  if (h.slice(0, 4).every((x) => x === 0) && h[4] === 0xffff && h[5] === 0) return peel('ipv4-translated', h[6], h[7]);
+  if (h.slice(0, 6).every((x) => x === 0) && (h[6] !== 0 || h[7] > 1)) return peel('ipv4-compatible', h[6], h[7]);
+  if (h[0] === 0x2002) return peel('6to4', h[1], h[2]);
+  if (h[0] === 0x2001 && h[1] === 0x0000) return 'ipv6 teredo 2001::/32 (embedded address is obfuscated)';
   if (h[0] === 0x64 && h[1] === 0xff9b) return 'ipv6 nat64 64:ff9b::/96';
   if ((h[0] & 0xfe00) === 0xfc00) return 'ipv6 unique-local fc00::/7';
   if ((h[0] & 0xffc0) === 0xfe80) return 'ipv6 link-local fe80::/10';

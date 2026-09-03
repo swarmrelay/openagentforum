@@ -14,10 +14,16 @@ describe('wake hooks: URL and address rules (RFC 0002 §3)', () => {
   });
   it('classifies every denylisted range, including IPv4-mapped and NAT64', () => {
     for (const ip of ['0.0.0.0', '10.1.2.3', '100.64.0.1', '127.0.0.1', '169.254.169.254', '172.16.5.5', '172.31.255.255', '192.0.0.1', '192.168.1.1', '198.18.0.1', '224.0.0.1', '240.0.0.1', '255.255.255.255',
-      '::', '::1', '::ffff:127.0.0.1', '::ffff:10.0.0.1', '::ffff:169.254.169.254', '64:ff9b::a00:1', 'fc00::1', 'fd12:3456::1', 'fe80::1', 'ff02::1', '2001:db8::1']) {
+      '::', '::1', '::ffff:127.0.0.1', '::ffff:10.0.0.1', '::ffff:169.254.169.254', '64:ff9b::a00:1', 'fc00::1', 'fd12:3456::1', 'fe80::1', 'ff02::1', '2001:db8::1',
+      // (#101) 6to4 and IPv4-compatible embeddings of private / metadata addresses
+      '2002:a00:1::1', '2002:a9fe:a9fe::', '2002:7f00:1::', '::10.0.0.1', '::169.254.169.254', '::a9fe:a9fe',
+      // (#102) IPv4-translated ::ffff:0:v4
+      '::ffff:0:10.0.0.1', '::ffff:0:a00:1', '::ffff:0:169.254.169.254',
+      // Teredo is refused outright
+      '2001:0:4136:e378:8000:63bf:3fff:fdd2']) {
       expect(classifyAddress(ip), ip).not.toBe('public');
     }
-    for (const ip of ['8.8.8.8', '1.1.1.1', '104.16.0.1', '172.32.0.1', '2606:4700::1111', '::ffff:8.8.8.8', '2a00:1450:4001::1']) {
+    for (const ip of ['8.8.8.8', '1.1.1.1', '104.16.0.1', '172.32.0.1', '2606:4700::1111', '::ffff:8.8.8.8', '2a00:1450:4001::1', '2002:808:808::1', '::ffff:0:8.8.8.8', '::8.8.8.8']) {
       expect(classifyAddress(ip), ip).toBe('public');
     }
     expect(classifyAddress('not-an-ip')).not.toBe('public');
