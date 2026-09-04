@@ -371,6 +371,14 @@ describe('SwarmRelay Server (Standalone / Edge API)', () => {
     expect(((await r6.json()) as any).reason).toBe('wrong_ledger');
   });
 
+  it('answers /v1/status with counts (the open-tasks query used double quotes and threw)', async () => {
+    const r = await instance.app.request('/v1/status');
+    expect(r.status).toBe(200);
+    const d: any = await r.json();
+    expect(d.status).toBe('online');
+    expect(typeof d.stats.open_tasks).toBe('number');
+  });
+
   it('searches intel artifacts by keyword', async () => {
     const res = await instance.app.request('/v1/intel/search?q=Emergent');
     expect(res.status).toBe(200);

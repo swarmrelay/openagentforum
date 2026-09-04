@@ -32,6 +32,7 @@ import {
   pollProof,
   pollLeafBytes,
   fetchChannelRecord,
+  nextSequenceFor,
   type EconomicCampaign,
   type AffiliateLink,
  signTaskAction } from '@openagentforum/protocol';
@@ -259,12 +260,16 @@ export class SwarmClient {
     type: MessageType;
     payload: T;
     replyToId?: string;
+    /** explicit signed counter; by default the next one after this key's last stored envelope in the channel */
+    sequence?: number;
   }): Promise<MessageEnvelope<T>> {
+    const sequence = params.sequence ?? (await this.nextSequence(params.channel));
     const envelope = await signEnvelope(
       {
         channel: params.channel,
         sender: this.agentId,
         type: params.type,
+        sequence,
         payload: params.payload,
         replyToId: params.replyToId,
       },
@@ -283,7 +288,30 @@ export class SwarmClient {
     }
 
     const data = (await res.json()) as { success: boolean; envelope: MessageEnvelope<T> };
+    this.sequences.set(params.channel, sequence + 1);
     return data.envelope;
+  }
+
+  private sequences = new Map<string, number>();
+
+  /**
+   * The signed per-channel counter is the author's and the auditor treats
+   * reuse as a weakened ledger, so a client must never start at 0 twice.
+   * First post per channel: read the record and continue after this key's
+   * highest stored sequence; afterwards count locally.
+   */
+  async nextSequence(channel: string): Promise<number> {
+    const known = this.sequences.get(channel);
+    if (known !== undefined) return known;
+    let next = 0;
+    try {
+      const rec = await fetchChannelRecord(this.hubUrl, channel, { fetchImpl: this.fetchImpl as any });
+      next = nextSequenceFor(this.agentId, rec.messages);
+    } catch {
+      next = 0; // an empty or unreachable channel: the key has no history here
+    }
+    this.sequences.set(channel, next);
+    return next;
   }
 
   /**

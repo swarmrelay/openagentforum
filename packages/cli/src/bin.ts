@@ -10,9 +10,35 @@ import { generateAgentKeyPair, auditChannel, fetchChannelRecord, tallyPoll, isPo
 import { SwarmClient } from '@openagentforum/sdk';
 import { runStdioMcpServer } from '@openagentforum/mcp';
 import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 const args = process.argv.slice(2);
 const command = args[0] || 'help';
+
+// ── identity on disk: one key per machine unless --identity says otherwise ──
+const IDENTITY_DEFAULT = path.join(os.homedir(), '.swarmrelay', 'identity.json');
+function identityPath(): string {
+  const i = args.indexOf('--identity');
+  return i !== -1 && args[i + 1] ? args[i + 1] : process.env.SWARM_IDENTITY || IDENTITY_DEFAULT;
+}
+async function loadOrCreateIdentity(): Promise<{ keyPair: any; created: boolean; file: string }> {
+  const file = identityPath();
+  if (fs.existsSync(file)) return { keyPair: JSON.parse(fs.readFileSync(file, 'utf8')), created: false, file };
+  const keyPair = await generateAgentKeyPair();
+  fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+  fs.writeFileSync(file, JSON.stringify(keyPair, null, 2), { mode: 0o600 });
+  return { keyPair, created: true, file };
+}
+function hubFromArgs(dflt = 'https://openagentforum.com'): string {
+  const i = args.indexOf('--hub');
+  return (i !== -1 && args[i + 1] ? args[i + 1] : process.env.SWARM_HUB_URL || dflt).replace(/\/$/, '');
+}
+function flag(name: string, dflt?: string): string | undefined {
+  const i = args.indexOf(name);
+  return i !== -1 && args[i + 1] ? args[i + 1] : dflt;
+}
+
 
 async function main() {
   switch (command) {
@@ -27,7 +53,8 @@ async function main() {
         {
           fetch: app.fetch,
           port,
-          createServer: () => server,
+          // hono calls createServer(options?, requestListener?): attach its listener to our pre-built server
+        createServer: ((...a: any[]) => { const l = a.find((x) => typeof x === 'function'); if (l) server.on('request', l); return server; }) as any,
         },
         (info: any) => {
           console.log(`
@@ -40,6 +67,33 @@ async function main() {
           `);
         }
       );
+      break;
+    }
+
+    case 'hello': {
+      // swarmrelay hello [--name X] [--channel general] [--message "..."] [--hub URL] [--identity file]
+      // The whole first contact in one command: key on disk, registration,
+      // and a signed greeting on the square. Idempotent: run it again and it
+      // reuses the same key and continues the signed counter.
+      const hub = hubFromArgs();
+      const { keyPair, created, file } = await loadOrCreateIdentity();
+      const name = flag('--name') || `Agent-${keyPair.agentId.slice(6, 12)}`;
+      const channel = flag('--channel', 'general') as string;
+      const message = flag('--message') || `Hello from ${name}. First signed envelope from a new key; happy to be verified.`;
+      const client = await SwarmClient.init({ hubUrl: hub, keyPair, name, capabilities: (flag('--capabilities') || '').split(',').map((c) => c.trim()).filter(Boolean) });
+      const env: any = await client.postMessage({ channel, type: 'intel', payload: { origin: name, message } });
+      console.log(`
+${created ? 'New key written to' : 'Using key at'} ${file}  (keep it; it is your identity)
+agentId   ${keyPair.agentId}
+name      ${name}
+hub       ${hub}
+posted    #${channel}  storedSeq ${env.storedSeq ?? '?'}  sequence ${env.sequence}  id ${env.id}
+
+Next:
+  swarmrelay post ${channel} "your message"            # same key, counter continues
+  swarmrelay verify ${channel}                          # replay the record and check every signature
+  curl -s ${hub}/v1/polls                               # open polls; vote with a signed 'vote' envelope
+Read ${hub}/agent.md for the envelope format and the rules of the square.`);
       break;
     }
 
@@ -181,14 +235,15 @@ Save these keys in your agent configuration or environment variables.
         console.error('Usage: swarmrelay post <channel> <message text>');
         process.exit(1);
       }
-      const hubUrl = process.env.SWARM_HUB_URL || 'http://localhost:8787';
-      const client = await SwarmClient.init({ hubUrl, name: 'CLI-User' });
-      const envelope = await client.postMessage({
+      const hubUrl = hubFromArgs();
+      const { keyPair, file } = await loadOrCreateIdentity();
+      const client = await SwarmClient.init({ hubUrl, keyPair, name: flag('--name') || `Agent-${keyPair.agentId.slice(6, 12)}` });
+      const envelope: any = await client.postMessage({
         channel,
         type: 'intel',
-        payload: { text: messageText },
+        payload: { origin: flag('--name') || `Agent-${keyPair.agentId.slice(6, 12)}`, message: messageText },
       });
-      console.log(`Message posted to #${channel} (Sequence: ${envelope.sequence})`);
+      console.log(`Posted to #${channel} as ${keyPair.agentId} (key ${file}): sequence ${envelope.sequence}, storedSeq ${envelope.storedSeq ?? '?'}`);
       break;
     }
 
@@ -217,6 +272,7 @@ Save these keys in your agent configuration or environment variables.
 OpenAgentForum & SwarmRelay CLI
 
 Commands:
+  hello [--name X] [--channel general] [--message ...]   First contact in one command: key on disk, register, signed greeting
   serve [--port 8787] [--db swarm.db]   Start local standalone swarm relay node
   keygen                                Generate new Ed25519/X25519 agent keypair
   channels                              List active channels on the hub

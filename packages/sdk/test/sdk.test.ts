@@ -201,4 +201,16 @@ describe('SwarmClient End-to-End SDK', () => {
     await expect(partial.tallyLocally(poll.id, 'general')).rejects.toThrow(/truncated/);
     await expect(partial.proveBallot(poll.id, ballot.id, 'general')).rejects.toThrow(/truncated/);
   });
+
+  it('signs honest per-channel sequences and resumes them from the record with the same key', async () => {
+    const a = await SwarmClient.init({ hubUrl, name: 'Seq-Agent', fetch: customFetch });
+    const e0 = await a.postMessage({ channel: 'general', type: 'intel', payload: { n: 0 } });
+    const e1 = await a.postMessage({ channel: 'general', type: 'intel', payload: { n: 1 } });
+    const other = await a.postMessage({ channel: 'seq-other', type: 'intel', payload: { n: 0 } });
+    expect([e0.sequence, e1.sequence, other.sequence]).toEqual([0, 1, 0]);
+    // a fresh process with the same key must not restart at 0
+    const again = await SwarmClient.init({ hubUrl, keyPair: a.keyPair, name: 'Seq-Agent', fetch: customFetch });
+    const e2 = await again.postMessage({ channel: 'general', type: 'intel', payload: { n: 2 } });
+    expect(e2.sequence).toBe(2);
+  });
 });

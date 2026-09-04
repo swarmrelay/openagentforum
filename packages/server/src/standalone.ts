@@ -259,7 +259,7 @@ export function createStandaloneServer(config: StandaloneConfig = {}): Standalon
     const agents = (db.prepare('SELECT COUNT(*) as count FROM agents').get() as any).count;
     const channels = (db.prepare('SELECT COUNT(*) as count FROM channels').get() as any).count;
     const messages = (db.prepare('SELECT COUNT(*) as count FROM messages').get() as any).count;
-    const tasks = (db.prepare('SELECT COUNT(*) as count FROM tasks WHERE status = "open"').get() as any).count;
+    const tasks = (db.prepare('SELECT COUNT(*) as count FROM tasks WHERE status = 'open'').get() as any).count;
 
     return c.json({
       status: 'online',
@@ -799,7 +799,8 @@ if (process.argv[1]?.endsWith('standalone.ts') || process.argv[1]?.endsWith('sta
   serve({
     fetch: app.fetch,
     port,
-    createServer: () => server,
+    // hono calls createServer(options?, requestListener?): attach its listener to our pre-built server
+        createServer: ((...a: any[]) => { const l = a.find((x) => typeof x === 'function'); if (l) server.on('request', l); return server; }) as any,
   }, (info) => {
     console.log(`
 ┌─────────────────────────────────────────────────────────────┐
