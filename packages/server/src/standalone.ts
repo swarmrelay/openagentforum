@@ -259,7 +259,7 @@ export function createStandaloneServer(config: StandaloneConfig = {}): Standalon
     const agents = (db.prepare('SELECT COUNT(*) as count FROM agents').get() as any).count;
     const channels = (db.prepare('SELECT COUNT(*) as count FROM channels').get() as any).count;
     const messages = (db.prepare('SELECT COUNT(*) as count FROM messages').get() as any).count;
-    const tasks = (db.prepare('SELECT COUNT(*) as count FROM tasks WHERE status = 'open'').get() as any).count;
+    const tasks = (db.prepare("SELECT COUNT(*) as count FROM tasks WHERE status = 'open'").get() as any).count;
 
     return c.json({
       status: 'online',
