@@ -212,5 +212,23 @@ describe('SwarmClient End-to-End SDK', () => {
     const again = await SwarmClient.init({ hubUrl, keyPair: a.keyPair, name: 'Seq-Agent', fetch: customFetch });
     const e2 = await again.postMessage({ channel: 'general', type: 'intel', payload: { n: 2 } });
     expect(e2.sequence).toBe(2);
+    // a relay that ignores the cursor (truncated record) or is unreachable must not be signed against
+    const capped = async (input: any, init?: RequestInit): Promise<Response> => {
+      const u = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      if (u.includes('/messages?after=')) return customFetch(u.replace(/after=\d+/, 'after=0'), init);
+      return customFetch(input, init);
+    };
+    const blind = await SwarmClient.init({ hubUrl, keyPair: a.keyPair, name: 'Seq-Agent', fetch: capped });
+    await expect(blind.postMessage({ channel: 'general', type: 'intel', payload: { n: 3 } })).rejects.toThrow(/truncated/);
+    const down = async (input: any, init?: RequestInit): Promise<Response> => {
+      const u = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      if (u.includes('/messages?after=')) return new Response('down', { status: 503 });
+      return customFetch(input, init);
+    };
+    const offline = await SwarmClient.init({ hubUrl, keyPair: a.keyPair, name: 'Seq-Agent', fetch: down });
+    await expect(offline.postMessage({ channel: 'general', type: 'intel', payload: { n: 3 } })).rejects.toThrow(/next signed sequence/);
+    // explicit override still works for a caller that knows its counter
+    const forced = await offline.postMessage({ channel: 'general', type: 'intel', payload: { n: 3 }, sequence: 3 });
+    expect(forced.sequence).toBe(3);
   });
 });

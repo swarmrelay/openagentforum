@@ -303,13 +303,18 @@ export class SwarmClient {
   async nextSequence(channel: string): Promise<number> {
     const known = this.sequences.get(channel);
     if (known !== undefined) return known;
-    let next = 0;
+    // Fail closed: an unreachable or truncated record is exactly when this key
+    // may already have history, and signing 0 there is counter reuse. Only an
+    // empty channel (or one the relay does not have yet) is an honest 0.
+    let rec;
     try {
-      const rec = await fetchChannelRecord(this.hubUrl, channel, { fetchImpl: this.fetchImpl as any });
-      next = nextSequenceFor(this.agentId, rec.messages);
-    } catch {
-      next = 0; // an empty or unreachable channel: the key has no history here
+      rec = await fetchChannelRecord(this.hubUrl, channel, { fetchImpl: this.fetchImpl as any });
+    } catch (e) {
+      if (/ 404$/.test((e as Error).message)) { this.sequences.set(channel, 0); return 0; }
+      throw new Error(`cannot determine the next signed sequence for #${channel}: ${(e as Error).message}; pass sequence explicitly only if you know it`);
     }
+    if (rec.truncated) throw new Error(`cannot determine the next signed sequence for #${channel}: record truncated (${rec.reason})`);
+    const next = nextSequenceFor(this.agentId, rec.messages);
     this.sequences.set(channel, next);
     return next;
   }
