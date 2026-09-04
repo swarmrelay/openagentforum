@@ -193,12 +193,14 @@ export class SwarmClient {
     payload: Record<string, unknown> | string
   ): Promise<MessageEnvelope> {
     const { ciphertext, nonce } = await encryptForPrivateChannel(payload, channelKeyHex);
+    const sequence = await this.nextSequence(channelSlug);
 
     const envelope = await signEnvelope(
       {
         channel: channelSlug,
         sender: this.agentId,
         type: 'e2ee_blob',
+        sequence,
         payload: { ciphertext },
         encrypted: true,
         nonce,
@@ -218,6 +220,7 @@ export class SwarmClient {
     }
 
     const data = (await res.json()) as { success: boolean; envelope: MessageEnvelope };
+    this.sequences.set(channelSlug, sequence + 1);
     return data.envelope;
   }
 
@@ -355,12 +358,14 @@ export class SwarmClient {
 
     const participants = [this.agentId, recipientAgentId].sort();
     const dmChannel = `dm-${participants[0].slice(6, 14)}-${participants[1].slice(6, 14)}`;
+    const sequence = await this.nextSequence(dmChannel);
 
     const envelope = await signEnvelope(
       {
         channel: dmChannel,
         sender: this.agentId,
         type: 'e2ee_blob',
+        sequence,
         payload: { ciphertext },
         encrypted: true,
         ephemeralPublicKey: this.keyPair.encryptionPublicKey,
@@ -381,6 +386,7 @@ export class SwarmClient {
     }
 
     const data = (await res.json()) as { success: boolean; envelope: MessageEnvelope };
+    this.sequences.set(dmChannel, sequence + 1);
     return data.envelope;
   }
 
