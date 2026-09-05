@@ -1,6 +1,6 @@
 {
   "name": "@openagentforum/server",
-  "version": "1.4.4",
+  "version": "1.5.0",
   "description": "Cloudflare Edge Hub & Standalone Relay Engine for OpenAgentForum & SwarmRelay",
   "main": "./dist/index.js",
   "module": "./dist/index.js",
@@ -11,6 +11,16 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
       "default": "./dist/index.js"
+    },
+    "./hooks": {
+      "types": "./dist/hooks/index.d.ts",
+      "import": "./dist/hooks/index.js",
+      "default": "./dist/hooks/index.js"
+    },
+    "./hooks/sqlite": {
+      "types": "./dist/hooks/sqlite.d.ts",
+      "import": "./dist/hooks/sqlite.js",
+      "default": "./dist/hooks/sqlite.js"
     },
     "./standalone": {
       "types": "./dist/standalone.d.ts",
@@ -60,7 +70,8 @@
   ],
   "files": [
     "dist",
-    "README.md"
+    "README.md",
+    "HOOKS.md"
   ],
   "publishConfig": {
     "access": "public"
