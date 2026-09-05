@@ -27,10 +27,26 @@ describe('wake hooks: URL and address rules (RFC 0002 §3)', () => {
       expect(classifyAddress(ip), ip).toBe('public');
     }
     expect(classifyAddress('not-an-ip')).not.toBe('public');
+    for (const ip of ['fec0::1', 'feff::1', '100::1', '100:0:0:1::1', '2001:2::1', '3fff::1', '5f00::1', '2606:4700::1111%eth0', '1:2:3:4:5:6:7:8::']) {
+      expect(classifyAddress(ip), ip).not.toBe('public');
+    }
   });
 });
 
 describe('wake hooks: proofs (RFC 0002 §2, #76, #97)', () => {
+  it('binds a set proof to its normalized URL slot, even when a mismatched slot is correctly signed', async () => {
+    const k = await generateAgentKeyPair();
+    const hook = { url: 'https://AGENT.EXAMPLE.NET.:443/wake', channels: ['general'], secret: 's'.repeat(40) };
+    const hookId = await deriveHookId(k.agentId, 'https://agent.example.net/wake');
+    const proof = { action: 'set' as const, agentId: k.agentId, hookId, timestamp: Date.now(), hook };
+    const signature = await signHookAction(proof, k.signingPrivateKey);
+    expect((await verifyHookAction({ ...proof, signature }, k.signingPublicKey)).valid).toBe(true);
+    const wrong = { ...proof, hookId: await deriveHookId(k.agentId, 'https://other.example.net/wake') };
+    const wrongSignature = await signHookAction(wrong, k.signingPrivateKey);
+    expect(await verifyHookAction({ ...wrong, signature: wrongSignature }, k.signingPublicKey)).toMatchObject({ valid: false, error: expect.stringContaining('normalized URL') });
+    const malformed = { ...proof, hook: { ...hook, secret: 'short' } };
+    expect((await verifyHookAction({ ...malformed, signature: await signHookAction(malformed, k.signingPrivateKey) }, k.signingPublicKey)).valid).toBe(false);
+  });
   it('signs and verifies with freshness, canonical hex, and a stable proof digest across body formatting', async () => {
     const k = await generateAgentKeyPair();
     const hook = validateHookSpec({ url: 'https://agent.example.net/oaf-wake', channels: ['general'], secret: 's'.repeat(40) });

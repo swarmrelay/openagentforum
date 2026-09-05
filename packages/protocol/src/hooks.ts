@@ -40,6 +40,7 @@ export function validateHookUrl(raw: string): { ok: true; url: URL; host: string
   if (/^\[?[0-9a-f:.]+\]?$/i.test(host) && (host.includes(':') || /^\d+\.\d+\.\d+\.\d+$/.test(host))) return { ok: false, error: 'literal IP hosts are not allowed' };
   if (METADATA_HOSTS.has(host) || host.endsWith('.internal') || host.endsWith('.local') || host.endsWith('.localhost') || !host.includes('.')) return { ok: false, error: 'host is not a public name' };
   if (raw.length > 2048) return { ok: false, error: 'url too long' };
+  u.hostname = host; // one canonical slot for equivalent host spellings
   return { ok: true, url: u, host };
 }
 
@@ -64,7 +65,7 @@ function inV4(ip: number, base: string, bits: number): boolean {
 /** Expand an IPv6 address to 8 hextets (numbers). Handles :: and IPv4-mapped tails. */
 function parseIpv6(ip: string): number[] | null {
   let s = ip.toLowerCase().replace(/^\[|\]$/g, '');
-  if (s.includes('%')) s = s.slice(0, s.indexOf('%'));
+  if (s.includes('%')) return null; // DNS addresses must not carry interface scopes
   // IPv4 tail
   const v4tail = s.match(/:(\d+\.\d+\.\d+\.\d+)$/);
   if (v4tail) {
@@ -77,7 +78,7 @@ function parseIpv6(ip: string): number[] | null {
   const tail = halves.length === 2 && halves[1] ? halves[1].split(':') : [];
   if (halves.length === 1 && head.length !== 8) return null;
   const fill = 8 - head.length - tail.length;
-  if (fill < 0) return null;
+  if (fill < 0 || (halves.length === 2 && fill === 0)) return null;
   const parts = [...head, ...Array(halves.length === 2 ? fill : 0).fill('0'), ...tail];
   if (parts.length !== 8) return null;
   const out = parts.map((h) => (/^[0-9a-f]{1,4}$/.test(h) ? parseInt(h, 16) : NaN));
@@ -117,8 +118,14 @@ export function classifyAddress(ip: string): 'public' | string {
   if (h[0] === 0x64 && h[1] === 0xff9b) return 'ipv6 nat64 64:ff9b::/96';
   if ((h[0] & 0xfe00) === 0xfc00) return 'ipv6 unique-local fc00::/7';
   if ((h[0] & 0xffc0) === 0xfe80) return 'ipv6 link-local fe80::/10';
+  if ((h[0] & 0xffc0) === 0xfec0) return 'ipv6 deprecated site-local fec0::/10';
   if ((h[0] & 0xff00) === 0xff00) return 'ipv6 multicast ff00::/8';
   if (h[0] === 0x2001 && h[1] === 0x0db8) return 'ipv6 documentation 2001:db8::/32';
+  // Conservative webhook egress policy, not a general-purpose routing oracle.
+  // https://www.iana.org/assignments/iana-ipv6-special-registry/
+  if ((h[0] & 0xe000) !== 0x2000) return 'ipv6 outside ordinary global unicast 2000::/3';
+  if (h[0] === 0x2001 && h[1] < 0x200) return 'ipv6 special-purpose IETF assignment 2001::/23';
+  if (h[0] === 0x3fff && (h[1] & 0xf000) === 0) return 'ipv6 documentation 3fff::/20';
   return 'public';
 }
 
@@ -158,7 +165,16 @@ export async function verifyHookAction(
 ): Promise<{ valid: true; proofDigest: string } | { valid: false; error: string }> {
   try {
     const now = opts.now ?? Date.now();
-    if (!Number.isFinite(p.timestamp) || Math.abs(now - p.timestamp) > (opts.skewMs ?? HOOK_LIMITS.proofSkewMs)) return { valid: false, error: 'timestamp outside the allowed window' };
+    if (!['set', 'delete', 'renew', 'list'].includes(p.action)) return { valid: false, error: 'unknown hook action' };
+    if (!/^agent_[a-f0-9]{16}$/.test(p.agentId)) return { valid: false, error: 'agentId must be a lowercase key fingerprint' };
+    if (p.action !== 'list' && !/^hook_[a-f0-9]{16}$/.test(p.hookId ?? '')) return { valid: false, error: 'hookId required' };
+    if (!Number.isSafeInteger(p.timestamp) || Math.abs(now - p.timestamp) > (opts.skewMs ?? HOOK_LIMITS.proofSkewMs)) return { valid: false, error: 'timestamp outside the allowed window' };
+    if (p.action === 'set') {
+      const spec = validateHookSpec(p.hook);
+      if (!spec.ok) return { valid: false, error: spec.error };
+      // (#101 secondary) A valid signature must not authorize a mismatched URL slot.
+      if (p.hookId !== await deriveHookId(p.agentId, spec.hook.url)) return { valid: false, error: 'hookId does not match the agent and normalized URL' };
+    }
     if (!/^[0-9a-f]{128}$/.test(p.signature)) return { valid: false, error: 'signature must be 128 lowercase hex characters' };
     if ((await deriveAgentId(publicKeyHex)).toLowerCase() !== p.agentId.toLowerCase()) return { valid: false, error: 'agentId is not the fingerprint of this key' };
     const str = await hookSignString(p);
@@ -175,10 +191,12 @@ export async function verifyHookAction(
 export function validateHookSpec(h: any): { ok: true; hook: HookSpec } | { ok: false; error: string } {
   const bad = (error: string) => ({ ok: false as const, error });
   if (!h || typeof h !== 'object') return bad('hook required');
-  const u = validateHookUrl(String(h.url ?? ''));
+  if (typeof h.url !== 'string') return bad('url must be a string');
+  const u = validateHookUrl(h.url);
   if (!u.ok) return bad(u.error);
   if (!Array.isArray(h.channels) || h.channels.length < 1 || h.channels.length > HOOK_LIMITS.channelsMax) return bad('channels must list 1 to 16 names');
   for (const c of h.channels) if (c !== '*' && !(typeof c === 'string' && /^[a-z0-9-_]{1,64}$/.test(c))) return bad('channel names must be lowercase slugs, or "*"');
+  if (new Set(h.channels).size !== h.channels.length || (h.channels.includes('*') && h.channels.length !== 1)) return bad('channels must be distinct names or ["*"]');
   if (h.mentionsOnly !== undefined && typeof h.mentionsOnly !== 'boolean') return bad('mentionsOnly must be boolean');
   if (h.types !== undefined && (!Array.isArray(h.types) || !h.types.every((t: any) => typeof t === 'string' && /^[a-z_]{1,32}$/.test(t)))) return bad('types must be envelope type names');
   if (typeof h.secret !== 'string' || h.secret.length < HOOK_LIMITS.secretMin || h.secret.length > HOOK_LIMITS.secretMax) return bad('secret must be 32 to 128 characters');
