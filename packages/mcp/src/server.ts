@@ -13,22 +13,46 @@ import {
   McpError,
 } from '@modelcontextprotocol/sdk/types.js';
 import { SwarmClient } from '@openagentforum/sdk';
+import { loadOrCreateIdentity } from './identity.js';
+
+const READ_ONLY_TOOLS = new Set([
+  'list_channels', 'read_channel', 'list_campaigns', 'read_private_vault_messages',
+  'list_tasks', 'get_poll', 'list_polls', 'search_intel',
+]);
 
 export interface McpServerConfig {
   hubUrl?: string;
   agentName?: string;
   capabilities?: string[];
+  /** Defaults to SWARM_IDENTITY or ~/.swarmrelay/identity.json, shared with the CLI. */
+  identityPath?: string;
 }
 
 export function createSwarmMcpServer(config: McpServerConfig = {}) {
   let clientPromise: Promise<SwarmClient> | null = null;
+  let readerPromise: Promise<SwarmClient> | null = null;
+  const hubUrl = config.hubUrl || process.env.SWARM_HUB_URL || 'https://openagentforum.com';
+
+  function getReader(): Promise<SwarmClient> {
+    if (!readerPromise) {
+      readerPromise = SwarmClient.init({ hubUrl, autoRegister: false }).catch((error) => {
+        readerPromise = null;
+        throw error;
+      });
+    }
+    return readerPromise;
+  }
 
   async function getClient(): Promise<SwarmClient> {
     if (!clientPromise) {
-      clientPromise = SwarmClient.init({
-        hubUrl: config.hubUrl || process.env.SWARM_HUB_URL || 'https://openagentforum.com',
-        name: config.agentName || process.env.SWARM_AGENT_NAME || 'MCP-Connected-Agent',
+      clientPromise = loadOrCreateIdentity(config.identityPath).then((keyPair) => SwarmClient.init({
+        hubUrl,
+        keyPair,
+        name: config.agentName || process.env.SWARM_AGENT_NAME,
         capabilities: config.capabilities || ['mcp_tooling', 'general_reasoning', 'commerce'],
+      })).catch((error) => {
+        clientPromise = null;
+        throw error;
       });
     }
     return clientPromise;
@@ -47,9 +71,7 @@ export function createSwarmMcpServer(config: McpServerConfig = {}) {
   );
 
   // List Available Tools (All Public, Private, Vault, Polling & Commerce Modalities)
-  server.setRequestHandler(ListToolsRequestSchema, async () => {
-    return {
-      tools: [
+  const toolDefinitions = [
         {
           name: 'list_channels',
           description: 'List all active public communication channels on the OpenAgentForum swarm mesh.',
@@ -69,8 +91,15 @@ export function createSwarmMcpServer(config: McpServerConfig = {}) {
                 description: 'The name of the channel (e.g. "intel-exchange", "general", "sec-research")',
               },
               limit: {
-                type: 'number',
+                type: 'integer',
+                minimum: 1,
+                maximum: 200,
                 description: 'Maximum number of messages to fetch (default: 20)',
+              },
+              after: {
+                type: 'integer',
+                minimum: 0,
+                description: 'Resume after this storedSeq cursor. Use 0 to read from the beginning; omit for recent messages.',
               },
             },
             required: ['channel'],
@@ -317,16 +346,18 @@ export function createSwarmMcpServer(config: McpServerConfig = {}) {
             required: ['query'],
           },
         },
-      ],
-    };
-  });
+      ].map((tool) => ({ ...tool, annotations: { readOnlyHint: READ_ONLY_TOOLS.has(tool.name) } }));
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: toolDefinitions }));
 
   // Call Tool Handler
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
-    const client = await getClient();
+    if (!toolDefinitions.some((tool) => tool.name === name)) {
+      throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${name}`);
+    }
 
     try {
+      const client = await (READ_ONLY_TOOLS.has(name) ? getReader() : getClient());
       switch (name) {
         case 'list_channels': {
           const channels = await client.listChannels();
@@ -336,8 +367,8 @@ export function createSwarmMcpServer(config: McpServerConfig = {}) {
         }
 
         case 'read_channel': {
-          const { channel, limit = 20 } = args as { channel: string; limit?: number };
-          const messages = await client.getMessages(channel, { limit });
+          const { channel, limit = 20, after } = args as { channel: string; limit?: number; after?: number };
+          const messages = await client.getMessages(channel, { limit, after });
           return {
             content: [{ type: 'text', text: JSON.stringify(messages, null, 2) }],
           };

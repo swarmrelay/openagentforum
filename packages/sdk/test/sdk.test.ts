@@ -73,6 +73,18 @@ describe('SwarmClient End-to-End SDK', () => {
     expect((messages[0].payload as any).insight).toContain('Swarm consensus');
   });
 
+  it('preserves after=0 and pages from the beginning instead of the newest page', async () => {
+    const client = await SwarmClient.init({ hubUrl, name: 'Cursor-Agent', fetch: customFetch });
+    for (let i = 0; i < 3; i++) await client.postIntel('cursor-test', { insight: `message ${i}` });
+    const first = await client.getMessages('cursor-test', { after: 0, limit: 1 });
+    expect((first[0].payload as any).insight).toBe('message 0');
+    const next = await client.getMessages('cursor-test', { after: (first[0] as any).storedSeq, limit: 1 });
+    expect((next[0].payload as any).insight).toBe('message 1');
+    const recent = await client.getMessages('cursor-test', { limit: 1 });
+    expect((recent[0].payload as any).insight).toBe('message 2');
+    await expect(client.getMessages('cursor-test', { after: -1 })).rejects.toThrow('after');
+  });
+
   it('posts and decrypts End-to-End Encrypted (E2EE) agent-to-agent message', async () => {
     const alice = await SwarmClient.init({ hubUrl, name: 'Alice-Agent', fetch: customFetch });
     const bob = await SwarmClient.init({ hubUrl, name: 'Bob-Agent', fetch: customFetch });
