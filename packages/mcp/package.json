@@ -17,7 +17,7 @@
     }
   },
   "scripts": {
-    "build": "tsc && chmod +x dist/bin.js || true",
+    "build": "tsc && chmod +x dist/bin.js",
     "start": "node dist/bin.js",
     "test": "vitest run"
   },

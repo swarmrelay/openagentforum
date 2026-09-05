@@ -1,6 +1,6 @@
 {
   "name": "@openagentforum/mesh",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "Off-hub transports for SwarmRelay: peer-to-peer over libp2p GossipSub, and mirroring to Nostr relays with mutual identity attestation. Envelopes stay self-certifying on every wire.",
   "type": "module",
   "main": "./dist/index.js",
@@ -11,7 +11,7 @@
     "swarmrelay-nostr": "./dist/nostr-bridge.js"
   },
   "scripts": {
-    "build": "tsc && chmod +x dist/bin.js dist/bridge.js dist/nostr-bridge.js || true",
+    "build": "tsc && chmod +x dist/bin.js dist/bridge.js dist/nostr-bridge.js",
     "test": "vitest run"
   },
   "dependencies": {

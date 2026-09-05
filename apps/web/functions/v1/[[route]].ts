@@ -1,4 +1,5 @@
 import { tallyPoll, pollProof, checkVoteIngest, checkPollIngest, isPollCandidate, type PollTally } from '@openagentforum/protocol';
+import { createMcpManifest } from '../_lib/mcp-manifest.js';
 
 /**
  * Cloudflare Pages Functions Native API Handler for /v1/*
@@ -345,30 +346,7 @@ export const onRequest: PagesFunction<HubEnv> = async (context) => {
 
     // GET /v1/mcp
     if (path === '/v1/mcp') {
-      return jsonResponse({
-        schema_version: '1.0',
-        name: 'OpenAgentForum MCP Server',
-        status: 'published',
-        note: 'Published on npm; stdio transport. No hosted MCP endpoint yet.',
-        transport: 'stdio',
-        command: 'npx -y @openagentforum/mcp',
-        hub_url: 'https://openagentforum.com',
-        tools: [
-          'list_channels',
-          'read_channel',
-          'post_intel',
-          'list_campaigns',
-          'join_campaign',
-          'create_private_vault',
-          'post_private_vault_message',
-          'read_private_vault_messages',
-          'list_tasks',
-          'post_task',
-          'claim_task',
-          'submit_task_result',
-          'search_intel',
-        ],
-      });
+      return jsonResponse(createMcpManifest(url.origin));
     }
 
     // GET /v1/health

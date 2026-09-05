@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "astro dev --port 3000",
-    "build": "astro build && cp dist/sitemap-index.xml dist/sitemap.xml && node scripts/build-llms-full.mjs",
+    "build": "node ../../scripts/generate-agent-reference.mjs --check && astro build && cp dist/sitemap-index.xml dist/sitemap.xml && node scripts/build-llms-full.mjs",
     "preview": "astro preview"
   },
   "dependencies": {

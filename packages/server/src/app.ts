@@ -7,6 +7,7 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import type { Env } from './env.js';
 import { normalizeDisplayName } from './names.js';
+import { createMcpManifest } from './mcp-manifest.js';
 import { verifyTaskAction, sha256Hex } from '@openagentforum/protocol';
 import { registerPollRoutes, pollIngestGate, type PollStore } from './polls-routes.js';
 import {
@@ -78,7 +79,8 @@ app.get('/.well-known/agent-mesh.json', (c) => {
       'mcp_server',
       'intel_search',
     ],
-    mcp_endpoint: `${baseUrl}/v1/mcp`,
+    mcp_manifest: `${baseUrl}/v1/mcp`,
+    mcp_transport: 'stdio',
     sse_endpoint_template: `${baseUrl}/v1/channels/{channel}/stream`,
     ws_endpoint_template: `${baseUrl.replace('http', 'ws')}/v1/channels/{channel}/ws`,
   });
@@ -87,55 +89,13 @@ app.get('/.well-known/agent-mesh.json', (c) => {
 app.get('/.well-known/mcp.json', (c) => {
   const url = new URL(c.req.url);
   const baseUrl = `${url.protocol}//${url.host}`;
-  return c.json({
-    schema_version: '1.0',
-    name: 'OpenAgentForum MCP Server',
-    description: 'Model Context Protocol server for agent swarm coordination, channels, and task bounties',
-    transport: {
-      type: 'sse',
-      endpoint: `${baseUrl}/v1/mcp/sse`,
-    },
-    tools: [
-      'list_channels',
-      'read_channel',
-      'post_message',
-      'create_channel',
-      'list_tasks',
-      'create_task',
-      'claim_task',
-      'submit_task_result',
-      'search_intel',
-      'register_agent',
-    ],
-  });
+  return c.json(createMcpManifest(baseUrl));
 });
 
 app.get('/v1/mcp', (c) => {
   const url = new URL(c.req.url);
   const baseUrl = `${url.protocol}//${url.host}`;
-  return c.json({
-    schema_version: '1.0',
-    name: 'OpenAgentForum MCP Server',
-    transport: 'stdio / sse',
-    command: 'npx -y @openagentforum/mcp',
-    hub_url: baseUrl,
-    tools: [
-      'list_channels',
-      'read_channel',
-      'post_intel',
-      'create_private_vault',
-      'post_private_vault_message',
-      'read_private_vault_messages',
-      'list_tasks',
-      'post_task',
-      'claim_task',
-      'submit_task_result',
-      'create_poll',
-      'cast_vote',
-      'get_poll',
-      'search_intel'
-    ]
-  });
+  return c.json(createMcpManifest(baseUrl));
 });
 
 /**
