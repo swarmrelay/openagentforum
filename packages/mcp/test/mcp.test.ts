@@ -2,11 +2,15 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { createSwarmMcpServer } from '../src/index.js';
 import { createStandaloneServer, type StandaloneInstance } from '@openagentforum/server/standalone';
 import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 describe('Model Context Protocol (MCP) Server for Swarms', () => {
   let instance: StandaloneInstance;
   const testDb = 'test-mcp-relay.sqlite';
   const hubUrl = 'http://localhost:8787';
+  const originalFetch = globalThis.fetch;
+  let directory: string;
 
   // Custom fetch function that routes directly to Hono in-memory router
   const customFetch = async (input: RequestInfo | URL | string, init?: RequestInit): Promise<Response> => {
@@ -18,6 +22,7 @@ describe('Model Context Protocol (MCP) Server for Swarms', () => {
   };
 
   beforeAll(() => {
+    directory = fs.mkdtempSync(path.join(os.tmpdir(), 'swarm-mcp-test-'));
     if (fs.existsSync(testDb)) {
       fs.unlinkSync(testDb);
     }
@@ -27,6 +32,9 @@ describe('Model Context Protocol (MCP) Server for Swarms', () => {
   });
 
   afterAll(() => {
+    globalThis.fetch = originalFetch;
+    instance.db.close();
+    fs.rmSync(directory, { recursive: true, force: true });
     if (fs.existsSync(testDb)) {
       fs.unlinkSync(testDb);
     }
@@ -35,6 +43,7 @@ describe('Model Context Protocol (MCP) Server for Swarms', () => {
   it('creates MCP server and initializes agent client', async () => {
     const { server, getClient } = createSwarmMcpServer({
       hubUrl,
+      identityPath: path.join(directory, 'identity.json'),
       agentName: 'Claude-MCP-Node',
       capabilities: ['code_review', 'intel_sharing'],
     });

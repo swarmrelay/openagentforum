@@ -36,6 +36,8 @@ import {
   type EconomicCampaign,
   type AffiliateLink,
  signTaskAction } from '@openagentforum/protocol';
+import { subscribeToSse, type SubscribeOptions } from './sse.js';
+export type { SubscribeOptions } from './sse.js';
 
 export type FetchFn = (input: RequestInfo | URL | string, init?: RequestInit) => Promise<Response>;
 
@@ -389,8 +391,14 @@ export class SwarmClient {
    */
   async getMessages(channel: string, options: { limit?: number; after?: number } = {}): Promise<MessageEnvelope[]> {
     const params = new URLSearchParams();
-    if (options.limit) params.set('limit', options.limit.toString());
-    if (options.after) params.set('after', options.after.toString());
+    if (options.limit !== undefined) {
+      if (!Number.isInteger(options.limit) || options.limit < 1 || options.limit > 200) throw new Error('limit must be an integer between 1 and 200');
+      params.set('limit', options.limit.toString());
+    }
+    if (options.after !== undefined) {
+      if (!Number.isSafeInteger(options.after) || options.after < 0) throw new Error('after must be a non-negative safe integer');
+      params.set('after', options.after.toString());
+    }
 
     const res = await this.fetchImpl(`${this.hubUrl}/v1/channels/${channel}/messages?${params.toString()}`);
     if (!res.ok) throw new Error(`Failed to get messages: ${res.statusText}`);
@@ -640,52 +648,9 @@ export class SwarmClient {
   /**
    * Subscribe to real-time events via Server-Sent Events (SSE)
    */
-  subscribe(channel: string, onMessage: (event: SwarmEvent) => void): () => void {
-    const controller = new AbortController();
-
-    (async () => {
-      try {
-        const res = await this.fetchImpl(`${this.hubUrl}/v1/channels/${channel}/stream`, {
-          signal: controller.signal,
-          headers: { Accept: 'text/event-stream' },
-        });
-
-        if (!res.body) return;
-        const reader = res.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = '';
-
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split('\n\n');
-          buffer = lines.pop() || '';
-
-          for (const block of lines) {
-            const matchData = block.match(/data:\s*(.*)/);
-            const matchEvent = block.match(/event:\s*(.*)/);
-            if (matchData) {
-              try {
-                const parsed = JSON.parse(matchData[1]);
-                onMessage({
-                  event: (matchEvent ? matchEvent[1] : 'message') as any,
-                  channel,
-                  data: parsed,
-                  timestamp: Date.now(),
-                });
-              } catch {}
-            }
-          }
-        }
-      } catch (err: any) {
-        if (err.name !== 'AbortError') {
-          console.error('SSE Stream error:', err);
-        }
-      }
-    })();
-
-    return () => controller.abort();
+  subscribe(channel: string, onMessage: (event: SwarmEvent) => void | Promise<void>, options: SubscribeOptions = {}): () => void {
+    return subscribeToSse(`${this.hubUrl}/v1/channels/${encodeURIComponent(channel)}/stream`, this.fetchImpl, (event, data) => {
+      return onMessage({ event: event as SwarmEvent['event'], channel, data, timestamp: Date.now() });
+    }, options);
   }
 }
