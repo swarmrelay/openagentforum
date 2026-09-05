@@ -4,6 +4,7 @@
 
 import {
   generateAgentKeyPair,
+  deriveAgentId,
   signEnvelope,
   verifyEnvelope,
   encryptPayloadForRecipient,
@@ -208,7 +209,7 @@ export class SwarmClient {
       this.keyPair.signingPrivateKey
     );
 
-    const res = await this.fetchImpl(`${this.hubUrl}/v1/channels/${channelSlug}/messages`, {
+    const res = await this.fetchImpl(`${this.hubUrl}/v1/channels/${encodeURIComponent(channelSlug)}/messages`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(envelope),
@@ -278,7 +279,7 @@ export class SwarmClient {
       this.keyPair.signingPrivateKey
     );
 
-    const res = await this.fetchImpl(`${this.hubUrl}/v1/channels/${params.channel}/messages`, {
+    const res = await this.fetchImpl(`${this.hubUrl}/v1/channels/${encodeURIComponent(params.channel)}/messages`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(envelope),
@@ -371,7 +372,7 @@ export class SwarmClient {
       this.keyPair.signingPrivateKey
     );
 
-    const res = await this.fetchImpl(`${this.hubUrl}/v1/channels/${dmChannel}/messages`, {
+    const res = await this.fetchImpl(`${this.hubUrl}/v1/channels/${encodeURIComponent(dmChannel)}/messages`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(envelope),
@@ -400,7 +401,7 @@ export class SwarmClient {
       params.set('after', options.after.toString());
     }
 
-    const res = await this.fetchImpl(`${this.hubUrl}/v1/channels/${channel}/messages?${params.toString()}`);
+    const res = await this.fetchImpl(`${this.hubUrl}/v1/channels/${encodeURIComponent(channel)}/messages?${params.toString()}`);
     if (!res.ok) throw new Error(`Failed to get messages: ${res.statusText}`);
     const data = (await res.json()) as { messages: MessageEnvelope[] };
     return data.messages;
@@ -649,8 +650,23 @@ export class SwarmClient {
    * Subscribe to real-time events via Server-Sent Events (SSE)
    */
   subscribe(channel: string, onMessage: (event: SwarmEvent) => void | Promise<void>, options: SubscribeOptions = {}): () => void {
+    const keys = new Map<string, string>();
     return subscribeToSse(`${this.hubUrl}/v1/channels/${encodeURIComponent(channel)}/stream`, this.fetchImpl, (event, data) => {
       return onMessage({ event: event as SwarmEvent['event'], channel, data, timestamp: Date.now() });
-    }, options);
+    }, options, async (data) => {
+      const envelope = data as MessageEnvelope | null;
+      if (!envelope || envelope.channel !== channel || typeof envelope.sender !== 'string') throw new Error('Stream record is not an envelope for this channel');
+      let publicKey = keys.get(envelope.sender);
+      if (!publicKey) {
+        const response = await this.fetchImpl(`${this.hubUrl}/v1/agents/${encodeURIComponent(envelope.sender)}`);
+        if (!response.ok) throw new Error(`Cannot verify stream sender: HTTP ${response.status}`);
+        const body = await response.json() as { agent?: { publicKey?: string } };
+        publicKey = body.agent?.publicKey;
+        if (!publicKey || await deriveAgentId(publicKey) !== envelope.sender) throw new Error('Stream sender public key does not match agentId');
+        keys.set(envelope.sender, publicKey);
+      }
+      const result = await verifyEnvelope(envelope, publicKey);
+      if (!result.valid) throw new Error(`Stream envelope does not verify as stored: ${result.error}`);
+    });
   }
 }

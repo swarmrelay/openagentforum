@@ -1,5 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { subscribeToSse } from '../src/sse.js';
+import { subscribeToSse as startSse } from '../src/sse.js';
+
+// Transport fixtures are trusted here; SDK integration tests exercise real signature verification.
+function subscribeToSse(...args: Parameters<typeof startSse>) {
+  const [url, fetcher, receive, options, verify = async () => {}] = args;
+  return startSse(url, fetcher, receive, options, verify);
+}
 
 const url = 'https://relay.test/v1/channels/general/stream';
 const frame = (sequence: number) => `id: ${sequence}\nevent: envelope\ndata: {"storedSeq":${sequence},"payload":{"message":"hello"}}\n\n`;
@@ -23,11 +29,11 @@ describe('resumable SDK SSE subscriptions', () => {
       .mockResolvedValueOnce(stream('retry: 250\r\nid: 7\r\nevent: envelope\r\ndata: {"storedSeq":7,\r\ndata: "message":"héllo"}\r\n\r\nid: 8\r\ndata: {"incomplete":', 1))
       .mockResolvedValueOnce(stream(frame(7) + frame(8)));
     const receive = vi.fn();
-    stop = subscribeToSse(url, fetcher, receive, { after: 0 });
+    stop = subscribeToSse(url, fetcher, receive, { after: 6 });
     await vi.advanceTimersByTimeAsync(0);
     expect(receive).toHaveBeenCalledOnce();
     expect(receive).toHaveBeenCalledWith('envelope', { storedSeq: 7, message: 'héllo' });
-    expect(new URL(fetcher.mock.calls[0][0]).searchParams.get('after')).toBe('0');
+    expect(new URL(fetcher.mock.calls[0][0]).searchParams.get('after')).toBe('6');
     await vi.advanceTimersByTimeAsync(250);
     expect(receive).toHaveBeenCalledTimes(2);
     expect(receive.mock.calls[1][1].storedSeq).toBe(8);
@@ -100,5 +106,41 @@ describe('resumable SDK SSE subscriptions', () => {
     for (const after of [-1, 0.5, NaN, Infinity]) {
       expect(() => subscribeToSse(url, vi.fn(), vi.fn(), { after })).toThrow('after');
     }
+  });
+
+  it('refuses a forged high SSE id that disagrees with the envelope cursor', async () => {
+    const fetcher = vi.fn().mockImplementation(async () => stream(frame(1).replace('id: 1', 'id: 999999')));
+    const receive = vi.fn();
+    const onError = vi.fn();
+    stop = subscribeToSse(url, fetcher, receive, { after: 0, retryMs: 250, onError });
+    await vi.advanceTimersByTimeAsync(250);
+    expect(receive).not.toHaveBeenCalled();
+    expect(onError.mock.calls[0][0].message).toContain('does not match');
+    expect(fetcher.mock.calls.every(([input]) => new URL(input).searchParams.get('after') === '0')).toBe(true);
+  });
+
+  it('fills a stream gap from the record before advancing, using only record envelopes', async () => {
+    const fetcher = vi.fn().mockImplementation(async (input: string) => input.includes('/stream')
+      ? stream(frame(3))
+      : Response.json({ messages: [1, 2, 3].map((storedSeq) => ({ storedSeq, source: 'record' })) }));
+    const receive = vi.fn();
+    stop = subscribeToSse(url, fetcher, receive, { after: 0, retryMs: 250 });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(receive.mock.calls.map(([, data]) => data)).toEqual([1, 2, 3].map((storedSeq) => ({ storedSeq, source: 'record' })));
+    await vi.advanceTimersByTimeAsync(250);
+    expect(new URL(fetcher.mock.calls[2][0]).searchParams.get('after')).toBe('3');
+  });
+
+  it('does not advance past a missing or unverified record entry', async () => {
+    const fetcher = vi.fn().mockImplementation(async (input: string) => input.includes('/stream')
+      ? stream(frame(9999)) : Response.json({ messages: [{ storedSeq: 1 }, { storedSeq: 2 }] }));
+    const receive = vi.fn();
+    const onError = vi.fn();
+    const verify = vi.fn(async (data: any) => { if (data.storedSeq === 2) throw new Error('bad signature'); });
+    stop = subscribeToSse(url, fetcher, receive, { after: 0, retryMs: 250, onError }, verify);
+    await vi.advanceTimersByTimeAsync(250);
+    expect(receive).toHaveBeenCalledOnce();
+    expect(new URL(fetcher.mock.calls[2][0]).searchParams.get('after')).toBe('1');
+    expect(onError.mock.calls[0][0].message).toBe('bad signature');
   });
 });

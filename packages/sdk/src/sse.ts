@@ -54,6 +54,7 @@ export function subscribeToSse(
   fetchImpl: typeof fetch,
   onEvent: (event: string, data: unknown) => void | Promise<void>,
   options: SubscribeOptions = {},
+  verify: (envelope: unknown) => Promise<void> = async () => { throw new Error('An envelope verifier is required'); },
 ): () => void {
   if (options.after !== undefined && (!Number.isSafeInteger(options.after) || options.after < 0)) throw new Error('after must be a non-negative safe integer');
   if (options.retryMs !== undefined && (!Number.isFinite(options.retryMs) || options.retryMs < 0)) throw new Error('retryMs must be non-negative and finite');
@@ -61,6 +62,44 @@ export function subscribeToSse(
   let cursor = options.after;
   let retryMs = Math.min(30_000, Math.max(250, options.retryMs ?? 2000));
   let failures = 0;
+
+  function storedSequence(data: unknown): number {
+    const sequence = (data as { storedSeq?: unknown } | null)?.storedSeq;
+    if (typeof sequence !== 'number' || !Number.isSafeInteger(sequence) || sequence < 1) throw new Error('Envelope has no valid storedSeq');
+    return sequence;
+  }
+
+  async function accept(event: string, envelope: unknown) {
+    const sequence = storedSequence(envelope);
+    if (sequence !== cursor! + 1) throw new Error(`Channel record gap: expected storedSeq ${cursor! + 1}, received ${sequence}; cursor not advanced`);
+    await verify(envelope);
+    if (controller.signal.aborted) return;
+    await onEvent(event, envelope);
+    cursor = sequence;
+  }
+
+  async function catchUp(event: string, through: number) {
+    // An SSE id is only a hint. Fill gaps from the record; never jump to the claimed id.
+    for (let page = 0; page < 100 && cursor! < through; page++) {
+      const endpoint = new URL(url.replace(/\/stream$/, '/messages'));
+      endpoint.searchParams.set('after', String(cursor));
+      endpoint.searchParams.set('limit', '200');
+      const response = await fetchImpl(endpoint.toString(), { signal: controller.signal });
+      if (!response.ok) throw new Error(`SSE catch-up failed: HTTP ${response.status}`);
+      const body = await response.json() as { messages?: unknown[] };
+      if (!Array.isArray(body.messages) || !body.messages.length) throw new Error(`Channel record missing storedSeq ${cursor! + 1}; cursor not advanced`);
+      const before = cursor;
+      for (const envelope of body.messages) {
+        if (controller.signal.aborted) return;
+        const sequence = storedSequence(envelope);
+        if (sequence <= cursor!) continue;
+        await accept(event, envelope);
+        if (cursor! >= through) return;
+      }
+      if (cursor === before) throw new Error('Channel record ignored the after cursor');
+    }
+    if (cursor! < through) throw new Error('SSE catch-up exceeded 100 pages; resume from the last accepted cursor');
+  }
 
   const pause = (ms: number) => new Promise<void>((resolve) => {
     if (controller.signal.aborted) { resolve(); return; }
@@ -80,10 +119,15 @@ export function subscribeToSse(
         if (cursor === undefined) {
           const snapshot = await fetchImpl(url.replace(/\/stream$/, '/messages?limit=1'), { signal: controller.signal });
           if (!snapshot.ok) throw new Error(`SSE cursor request failed: HTTP ${snapshot.status}`);
-          const body = await snapshot.json() as { messages: Array<{ storedSeq?: number }> };
+          const body = await snapshot.json() as { messages: unknown[] };
           if (!Array.isArray(body.messages)) throw new Error('SSE cursor response is missing messages');
-          if (body.messages.some((message) => !Number.isSafeInteger(message.storedSeq) || message.storedSeq! < 0)) throw new Error('SSE cursor response is missing storedSeq');
-          cursor = body.messages.reduce((max, message) => Math.max(max, message.storedSeq!), 0);
+          let tip = 0;
+          for (const message of body.messages) {
+            await verify(message);
+            tip = Math.max(tip, storedSequence(message));
+          }
+          // This is an explicit start-at-the-relay-tip policy, not a proof of history completeness.
+          cursor = tip;
         }
         if (controller.signal.aborted) break;
         const endpoint = new URL(url);
@@ -99,13 +143,17 @@ export function subscribeToSse(
         await readFrames(response, async (event, raw, id) => {
           if (controller.signal.aborted) return;
           const data = JSON.parse(raw);
-          const sequence = id !== undefined && /^\d+$/.test(id) ? Number(id) : data?.storedSeq ?? data?.data?.storedSeq;
           const isEnvelope = event === 'envelope' || event === 'message';
-          const hasCursor = isEnvelope && Number.isSafeInteger(sequence) && sequence >= 0;
-          if (hasCursor && sequence <= cursor!) return;
-          await onEvent(event, data);
-          // Only acknowledge complete, successfully delivered envelopes.
-          if (hasCursor) cursor = sequence;
+          if (isEnvelope) {
+            const envelope = data?.data ?? data;
+            const sequence = storedSequence(envelope);
+            if (id !== undefined && (!/^[1-9]\d*$/.test(id) || Number(id) !== sequence)) throw new Error('SSE id does not match envelope storedSeq; cursor not advanced');
+            if (sequence <= cursor!) return;
+            if (sequence > cursor! + 1) await catchUp(event, sequence);
+            else await accept(event, envelope);
+          } else {
+            await onEvent(event, data);
+          }
           failures = 0;
         }, (ms) => { retryMs = Math.min(30_000, Math.max(250, ms)); });
       } catch (error) {

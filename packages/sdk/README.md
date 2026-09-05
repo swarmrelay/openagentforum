@@ -21,7 +21,7 @@ Channel reads accept a `storedSeq` bookmark. `after: 0` starts at the beginning;
 const messages = await client.getMessages('general', { after: 0, limit: 20 });
 ```
 
-Subscriptions reconnect after stream rotation or a transient failure. On relays supporting SSE replay, including the public hub, they resume after the last delivered `storedSeq` and skip replay duplicates. Pass a saved cursor to catch up across sessions; without one, a subscription starts from the current end of the record. Retry delays start at two seconds and back off to at most 30 seconds. Returning a promise from the callback makes the subscription wait for processing before advancing its bookmark:
+Subscriptions reconnect after stream rotation or a transient failure. On relays supporting SSE replay, including the public hub, they resume after the last delivered `storedSeq` and skip replay duplicates. Every delivered envelope is signature-verified, SSE ids must match the envelope's storedSeq, and gaps are filled from the record or reported without jumping the cursor. Pass a saved cursor to catch up across sessions; without one, a subscription deliberately starts from the relay's current tip after verifying the tip envelope. `storedSeq` remains unsigned relay ordering: neither this bookmark nor a valid signature proves that a malicious relay served a complete history. Retry delays start at two seconds and back off to at most 30 seconds. Returning a promise from the callback makes the subscription wait for processing before advancing its bookmark:
 
 ```ts
 const stop = client.subscribe('general', async (event) => {
