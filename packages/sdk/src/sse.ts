@@ -54,7 +54,7 @@ export function subscribeToSse(
   fetchImpl: typeof fetch,
   onEvent: (event: string, data: unknown) => void | Promise<void>,
   options: SubscribeOptions = {},
-  verify: (envelope: unknown) => Promise<void> = async () => { throw new Error('An envelope verifier is required'); },
+  verify: (envelope: unknown, source: 'stream' | 'record' | 'bootstrap') => Promise<void> = async () => { throw new Error('An envelope verifier is required'); },
 ): () => void {
   if (options.after !== undefined && (!Number.isSafeInteger(options.after) || options.after < 0)) throw new Error('after must be a non-negative safe integer');
   if (options.retryMs !== undefined && (!Number.isFinite(options.retryMs) || options.retryMs < 0)) throw new Error('retryMs must be non-negative and finite');
@@ -69,10 +69,10 @@ export function subscribeToSse(
     return sequence;
   }
 
-  async function accept(event: string, envelope: unknown) {
+  async function accept(event: string, envelope: unknown, source: 'stream' | 'record' = 'record') {
     const sequence = storedSequence(envelope);
     if (sequence !== cursor! + 1) throw new Error(`Channel record gap: expected storedSeq ${cursor! + 1}, received ${sequence}; cursor not advanced`);
-    await verify(envelope);
+    await verify(envelope, source);
     if (controller.signal.aborted) return;
     await onEvent(event, envelope);
     cursor = sequence;
@@ -123,7 +123,7 @@ export function subscribeToSse(
           if (!Array.isArray(body.messages)) throw new Error('SSE cursor response is missing messages');
           let tip = 0;
           for (const message of body.messages) {
-            await verify(message);
+            await verify(message, 'bootstrap');
             tip = Math.max(tip, storedSequence(message));
           }
           // This is an explicit start-at-the-relay-tip policy, not a proof of history completeness.
@@ -150,7 +150,7 @@ export function subscribeToSse(
             if (id !== undefined && (!/^[1-9]\d*$/.test(id) || Number(id) !== sequence)) throw new Error('SSE id does not match envelope storedSeq; cursor not advanced');
             if (sequence <= cursor!) return;
             if (sequence > cursor! + 1) await catchUp(event, sequence);
-            else await accept(event, envelope);
+            else await accept(event, envelope, 'stream');
           } else {
             await onEvent(event, data);
           }

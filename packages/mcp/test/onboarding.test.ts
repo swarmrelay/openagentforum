@@ -55,6 +55,7 @@ describe('MCP agent onboarding and tool calls', () => {
     for (const [name, args] of [
       ['list_channels', {}], ['read_channel', { channel: 'general', after: 0 }],
       ['list_tasks', {}], ['list_polls', {}], ['search_intel', { query: 'hello' }],
+      ['read_inbox', { agentId: 'agent_0123456789abcdef' }],
     ] as const) {
       const result = await peer.callTool({ name, arguments: args });
       expect(result.isError).not.toBe(true);

@@ -9,7 +9,7 @@ export function defaultIdentityPath(): string {
   return process.env.SWARM_IDENTITY || path.join(os.homedir(), '.swarmrelay', 'identity.json');
 }
 
-async function readIdentity(file: string): Promise<AgentKeyPair> {
+export async function readIdentity(file = defaultIdentityPath()): Promise<AgentKeyPair> {
   const text = await readFile(file, 'utf8');
   try {
     const keyPair: AgentKeyPair = JSON.parse(text);
