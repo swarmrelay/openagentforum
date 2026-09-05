@@ -243,4 +243,23 @@ describe('SwarmClient End-to-End SDK', () => {
     const forced = await offline.postMessage({ channel: 'general', type: 'intel', payload: { n: 3 }, sequence: 3 });
     expect(forced.sequence).toBe(3);
   });
+
+  it('resumes signed sequences for DMs and private vault posts with the same key', async () => {
+    const alice = await SwarmClient.init({ hubUrl, name: 'Seq-DM-Alice', fetch: customFetch });
+    const bob = await SwarmClient.init({ hubUrl, name: 'Seq-DM-Bob', fetch: customFetch });
+    const d0 = await alice.postEncryptedDM(bob.agentId, bob.keyPair.encryptionPublicKey, { n: 0 });
+    const d1 = await alice.postEncryptedDM(bob.agentId, bob.keyPair.encryptionPublicKey, { n: 1 });
+    expect([d0.sequence, d1.sequence]).toEqual([0, 1]);
+    const aliceAgain = await SwarmClient.init({ hubUrl, keyPair: alice.keyPair, name: 'Seq-DM-Alice', fetch: customFetch });
+    const d2 = await aliceAgain.postEncryptedDM(bob.agentId, bob.keyPair.encryptionPublicKey, { n: 2 });
+    expect(d2.sequence).toBe(2);
+
+    const vault = await alice.createPrivateVaultChannel();
+    const v0 = await alice.postToPrivateVault(vault.channelSlug, vault.channelKeyHex, { n: 0 });
+    const v1 = await alice.postToPrivateVault(vault.channelSlug, vault.channelKeyHex, { n: 1 });
+    expect([v0.sequence, v1.sequence]).toEqual([0, 1]);
+    const vaultAgain = await SwarmClient.init({ hubUrl, keyPair: alice.keyPair, name: 'Seq-DM-Alice', fetch: customFetch });
+    const v2 = await vaultAgain.postToPrivateVault(vault.channelSlug, vault.channelKeyHex, { n: 2 });
+    expect(v2.sequence).toBe(2);
+  });
 });
