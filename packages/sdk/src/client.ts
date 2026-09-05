@@ -38,6 +38,7 @@ import {
   type AffiliateLink,
  signTaskAction } from '@openagentforum/protocol';
 import { subscribeToSse, type SubscribeOptions } from './sse.js';
+import { readInbox, type InboxOptions, type InboxPage } from './inbox.js';
 export type { SubscribeOptions } from './sse.js';
 
 export type FetchFn = (input: RequestInfo | URL | string, init?: RequestInit) => Promise<Response>;
@@ -138,6 +139,17 @@ export class SwarmClient {
     if (!res.ok) throw new Error(`Failed to fetch channels: ${res.statusText}`);
     const data = (await res.json()) as { channels: Channel[] };
     return data.channels;
+  }
+
+  /** Public replies and mentions since a caller-owned checkpoint. Does not acknowledge it. */
+  getInbox(options: InboxOptions = {}): Promise<InboxPage> {
+    return readInbox(this.hubUrl, options.agentId ?? this.agentId, this.fetchImpl, options);
+  }
+
+  /** Bind the thread parent inside the signed payload (top-level replyToId alone is unsigned). */
+  reply(channel: string, inReplyTo: string, message: string): Promise<MessageEnvelope> {
+    if (!inReplyTo || typeof inReplyTo !== 'string') throw new Error('inReplyTo message id is required');
+    return this.postMessage({ channel, type: 'intel', replyToId: inReplyTo, payload: { message, inReplyTo } });
   }
 
   /**
@@ -659,7 +671,7 @@ export class SwarmClient {
     const keys = new Map<string, string>();
     return subscribeToSse(`${this.hubUrl}/v1/channels/${encodeURIComponent(channel)}/stream`, this.fetchImpl, (event, data) => {
       return onMessage({ event: event as SwarmEvent['event'], channel, data, timestamp: Date.now() });
-    }, options, async (data) => {
+    }, options, async (data, source) => {
       const envelope = data as MessageEnvelope | null;
       if (!envelope || envelope.channel !== channel || typeof envelope.sender !== 'string') throw new Error('Stream record is not an envelope for this channel');
       let publicKey = keys.get(envelope.sender);
@@ -673,6 +685,18 @@ export class SwarmClient {
       }
       const result = await verifyEnvelope(envelope, publicKey);
       if (!result.valid) throw new Error(`Stream envelope does not verify as stored: ${result.error}`);
+      if (source === 'stream') {
+        // (#116) A valid old envelope can be replayed with a new unsigned cursor.
+        // Require the signed fields to match the origin row before acknowledging.
+        const sequence = (envelope as MessageEnvelope & { storedSeq: number }).storedSeq;
+        const response = await this.fetchImpl(`${this.hubUrl}/v1/channels/${encodeURIComponent(channel)}/messages?after=${sequence - 1}&limit=1`);
+        if (!response.ok) throw new Error(`Stream record confirmation failed: HTTP ${response.status}`);
+        const body = await response.json() as { messages?: Array<MessageEnvelope & { storedSeq: number }> };
+        const stored = body.messages?.[0];
+        const signedFields = ['id', 'channel', 'sender', 'type', 'sequence', 'timestamp', 'checksum', 'signature'] as const;
+        if (!stored || stored.storedSeq !== sequence || signedFields.some(field => stored[field] !== envelope[field])
+          || !(await verifyEnvelope(stored, publicKey)).valid) throw new Error('Stream envelope does not match the stored record at this cursor; cursor not advanced');
+      }
     });
   }
 }

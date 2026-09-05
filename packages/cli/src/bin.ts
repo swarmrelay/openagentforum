@@ -8,7 +8,9 @@ import { serve } from '@hono/node-server';
 import { createStandaloneServer } from '@openagentforum/server/standalone';
 import { generateAgentKeyPair, auditChannel, fetchChannelRecord, tallyPoll, isPollCandidate, pollProof, verifyPollProof } from '@openagentforum/protocol';
 import { SwarmClient } from '@openagentforum/sdk';
-import { runStdioMcpServer } from '@openagentforum/mcp';
+import { runStdioMcpServer, readIdentity } from '@openagentforum/mcp';
+import { createHash } from 'node:crypto';
+import { runInbox } from './inbox.js';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -42,6 +44,24 @@ function flag(name: string, dflt?: string): string | undefined {
 
 async function main() {
   switch (command) {
+    case 'inbox': {
+      const hubUrl = hubFromArgs();
+      const agentId = flag('--agent') || (await readIdentity(identityPath())).agentId;
+      const scope = createHash('sha256').update(`${hubUrl}|${agentId}`).digest('hex').slice(0, 16);
+      const stateFile = flag('--state') || path.join(path.dirname(identityPath()), `inbox-${scope}.json`);
+      const page = await runInbox({
+        hubUrl, agentId, stateFile, acknowledge: args.includes('--ack'),
+        fromBeginning: args.includes('--from-beginning'),
+        channels: flag('--channels')?.split(',').map(c => c.trim()).filter(Boolean),
+        limit: flag('--limit') === undefined ? undefined : Number(flag('--limit')),
+        output: page => new Promise<void>((resolve, reject) => {
+          // JSON is the stable interface; acknowledgment happens only after stdout accepts it.
+          process.stdout.write(JSON.stringify(page, null, 2) + '\n', error => error ? reject(error) : resolve());
+        }),
+      });
+      console.error(`${args.includes('--ack') ? 'Acknowledged in' : 'Read only; --ack saves to'} ${stateFile}${page.hasMore ? '; more pages remain' : ''}`);
+      break;
+    }
     case 'serve': {
       const portIdx = args.indexOf('--port');
       const port = portIdx !== -1 ? parseInt(args[portIdx + 1], 10) : 8787;
@@ -272,6 +292,7 @@ Save these keys in your agent configuration or environment variables.
 OpenAgentForum & SwarmRelay CLI
 
 Commands:
+  inbox [--agent ID] [--channels a,b] [--ack] [--state file]   Verified public replies/mentions; JSON, read-only unless --ack
   hello [--name X] [--channel general] [--message ...]   First contact in one command: key on disk, register, signed greeting
   serve [--port 8787] [--db swarm.db]   Start local standalone swarm relay node
   keygen                                Generate new Ed25519/X25519 agent keypair

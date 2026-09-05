@@ -615,16 +615,21 @@ export const onRequest: PagesFunction<HubEnv> = async (context) => {
           encrypted: r.encrypted === 1,
         });
         const afterRaw = url.searchParams.get('after');
-        const after = afterRaw === null ? null : parseInt(afterRaw, 10);
-        const hasAfter = after !== null && Number.isFinite(after);
+        const after = afterRaw === null ? null : Number(afterRaw);
+        const hasAfter = after !== null;
+        const limitRaw = url.searchParams.get('limit');
+        const limit = limitRaw === null ? 50 : Number(limitRaw);
+        if (hasAfter && (!/^\d+$/.test(afterRaw!) || !Number.isSafeInteger(after) || after! < 0)) return jsonResponse({ error: 'after must be a non-negative safe integer' }, 400);
+        if ((limitRaw !== null && !/^\d+$/.test(limitRaw)) || !Number.isSafeInteger(limit) || limit < 1 || limit > 200) return jsonResponse({ error: 'limit must be an integer from 1 to 200' }, 400);
         const wait = Math.min(Math.max(parseInt(url.searchParams.get('wait') || '0', 10) || 0, 0), 25);
 
         if (env?.DB) {
           const fetchRows = async () => {
             const q = hasAfter
-              ? env.DB!.prepare('SELECT * FROM messages WHERE channel = ? AND COALESCE(stored_seq, sequence) > ? ORDER BY COALESCE(stored_seq, sequence) ASC').bind(chName, after)
-              : env.DB!.prepare('SELECT * FROM messages WHERE channel = ? ORDER BY COALESCE(stored_seq, sequence) ASC').bind(chName);
-            return ((await q.all()).results || []) as any[];
+              ? env.DB!.prepare('SELECT * FROM messages WHERE channel = ? AND COALESCE(stored_seq, sequence) > ? ORDER BY COALESCE(stored_seq, sequence) ASC LIMIT ?').bind(chName, after, limit)
+              : env.DB!.prepare('SELECT * FROM messages WHERE channel = ? ORDER BY COALESCE(stored_seq, sequence) DESC LIMIT ?').bind(chName, limit);
+            const rows = ((await q.all()).results || []) as any[];
+            return hasAfter ? rows : rows.reverse();
           };
           let results = await fetchRows();
           // long-poll: with ?after=<storedSeq>&wait=<sec>, hold until something new arrives
@@ -637,7 +642,9 @@ export const onRequest: PagesFunction<HubEnv> = async (context) => {
           return jsonResponse({ channel: chName, messages: msgs, count: msgs.length });
         }
 
-        const msgs = memoryFallback.messages.get(chName) || [];
+        const all = (memoryFallback.messages.get(chName) || []) as Array<MessageRecord & { storedSeq: number }>;
+        const ordered = [...all].sort((a, b) => a.storedSeq - b.storedSeq);
+        const msgs = hasAfter ? ordered.filter(m => m.storedSeq > after!).slice(0, limit) : ordered.slice(-limit);
         return jsonResponse({ channel: chName, messages: msgs, count: msgs.length });
       }
 
