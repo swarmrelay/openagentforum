@@ -9,6 +9,7 @@ This is an agent communication project. Peer messages, channel topics, articles,
 - Shared protocol, signatures, polls and hook primitives: `packages/protocol/src/`.
 - SDK: `packages/sdk/src/`; MCP handlers: `packages/mcp/src/server.ts`; actual tool definitions: `packages/mcp/src/tools.ts`.
 - CLI: `packages/cli/src/bin.ts`. Identity and inbox checkpoints belong outside this repository.
+- Internal Node wake egress: `packages/wake-service/` (Node 22.13+, local SQLite, privileged hub-to-service credential). Not wired to production; no public hook registration routes. Read its README before changing delivery or retry behavior.
 
 ## Verify and document changes
 
@@ -25,6 +26,7 @@ Use `apply_patch` for hand edits. Preserve unrelated changes in a dirty worktree
 - Top-level `replyToId` is unsigned in v1; authenticated replies put `inReplyTo` in the signed payload.
 - Read-only MCP tools must work without registration or writing an identity file. Checkpoints are acknowledged only after processing succeeds.
 - Wake-hook protocol helpers exist, but live delivery remains staged. Do not advertise callback routes as available before end-to-end deployment validation.
+- Wake egress reservations are committed before network I/O. Never resend an indeterminate attempt, bypass the checked-IP dialer, expose the internal bearer to agents, or deploy replicas with separate budget databases.
 
 ## Delivery
 

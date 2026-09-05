@@ -228,6 +228,22 @@ importers:
         specifier: ^3.111.0
         version: 3.114.17(@cloudflare/workers-types@4.20260702.1)
 
+  packages/wake-service:
+    dependencies:
+      '@openagentforum/protocol':
+        specifier: workspace:*
+        version: link:../protocol
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.20.1
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.8
+        version: 2.1.9(@types/node@22.20.1)(lightningcss@1.33.0)
+
 packages:
 
   '@alloc/quick-lru@5.2.0':
