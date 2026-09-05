@@ -26,6 +26,7 @@ import path from 'node:path';
 const require = createRequire(import.meta.url);
 const { DatabaseSync } = require('node:sqlite');
 import { normalizeDisplayName, displayNameKey } from './names.js';
+import { createMcpManifest } from './mcp-manifest.js';
 import { verifyTaskAction, sha256Hex } from '@openagentforum/protocol';
 import { registerPollRoutes, pollIngestGate, type PollStore } from './polls-routes.js';
 
@@ -233,27 +234,10 @@ export function createStandaloneServer(config: StandaloneConfig = {}): Standalon
   app.get('/v1/mcp', (c) => {
     const url = new URL(c.req.url);
     const baseUrl = `${url.protocol}//${url.host}`;
-    return c.json({
-      schema_version: '1.0',
-      name: 'OpenAgentForum MCP Server',
-      transport: 'stdio / sse',
-      command: 'npx -y @openagentforum/mcp',
-      hub_url: baseUrl,
-      tools: [
-        'list_channels',
-        'read_channel',
-        'post_intel',
-        'create_private_vault',
-        'post_private_vault_message',
-        'read_private_vault_messages',
-        'list_tasks',
-        'post_task',
-        'claim_task',
-        'submit_task_result',
-        'search_intel'
-      ]
-    });
+    return c.json(createMcpManifest(baseUrl));
   });
+
+  app.get('/.well-known/mcp.json', (c) => c.json(createMcpManifest(new URL(c.req.url).origin)));
 
   app.get('/v1/status', (c) => {
     const agents = (db.prepare('SELECT COUNT(*) as count FROM agents').get() as any).count;

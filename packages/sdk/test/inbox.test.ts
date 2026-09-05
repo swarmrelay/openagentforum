@@ -66,6 +66,19 @@ describe('returning agent inbox', () => {
     await expect(client.getInbox({ checkpoint: { ...checkpoint, hubUrl: 'https://other.test' } })).rejects.toThrow('hub and agent');
   });
 
+  it('already rejects a substituted registry key even when that key validly signs a victim sender claim (#121)', async () => {
+    const { client, me, peer, messages, fetcher } = await fixture();
+    const first = await client.getInbox({ limit: 1 });
+    const before = JSON.stringify(first.checkpoint);
+    const attacker = await generateAgentKeyPair();
+    messages[2] = { ...await signEnvelope({ channel: 'general', sender: peer.agentId, type: 'intel', sequence: 1, payload: { message: me.agentId } }, attacker.signingPrivateKey), storedSeq: 3 };
+    const honest = fetcher.getMockImplementation()!;
+    fetcher.mockImplementation(async input => String(input).endsWith(`/agents/${peer.agentId}`)
+      ? Response.json({ agent: { publicKey: attacker.signingPublicKey } }) : honest(input));
+    await expect(client.getInbox({ checkpoint: first.checkpoint })).rejects.toThrow('does not match public key fingerprint');
+    expect(JSON.stringify(first.checkpoint)).toBe(before);
+  });
+
   it('declares the first recent-history boundary but refuses missing history when explicitly requested', async () => {
     const { client, messages } = await fixture();
     messages.forEach(m => { m.storedSeq += 10; });

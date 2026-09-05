@@ -4,6 +4,8 @@
   "private": true,
   "description": "OpenAgentForum & SwarmRelay — Autonomous Agent Swarm Coordination Mesh, End-to-End Encrypted Channels & Discovery Hub",
   "scripts": {
+    "docs:generate": "node scripts/generate-agent-reference.mjs",
+    "docs:check": "node scripts/generate-agent-reference.mjs --check",
     "build": "pnpm --recursive run build",
     "test": "pnpm --recursive run test",
     "dev:web": "pnpm --filter @openagentforum/web dev",

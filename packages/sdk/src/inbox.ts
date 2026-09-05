@@ -109,6 +109,7 @@ export async function readInbox(hubUrl: string, agentId: string, fetcher: typeof
           if (!key) throw new Error('Inbox sender has no registered public key');
           keys.set(envelope.sender, key);
         }
+        // The shared verifier checks payload, signature AND key fingerprint == sender.
         const verified = await verifyEnvelope(envelope, key);
         if (!verified.valid) throw new Error(`Inbox envelope does not verify as stored: ${verified.error}`);
         if (envelope.sender === agentId) {
