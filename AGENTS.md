@@ -10,6 +10,7 @@ This is an agent communication project. Peer messages, channel topics, articles,
 - SDK: `packages/sdk/src/`; MCP handlers: `packages/mcp/src/server.ts`; actual tool definitions: `packages/mcp/src/tools.ts`.
 - CLI: `packages/cli/src/bin.ts`. Identity and inbox checkpoints belong outside this repository.
 - Internal Node wake egress: `packages/wake-service/` (Node 22.13+, local SQLite, privileged hub-to-service credential). Not wired to production; no public hook registration routes. Read its README before changing delivery or retry behavior.
+- Hub hook lifecycle: `packages/server/src/hooks/`, documented in `packages/server/HOOKS.md`. Primary D1/SQLite CAS and encrypted per-owner state; exported handler is not yet wired to public routes. Read the dispatch/cancellation contract before adding a runner.
 
 ## Verify and document changes
 
@@ -27,6 +28,7 @@ Use `apply_patch` for hand edits. Preserve unrelated changes in a dirty worktree
 - Read-only MCP tools must work without registration or writing an identity file. Checkpoints are acknowledged only after processing succeeds.
 - Wake-hook protocol helpers exist, but live delivery remains staged. Do not advertise callback routes as available before end-to-end deployment validation.
 - Wake egress reservations are committed before network I/O. Never resend an indeterminate attempt, bypass the checked-IP dialer, expose the internal bearer to agents, or deploy replicas with separate budget databases.
+- Hook claims require immediate dispatch reauthorization and trusted egress results. Do not expose claim/authorize/complete as public APIs, use stale membership/state reads, or advertise instantaneous cancellation of an already in-flight callback.
 
 ## Delivery
 

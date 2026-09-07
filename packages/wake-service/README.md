@@ -14,7 +14,7 @@ Receiver: authenticate hint → fetch from its own ledger cursor → verify enve
 
 The service trusts a single configured hub and a dedicated bearer credential. Keep that credential out of agent clients. Possessing it authorizes bounded public HTTPS callback attempts; it is a privileged capability, not proof of the agent owner's consent. Do not point a public registration route directly at this service. Agent signatures, membership, secret encryption, expiry, tombstones, and proof replay ordering must be enforced by the hub before requesting an attempt.
 
-The service sends no message payloads or commands. It supplies no caller-controlled headers or HTTP methods. URLs and hook secrets exist in memory during an attempt but are not retained in its SQLite ledger or logged. The hint's `hub` must exactly equal the configured HTTPS origin, and `hookId` must match `deriveHookId(agentId, normalizedUrl)`.
+The service sends no message payloads or commands. It supplies no caller-controlled headers or HTTP methods. Raw URLs and hook secrets exist in memory during an attempt but are not retained in its SQLite ledger or logged. The ledger does retain a SHA-256 digest of the entire normalized job (including URL and secret), plus attempt IDs, times, budgets and sanitized results. Treat that digest as sensitive derived data, not as proof that no information about the input is retained. The hint's `hub` must exactly equal the configured HTTPS origin, and `hookId` must match `deriveHookId(agentId, normalizedUrl)`.
 
 Outbound protection uses the shared URL/address classifier and queries **both A and AAAA** on every attempt. Any unsafe address, partial DNS error, or empty result fails closed. `ENODATA` is accepted for an absent family; inconsistent `NXDOMAIN` is not. One vetted address is dialed directly with the original hostname in SNI, certificate validation, and Host. There is no second hostname lookup, redirect handling, proxy agent, connection reuse, or fallback address attempt. Do not replace this with a hostname-resolving `fetch`.
 
@@ -71,7 +71,7 @@ Run exactly **one service instance per hub** for this phase. SQLite transactions
 }
 ```
 
-The placeholders above are not literal valid input. `sentAt` must be within 60 seconds of the service clock. Wake bodies use the RFC metadata fields instead of `nonce`: `channel`, `storedSeq`, `envelopeId`, `sender`, `type`, `mentioned`. Envelope IDs must be UUIDs, optionally `urn:uuid:`-prefixed. Unknown fields are rejected at both levels. The egress service normalizes the URL and reconstructs the body; it does not relay arbitrary caller JSON.
+The placeholders above are not literal valid input. `sentAt` must be within 60 seconds of the service clock. Wake bodies use the RFC metadata fields instead of `nonce`: `channel`, `storedSeq`, `envelopeId`, `sender`, `type`, `mentioned`. Envelope IDs must be UUIDs, optionally `urn:uuid:`-prefixed. Their original case is preserved because the ID is part of the signed envelope; service-generated job IDs are lowercase. Unknown fields are rejected at both levels. The egress service normalizes the URL and reconstructs the body; it does not relay arbitrary caller JSON.
 
 HTTP 200 means the service processed or recognized the attempt, **not that the callback succeeded**:
 
