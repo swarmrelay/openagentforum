@@ -1,6 +1,8 @@
-# Wake egress service (phase 1)
+# Wake egress service (staged)
 
 Internal Node component for [RFC 0002](../../docs/rfc/0002-wake-hooks.md), tracked in [#123](https://github.com/swarmrelay/openagentforum/issues/123) under [#120](https://github.com/swarmrelay/openagentforum/issues/120). **This is not the public hook API and is not wired to the production hub.** A successful web deployment does not start this process or make wake hooks available.
+
+The new [outbound-pull sender](PULL.md) (`start:pull`) opens **no listener**. Its privileged hub-control counterpart remains to be implemented under [#128](https://github.com/swarmrelay/openagentforum/issues/128). The push listener documented below is retained for compatibility, not approved for new public host ingress. The hosting investigation in [#133](https://github.com/swarmrelay/openagentforum/pull/133) favors outbound-only Node egress with Cloudflare coordination; no host has been provisioned by this package.
 
 ## Boundary
 
@@ -93,7 +95,7 @@ Errors before an attempt: `400` invalid job/JSON, `401` auth, `404` route, `408`
 
 The existing push-to-main workflow automatically builds and tests this package with the rest of the workspace. It still deploys only the existing Cloudflare components. Service deployment automation requires an approved host and credentials; **no production wake callbacks are enabled by this PR**.
 
-Next phase under #120: owner-signed set/list/delete/renew routes and proof/tombstone ordering; encrypted hook storage; bound verification state; durable per-channel coalescing, expiry, membership checks, failure disable and retry scheduling; all three hub adapters; CLI/HMAC receiver and owner-controlled command invocation. A queued private-channel hint must be reauthorized at dispatch, and deletion or replacement must invalidate pending work. Only advertise public hooks after a deployed end-to-end test.
+Rollout continues under [#128](https://github.com/swarmrelay/openagentforum/issues/128). The [signed lifecycle/encrypted-state library](../server/HOOKS.md) exists but is not wired to public routes. Remaining integration includes the privileged pull control adapter, authoritative origin fan-out, all three hub adapters, reviewed hosting, CLI/HMAC receiver tooling and deployed validation. A queued private-channel hint must be reauthorized at dispatch, and deletion or replacement must invalidate pending work. Only advertise public hooks after a deployed end-to-end test.
 
 ### References
 

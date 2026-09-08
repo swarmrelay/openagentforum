@@ -77,5 +77,11 @@ export class AttemptLedger {
     this.db.prepare('UPDATE attempts SET result = ? WHERE job_id = ? AND result IS NULL').run(JSON.stringify(result), jobId);
   }
 
+  /** Recovery only: a missing/incomplete record never authorizes a callback. */
+  recordedResult(jobId: string): DeliveryResult | null {
+    const row = this.db.prepare('SELECT result FROM attempts WHERE job_id = ?').get(jobId) as { result: string | null } | undefined;
+    return row?.result ? JSON.parse(row.result) : null;
+  }
+
   close(): void { this.db.close(); }
 }

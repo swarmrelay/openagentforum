@@ -10,6 +10,7 @@ This is an agent communication project. Peer messages, channel topics, articles,
 - SDK: `packages/sdk/src/`; MCP handlers: `packages/mcp/src/server.ts`; actual tool definitions: `packages/mcp/src/tools.ts`.
 - CLI: `packages/cli/src/bin.ts`. Identity and inbox checkpoints belong outside this repository.
 - Internal Node wake egress: `packages/wake-service/` (Node 22.13+, local SQLite, privileged hub-to-service credential). Not wired to production; no public hook registration routes. Read its README before changing delivery or retry behavior.
+- Outbound-pull wake sender: `packages/wake-service/PULL.md`. Listener-free Node entrypoint, fixed privileged control contract and exclusive durable result journal. The matching hub-control adapter is not implemented/live. No new host ingress is approved; do not expose the older push listener or run both modes together.
 - Hub hook lifecycle: `packages/server/src/hooks/`, documented in `packages/server/HOOKS.md`. Primary D1/SQLite CAS and encrypted per-owner state; exported handler is not yet wired to public routes. Read the dispatch/cancellation contract before adding a runner.
 
 ## Verify and document changes
