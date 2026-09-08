@@ -1,10 +1,12 @@
 import type { HookStateStore, StoredHookState } from './types.js';
+import { SCAN_DUE, SCAN_DUE_AFTER, validateDueScan, type HookDueCursor, type HookDueStore } from './due.js';
 
 /** Narrow structural boundary so Node consumers do not need ambient Workers
  * globals merely to import the generic hook API. Checked against D1 below. */
 export interface D1HookStatement {
   bind(...values: (string | number | null)[]): D1HookStatement;
   first<T>(): Promise<T | null>;
+  all<T>(): Promise<{ results: T[] }>;
   run(): Promise<{ meta: { changes: number } }>;
 }
 export interface D1HookDatabase { prepare(query: string): D1HookStatement }
@@ -18,6 +20,7 @@ CREATE TABLE IF NOT EXISTS wake_hook_state (
   due_at INTEGER
 );
 CREATE INDEX IF NOT EXISTS wake_hook_state_due ON wake_hook_state(due_at) WHERE due_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS wake_hook_state_due_page ON wake_hook_state(due_at, agent_id) WHERE due_at IS NOT NULL;
 `;
 
 export const READ_STATE = 'SELECT revision, ciphertext, due_at AS dueAt FROM wake_hook_state WHERE agent_id = ?';
@@ -25,8 +28,15 @@ export const INSERT_STATE = 'INSERT INTO wake_hook_state (agent_id, revision, ci
 export const UPDATE_STATE = 'UPDATE wake_hook_state SET revision = ?, ciphertext = ?, due_at = ? WHERE agent_id = ? AND revision = ?';
 
 /** D1Database (not a Session) keeps reads on the primary; CAS makes races explicit. */
-export function d1HookStateStore(db: D1HookDatabase): HookStateStore {
+export function d1HookStateStore(db: D1HookDatabase): HookStateStore & HookDueStore {
   return {
+    async scanDue(now, limit, after) {
+      validateDueScan(now, limit, after);
+      const statement = after
+        ? db.prepare(SCAN_DUE_AFTER).bind(now, after.dueAt, after.agentId, limit)
+        : db.prepare(SCAN_DUE).bind(now, limit);
+      return (await statement.all<HookDueCursor>()).results;
+    },
     read: agentId => db.prepare(READ_STATE).bind(agentId).first<StoredHookState>(),
     async compareAndSwap(agentId, expected, next) {
       const result = expected === 0

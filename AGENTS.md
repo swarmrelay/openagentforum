@@ -11,6 +11,7 @@ This is an agent communication project. Peer messages, channel topics, articles,
 - CLI: `packages/cli/src/bin.ts`. Identity and inbox checkpoints belong outside this repository.
 - Internal Node wake egress: `packages/wake-service/` (Node 22.13+, local SQLite, privileged hub-to-service credential). Not wired to production; no public hook registration routes. Read its README before changing delivery or retry behavior.
 - Hub hook lifecycle: `packages/server/src/hooks/`, documented in `packages/server/HOOKS.md`. Primary D1/SQLite CAS and encrypted per-owner state; exported handler is not yet wired to public routes. Read the dispatch/cancellation contract before adding a runner.
+- Bounded wake runner: `runHookDispatchBatch` and `createHookEgressClient` in that same export. These are opt-in library functions, not a registered scheduler. Preserve the returned scan continuation, reauthorize every service replay, and never turn a lost service response into a fresh callback attempt. Remaining rollout is tracked in #128.
 
 ## Verify and document changes
 

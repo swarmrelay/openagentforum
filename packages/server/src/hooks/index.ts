@@ -1,4 +1,9 @@
 export { HookManager } from './manager.js';
+export { runHookDispatchBatch } from './dispatcher.js';
+export type { HookDispatchOptions, HookDispatchReport } from './dispatcher.js';
+export { createHookEgressClient } from './egress.js';
+export type { HookEgressClient, HookEgressOptions, HookEgressOutcome } from './egress.js';
+export type { HookDueCursor, HookDueStore } from './due.js';
 export { handleHookRequest } from './http.js';
 export { d1HookStateStore, HOOK_STATE_SCHEMA } from './storage.js';
 export type { D1HookDatabase, D1HookStatement } from './storage.js';
