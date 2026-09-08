@@ -1,5 +1,7 @@
 # Internal wake-service deployment preparation
 
+For the current listener-free design, use [PULL.md](PULL.md) and `oaf-wake-pull.service`. The inbound proposal below is historical and must remain unused for the outbound-only rollout.
+
 Opt-in templates for the [Node egress service](../../packages/wake-service/README.md), tracked in #130, with the remaining public rollout in #128. **Nothing here installs a service, changes DNS, issues a certificate, reloads a proxy or enables callbacks on push.** The forum's existing Cloudflare deployment is unchanged.
 
 Keep this inbound Apache/systemd proposal unused for now. The [Workers feasibility report](../../packages/wake-feasibility/README.md) keeps new host ingress unapproved; an outbound-pull Node sender is the intended fallback and is not implemented here.

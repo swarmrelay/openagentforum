@@ -182,7 +182,11 @@ export class HookManager {
   }
 
   /** Internal ingest API: the caller must supply an origin-stored sequence, never a peer SSE cursor. */
-  async enqueue(agentId: string, record: StoredEnvelope): Promise<{ queued: number; limited: boolean }> {
+  async enqueue(agentId: string, record: StoredEnvelope, storedAt?: number): Promise<{ queued: number; limited: boolean }> {
+    // A delayed origin outbox must not notify a subscription verified after the
+    // message was stored. This timestamp is trusted ingestion metadata, never
+    // the author-controlled envelope timestamp.
+    if (storedAt !== undefined && (!Number.isSafeInteger(storedAt) || storedAt < 0)) throw new HookError('invalid_record', 400);
     record = structuredClone(record);
     const storedSeq = record.storedSeq;
     if (typeof storedSeq !== 'number' || !Number.isSafeInteger(storedSeq) || storedSeq < 1 || !/^(?:urn:uuid:)?[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(record.id)) throw new HookError('invalid_record', 400);
@@ -190,11 +194,12 @@ export class HookManager {
     const key = await this.options.publicKey(record.sender);
     if (!key || !(await verifyEnvelope(record, key)).valid) throw new HookError('invalid_record', 400);
     return this.update(agentId, async (state, now) => {
+      if (storedAt !== undefined && (storedAt > now || now - storedAt > STATE_LIMITS.queuedMs)) return { value: { queued: 0, limited: false }, write: false };
       let queued = 0;
       let limited = false;
       const access = await this.options.channelAccess(agentId, record.channel);
       for (const hook of state.hooks) {
-        if (hook.disabledReason || hook.verifiedAt === null) continue;
+        if (hook.disabledReason || hook.verifiedAt === null || (storedAt !== undefined && hook.verifiedAt > storedAt)) continue;
         if (!access || (access.isPrivate && !access.isMember)) { this.removeChannel(hook, record.channel); continue; }
         const match = hookMatches(hook.spec, record, { agentId, channelIsPrivate: access.isPrivate, agentIsMember: access.isMember });
         if (!match) continue;

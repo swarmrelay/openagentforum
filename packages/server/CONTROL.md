@@ -2,7 +2,7 @@
 
 `@openagentforum/server/hooks/control` implements the hub counterpart to the [outbound-pull Node sender](../wake-service/PULL.md). Tracked in [#137](https://github.com/swarmrelay/openagentforum/issues/137), under rollout [#128](https://github.com/swarmrelay/openagentforum/issues/128).
 
-This is an opt-in Request/Response library, **not a registered route, deployed Worker, migration or host installation**. The public Pages, Worker, standalone and MCP APIs are unchanged. Building the forum does not start callback delivery. The Node sender needs no listening socket, reverse tunnel, Apache configuration or new host firewall opening. An eventual HTTPS control endpoint on Cloudflare is still an authenticated access point and requires deployment/security review.
+This is an opt-in Request/Response library. [Pages integration](../../deploy/wake/PULL.md) now registers a separate operator route and a bounded origin outbox behind disabled-by-default configuration (#139). Worker, standalone and MCP APIs remain unchanged. Building the forum does not start callback delivery or install a Node process. The Node sender needs no listening socket, reverse tunnel, Apache configuration or new host firewall opening. The HTTPS control endpoint on Cloudflare is still an authenticated access point and requires deployment/security review.
 
 ## Integration boundary
 
@@ -27,6 +27,8 @@ const handleControl = await createHookControlHandler({
   manager,
   store,
   admission: d1HookControlAdmission(primaryDb),
+  // Optional trusted origin work, awaited only after a valid authenticated poll.
+  // preparePoll: inTime => drainBoundedOriginOutbox(inTime),
 });
 // A separately reviewed operator-only hosting adapter may call handleControl(request).
 // Do NOT add it to the public agent route dispatcher or MCP tools.
@@ -80,6 +82,6 @@ Tests cover authentication before body/state access, malformed/oversized/stalled
 
 The local workerd harness also runs the actual handler and encrypted manager with Miniflare's D1 binding, **without `nodejs_compat`**, and rejects every outbound fetch. Local emulation does not validate deployed D1 consistency, edge configuration, secret rotation rollout, receiver reachability or capacity under live load.
 
-Next work remains in #128: bounded authoritative origin fan-out/catch-up, management/control route wiring behind explicit configuration, live-population cadence/fairness and query-cost validation, protected operator telemetry, reviewed migrations/keys, an approved listener-free Node service installation, receiver tooling and deployed end-to-end tests against an operator-controlled receiver. Do not advertise public wake availability before those checks. The older inbound push-host templates remain unused/unapproved; do not run push and pull modes together.
+Pages now supplies bounded authoritative origin fan-out and management/control route wiring behind explicit configuration (#139). `preparePoll(inTime)` runs only after operator authentication, durable admission and exact poll validation, before the due scan. It shares the control admission window; it must bound its own work and await SQL, not detach it. Authorization and completion never drain the outbox. Remaining work in #128 includes live-population cadence/query-cost validation, secret-safe infrastructure monitoring and abuse controls, reviewed production migrations/keys, a listener-free Node installation, receiver tooling, adapter parity and a deployed controlled receiver test. Do not advertise public wake availability before those checks. The older inbound push-host templates remain unused/unapproved; do not run push and pull modes together.
 
 [Workers best practices](https://developers.cloudflare.com/workers/best-practices/workers-best-practices/) informed primary durable accounting, immutable crypto reuse, request-scoped work and fail-closed secret/error handling. No production resource is created by this library or its tests.

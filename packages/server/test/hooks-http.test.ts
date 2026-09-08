@@ -8,7 +8,20 @@ afterEach(() => { for (const close of cleanup.splice(0)) close(); });
 async function setup() { const f = await fixture(); cleanup.push(f.close); return f; }
 const post = (path: string, input: unknown, method = 'POST') => new Request(`${HUB}${path}`, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) });
 
-describe('shared signed hook management handler (not wired into production)', () => {
+describe('shared signed hook management handler (Pages opt-in, production disabled)', () => {
+  it('rejects invalid length declarations and bounds streams consisting only of empty chunks', async () => {
+    const f = await setup();
+    const url = `${HUB}/v1/agents/${f.owner.agentId}/hooks`;
+    for (const length of ['-1', 'invalid', '12289']) {
+      const req = new Request(url, { method: 'POST', headers: { 'content-type': 'application/json', 'content-length': length }, body: '{}' });
+      expect((await handleHookRequest(req, f.manager))!.status).toBe(413);
+    }
+    const req = new Request(url, { method: 'POST', headers: { 'content-type': 'application/json' },
+      body: new ReadableStream({ pull(controller) { controller.enqueue(new Uint8Array()); } }), duplex: 'half' } as RequestInit);
+    expect((await handleHookRequest(req, f.manager))!.status).toBe(413);
+    expect(await f.makeStore().read(f.owner.agentId)).toBeNull();
+  });
+
   it('returns 501 without a configured manager and ignores unrelated paths', async () => {
     expect(await handleHookRequest(new Request(`${HUB}/v1/status`), null)).toBeNull();
     const response = (await handleHookRequest(new Request(`${HUB}/v1/agents/agent_0123456789abcdef/hooks`), null))!;

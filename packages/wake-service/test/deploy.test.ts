@@ -14,6 +14,7 @@ function artifact() {
   mkdirSync(join(root, 'node_modules/dependency'), { recursive: true });
   writeFileSync(join(root, 'package.json'), JSON.stringify({ name: '@openagentforum/wake-service', private: true, dependencies: { dependency: '1.0.0' } }));
   writeFileSync(join(root, 'dist/main.js'), 'throw new Error("must not execute during content checks");');
+  writeFileSync(join(root, 'dist/pull-main.js'), 'throw new Error("must not execute during content checks");');
   writeFileSync(join(root, 'node_modules/dependency/package.json'), JSON.stringify({ name: 'dependency', main: 'index.js' }));
   writeFileSync(join(root, 'node_modules/dependency/index.js'), 'module.exports = {};');
   return root;
@@ -21,6 +22,15 @@ function artifact() {
 const readTemplate = (name: string) => readFileSync(new URL(`../../../deploy/wake/${name}`, import.meta.url), 'utf8');
 
 describe('opt-in deployment artifacts', () => {
+  it('provides a separate listener-free unit with no proxy, port or startup installation', () => {
+    const unit = readTemplate('oaf-wake-pull.service');
+    for (const setting of ['Conflicts=oaf-wake.service', 'SocketBindDeny=any', 'User=oaf-wake', 'ProtectSystem=strict',
+      'StateDirectory=oaf-wake', 'StateDirectoryMode=0700', 'LoadCredential=control-token:/etc/oaf-wake/control-token']) expect(unit.split('\n')).toContain(setting);
+    expect(unit).toMatch(/^ExecStart=.*\/dist\/pull-main.js$/m);
+    expect(unit).not.toMatch(/^Environment=OAF_WAKE_PORT=|^ExecStart=.*(?:npx|pnpm|\/root\/|curl)/m);
+    expect(unit).toContain('OAF_WAKE_CONTROL_ENDPOINT=https://openagentforum.com/internal/wake-control');
+  });
+
   it('builds the real two-package runtime without source, workspace links or development dependencies', () => {
     const root = join(temp(), 'release');
     buildRelease(root);
@@ -30,6 +40,7 @@ describe('opt-in deployment artifacts', () => {
     expect(wake.dependencies).toEqual({ '@openagentforum/protocol': protocol.version });
     expect(wake).not.toHaveProperty('devDependencies');
     expect(protocol).not.toHaveProperty('devDependencies');
+    expect(readFileSync(join(root, 'PULL.md'), 'utf8')).toContain('never starts a listening socket');
   });
 
   it('never overwrites an existing output directory', () => {
@@ -73,7 +84,7 @@ describe('opt-in deployment artifacts', () => {
   it('ships only runtime output and documentation, not development source', () => {
     const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
     expect(pkg.private).toBe(true);
-    expect(pkg.files).toEqual(['dist', 'README.md']);
+    expect(pkg.files).toEqual(['dist', 'README.md', 'PULL.md']);
   });
 
   it('keeps a static non-root identity, private persistent state and file-backed credentials', () => {

@@ -31,6 +31,24 @@ async function unit(patch: Partial<HookControlOptions> = {}) {
 }
 
 describe('privileged control boundary', () => {
+  it('runs bounded origin fan-out only for an authenticated admitted valid poll, before scanning', async () => {
+    const preparePoll = vi.fn(async (inTime: () => boolean) => { expect(inTime()).toBe(true); });
+    const u = await unit({ preparePoll });
+    await u.handler(request(token()));
+    await u.send({ op: 'poll', after: null, command: 'not allowed' });
+    await u.send({ op: 'authorize', ref });
+    await u.send({ op: 'complete', ref, result: uncertain });
+    expect(preparePoll).not.toHaveBeenCalled();
+    u.admission.admit.mockResolvedValueOnce(false);
+    expect((await u.send({ op: 'poll', after: null })).status).toBe(429);
+    expect(preparePoll).not.toHaveBeenCalled();
+    expect((await u.send({ op: 'poll', after: null })).status).toBe(200);
+    expect(preparePoll).toHaveBeenCalledTimes(1);
+    expect(preparePoll.mock.invocationCallOrder[0]).toBeLessThan(u.store.scanDue.mock.invocationCallOrder[0]);
+    preparePoll.mockRejectedValueOnce(new Error('private SQL details'));
+    expect(await (await u.send({ op: 'poll', after: null })).json()).toEqual({ error: 'control_unavailable' });
+  });
+
   it.each(['', 'weak', 'x'.repeat(64)])('rejects invalid credential configuration before serving', async bad => {
     await expect(unit({ token: bad })).rejects.toMatchObject({ code: 'invalid_control_config' });
   });

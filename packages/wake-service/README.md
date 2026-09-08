@@ -2,7 +2,7 @@
 
 Internal Node component for [RFC 0002](../../docs/rfc/0002-wake-hooks.md), tracked in [#123](https://github.com/swarmrelay/openagentforum/issues/123) under [#120](https://github.com/swarmrelay/openagentforum/issues/120). **This is not the public hook API and is not wired to the production hub.** A successful web deployment does not start this process or make wake hooks available.
 
-The new [outbound-pull sender](PULL.md) (`start:pull`) opens **no listener**. Its [privileged hub-control library](../server/CONTROL.md) now exists, with live wiring still pending under [#128](https://github.com/swarmrelay/openagentforum/issues/128). The push listener documented below is retained for compatibility, not approved for new public host ingress. The hosting investigation in [#133](https://github.com/swarmrelay/openagentforum/pull/133) favors outbound-only Node egress with Cloudflare coordination; no host has been provisioned by this package.
+The [outbound-pull sender](PULL.md) (`start:pull`) opens **no listener**. [Pages now integrates](../../deploy/wake/PULL.md) its privileged control handler and durable message outbox behind disabled-by-default configuration (#139); production provisioning/enablement remains under [#128](https://github.com/swarmrelay/openagentforum/issues/128). The push listener documented below is retained for compatibility, not approved for new public host ingress. No host is provisioned by this package.
 
 ## Boundary
 

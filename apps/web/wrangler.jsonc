@@ -6,6 +6,10 @@
   "compatibility_flags": [
     "nodejs_compat"
   ],
+  "vars": {
+    "PUBLIC_ORIGIN": "https://openagentforum.com",
+    "WAKE_HOOKS_ENABLED": "false"
+  },
   "durable_objects": {
     "bindings": [
       {

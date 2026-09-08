@@ -24,7 +24,7 @@ export function checkRelease(directory) {
   }
   const pkg = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8'));
   if (pkg.name !== '@openagentforum/wake-service' || pkg.private !== true) throw new Error('wrong package');
-  const allowed = new Set(['dist', 'node_modules', 'package.json', 'README.md']);
+  const allowed = new Set(['dist', 'node_modules', 'package.json', 'README.md', 'PULL.md']);
   if (readdirSync(root).some(name => !allowed.has(name))) throw new Error('unexpected top-level content');
   walk(root);
   const require = createRequire(resolve(root, 'package.json'));
@@ -32,6 +32,7 @@ export function checkRelease(directory) {
     if (!inside(realpathSync(require.resolve(dependency)))) throw new Error('external runtime dependency');
   }
   if (!lstatSync(resolve(root, 'dist/main.js')).isFile()) throw new Error('missing entrypoint');
+  if (!lstatSync(resolve(root, 'dist/pull-main.js')).isFile()) throw new Error('missing pull entrypoint');
   return { root, require };
 }
 
@@ -44,6 +45,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     db.close();
     // Loading these library modules verifies dependency resolution without I/O.
     await import(pathToFileURL(resolve(root, 'dist/service.js')).href);
+    await import(pathToFileURL(resolve(root, 'dist/pull-runner.js')).href);
     process.stdout.write('wake release: contents, relocation and runtime imports passed; no listener started\n');
   } catch {
     process.stderr.write('wake release: validation failed; inspect the local artifact and Node version\n');

@@ -9,6 +9,25 @@ async function setup(backend: 'sqlite' | 'd1') { const f = await fixture(backend
 const delivered = { ok: true, code: 'delivered', status: 204, retryable: false };
 
 describe.each(['sqlite', 'd1'] as const)('durable pending work (%s)', backend => {
+  it('fences delayed origin events against later verification/renewal and expires old events', async () => {
+    const f = await setup(backend);
+    const original = await f.activate();
+    const storedAt = f.clock.now;
+    const record = await f.message(1);
+    expect(await f.manager.enqueue(f.owner.agentId, record, storedAt - 1)).toMatchObject({ queued: 0 });
+    expect(await f.manager.enqueue(f.owner.agentId, record, storedAt + 1)).toMatchObject({ queued: 0 });
+    expect(await f.manager.enqueue(f.owner.agentId, record, storedAt)).toMatchObject({ queued: 1 });
+    f.clock.now++;
+    await f.manager.mutate(await f.proof('renew', original.hookId));
+    const verify = (await f.manager.claim(f.owner.agentId))!;
+    await f.manager.complete(f.owner.agentId, verify.jobId, { ok: true, code: 'verified', status: 200, retryable: false });
+    expect(await f.manager.enqueue(f.owner.agentId, record, storedAt)).toMatchObject({ queued: 0 });
+    f.clock.now += STATE_LIMITS.queuedMs + 1;
+    expect(await f.manager.enqueue(f.owner.agentId, record, storedAt + 1)).toMatchObject({ queued: 0 });
+    expect(await f.manager.claim(f.owner.agentId)).toBeNull();
+    await expect(f.manager.enqueue(f.owner.agentId, record, NaN)).rejects.toMatchObject({ code: 'invalid_record' });
+  });
+
   it('coalesces to the newest stored record with OR mentions, survives restart and suppresses old input', async () => {
     const f = await setup(backend);
     await f.activate();

@@ -1,5 +1,6 @@
 import { tallyPoll, pollProof, checkVoteIngest, checkPollIngest, isPollCandidate, type PollTally } from '@openagentforum/protocol';
 import { createMcpManifest } from '../_lib/mcp-manifest.js';
+import { handlePagesHookRequest, type HubEnv } from '../_lib/wake.js';
 
 /**
  * Cloudflare Pages Functions Native API Handler for /v1/*
@@ -223,14 +224,6 @@ async function verifyTaskActionHub(action: 'create' | 'claim' | 'submit', taskId
   return ok ? { valid: true } : { valid: false, error: `invalid ${action} signature` };
 }
 
-interface HubEnv {
-  DB?: D1Database;
-  /** SwarmChannelDO from the openagentforum-api Worker: WebSocket fan-out only */
-  SWARM_CHANNEL?: DurableObjectNamespace;
-  /** origin this hub is known by, for poll.ledger.hub checks (defaults to the request origin) */
-  PUBLIC_ORIGIN?: string;
-}
-
 // ---- polls (RFC 0001): record access + pure tally; nothing stored ----
 const hubRowToEnvelope = (r: any) => ({
   id: r.id, channel: r.channel, sender: r.sender, type: r.type, sequence: r.sequence,
@@ -290,12 +283,14 @@ export const onRequest: PagesFunction<HubEnv> = async (context) => {
       headers: {
         'Access-Control-Allow-Origin': '*',
         'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Agent-ID, X-Agent-Signature',
+        'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Agent-ID, X-Agent-Signature, X-Agent-Timestamp',
       },
     });
   }
 
   try {
+    const hookResponse = await handlePagesHookRequest(request, env);
+    if (hookResponse) return hookResponse;
     // GET /v1 or /v1/status
     if (path === '/v1' || path === '/v1/status') {
       let agentCount = memoryFallback.agents.size;

@@ -1,0 +1,59 @@
+# OUTBOUND ONLY. Read PULL.md. Do not run alongside the old push service.
+[Unit]
+Description=OpenAgentForum outbound-only wake sender
+After=network-online.target
+Wants=network-online.target
+Conflicts=oaf-wake.service
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=oaf-wake
+Group=oaf-wake
+WorkingDirectory=/usr/local/lib/oaf-wake/current
+ExecStart=/usr/local/lib/oaf-wake/runtime/bin/node --max-old-space-size=128 /usr/local/lib/oaf-wake/current/dist/pull-main.js
+Environment=NODE_ENV=production
+Environment=OAF_WAKE_HUB=https://openagentforum.com
+Environment=OAF_WAKE_CONTROL_ENDPOINT=https://openagentforum.com/internal/wake-control
+Environment=OAF_WAKE_STATE_DIR=/var/lib/oaf-wake
+Environment=OAF_WAKE_TOKEN_FILE=%d/control-token
+LoadCredential=control-token:/etc/oaf-wake/control-token
+UnsetEnvironment=NODE_OPTIONS NODE_PATH LD_PRELOAD LD_LIBRARY_PATH HTTP_PROXY HTTPS_PROXY ALL_PROXY OAF_WAKE_PORT
+StateDirectory=oaf-wake
+StateDirectoryMode=0700
+UMask=0077
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=15
+KillMode=control-group
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+# Defense in depth where the host supports systemd's bind filtering.
+SocketBindDeny=any
+SystemCallArchitectures=native
+MemoryHigh=192M
+MemoryMax=256M
+CPUQuota=50%
+TasksMax=64
+LimitNOFILE=1024
+LimitCORE=0
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=oaf-wake-pull
+
+[Install]
+WantedBy=multi-user.target
