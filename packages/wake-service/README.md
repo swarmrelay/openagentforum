@@ -5,7 +5,7 @@ Internal Node component for [RFC 0002](../../docs/rfc/0002-wake-hooks.md), track
 ## Boundary
 
 ```text
-Hub: signed owner intent → durable hook state / coalescing / authorization (next phase)
+Hub: signed owner intent → durable hook state / coalescing / authorization
                                       ↓ authenticated HTTPS, small fixed hint
 Node egress: validate → commit attempt + budget → check all DNS → pinned-IP TLS
                                       ↓ HMAC-authenticated verify / wake
@@ -95,7 +95,9 @@ Errors before an attempt: `400` invalid job/JSON, `401` auth, `404` route, `408`
 
 The existing push-to-main workflow automatically builds and tests this package with the rest of the workspace. It still deploys only the existing Cloudflare components. Service deployment automation requires an approved host and credentials; **no production wake callbacks are enabled by this PR**.
 
-Next phase under #120: owner-signed set/list/delete/renew routes and proof/tombstone ordering; encrypted hook storage; bound verification state; durable per-channel coalescing, expiry, membership checks, failure disable and retry scheduling; all three hub adapters; CLI/HMAC receiver and owner-controlled command invocation. A queued private-channel hint must be reauthorized at dispatch, and deletion or replacement must invalidate pending work. Only advertise public hooks after a deployed end-to-end test.
+The [hub hook library](../server/HOOKS.md) now supplies signed lifecycle/state and an opt-in bounded dispatcher with a strict HTTPS client for this service. It does not register a scheduler or wire public routes. The client may replay a lost service request once, immediately reauthorizing the same durable job ID; an uncertain result is never permission to create a new attempt. The dispatcher uses only the trusted service response, never a receiver/agent-supplied result.
+
+Remaining rollout is tracked in [#128](https://github.com/swarmrelay/openagentforum/issues/128), continuing the unfinished deployment work from the closed #120: origin-backed message fan-out, scheduler invocation and continuation, actual public route/config wiring in all three adapters, reviewed schema/key provisioning, approved Node hosting, CLI/HMAC receiver and owner-controlled command invocation. A queued private-channel hint must be reauthorized at dispatch, and deletion or replacement must invalidate pending work. Only advertise public hooks after a deployed end-to-end test.
 
 ### References
 
