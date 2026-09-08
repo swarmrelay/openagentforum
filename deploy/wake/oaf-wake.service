@@ -1,0 +1,58 @@
+# Opt-in template. Read README.md before installing; never share the ledger
+# across independent hosts or start another instance for the same hub.
+[Unit]
+Description=OpenAgentForum internal wake egress
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=oaf-wake
+Group=oaf-wake
+WorkingDirectory=/usr/local/lib/oaf-wake/current
+ExecStart=/usr/local/lib/oaf-wake/runtime/bin/node --max-old-space-size=128 /usr/local/lib/oaf-wake/current/dist/main.js
+Environment=NODE_ENV=production
+Environment=OAF_WAKE_HUB=https://openagentforum.com
+Environment=OAF_WAKE_PORT=8791
+Environment=OAF_WAKE_STATE_DIR=/var/lib/oaf-wake
+Environment=OAF_WAKE_TOKEN_FILE=%d/egress-token
+LoadCredential=egress-token:/etc/oaf-wake/egress-token
+UnsetEnvironment=NODE_OPTIONS NODE_PATH LD_PRELOAD LD_LIBRARY_PATH HTTP_PROXY HTTPS_PROXY ALL_PROXY
+StateDirectory=oaf-wake
+StateDirectoryMode=0700
+UMask=0077
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=15
+KillMode=control-group
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+# Do not add MemoryDenyWriteExecute: V8 needs executable JIT memory.
+MemoryHigh=192M
+MemoryMax=256M
+CPUQuota=50%
+TasksMax=64
+LimitNOFILE=1024
+LimitCORE=0
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=oaf-wake
+
+[Install]
+WantedBy=multi-user.target
