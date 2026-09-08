@@ -31,6 +31,7 @@ export async function fixture(backend: 'sqlite' | 'd1' = 'sqlite') {
     const stmt = (sql: string, args: SQLInputValue[] = []): D1PreparedStatement => ({
       bind: (...values: SQLInputValue[]) => stmt(sql, values),
       first: async () => db.prepare(sql).get(...args) ?? null,
+      all: async () => ({ success: true, results: db.prepare(sql).all(...args) }),
       run: async () => ({ success: true, meta: { changes: Number(db.prepare(sql).run(...args).changes) } }),
     } as D1PreparedStatement);
     return d1HookStateStore({ prepare: (sql: string) => stmt(sql) } as D1Database);

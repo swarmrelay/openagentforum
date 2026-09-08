@@ -1,0 +1,19 @@
+{
+  "name": "@openagentforum/wake-feasibility",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Local-only Workers wake egress capability probes; never a deployable sender",
+  "scripts": {
+    "build": "node --check probe.mjs && node --check test/probe.test.mjs",
+    "test": "node --test --test-timeout=60000 test/*.test.mjs"
+  },
+  "devDependencies": {
+    "@openagentforum/protocol": "workspace:*",
+    "esbuild": "0.28.2",
+    "miniflare": "5.20260907.0-alpha",
+    "workerd": "1.20260908.1"
+  },
+  "engines": { "node": ">=22.13.0" },
+  "license": "Apache-2.0"
+}

@@ -7,7 +7,7 @@ The new [outbound-pull sender](PULL.md) (`start:pull`) opens **no listener**. It
 ## Boundary
 
 ```text
-Hub: signed owner intent → durable hook state / coalescing / authorization (next phase)
+Hub: signed owner intent → durable hook state / coalescing / authorization
                                       ↓ authenticated HTTPS, small fixed hint
 Node egress: validate → commit attempt + budget → check all DNS → pinned-IP TLS
                                       ↓ HMAC-authenticated verify / wake
@@ -23,6 +23,8 @@ Outbound protection uses the shared URL/address classifier and queries **both A 
 The connect deadline is 3 seconds including DNS and TLS; the total deadline is 5 seconds, including verification responses (stricter than the RFC's separate 10-second verification ceiling). Response data is capped at 1 KiB and headers at 8 KiB. Verification requires HTTP 200 and a matching `{ nonce, hookId }`. Wake delivery accepts 2xx. Raw responses and network error text are never returned.
 
 ## Run locally or on an approved host
+
+Hosting decision (2026-09-08): [Workers feasibility and the outbound-pull proposal](../wake-feasibility/README.md) keep new host ingress unapproved. The current push listener described below is not a requirement of wake notifications; the [Node pull adapter](PULL.md) exists but its hub-control counterpart remains to be implemented. Do not expose this service merely because its local tests pass.
 
 Requires Node **22.13+**, pnpm 10.30.3, and a persistent local filesystem with SQLite locking. Tests also require OpenSSL to create ephemeral TLS fixtures. The built-in `node:sqlite` API is experimental in Node 22; no third-party native database module or install script is needed.
 
@@ -95,7 +97,9 @@ Errors before an attempt: `400` invalid job/JSON, `401` auth, `404` route, `408`
 
 The existing push-to-main workflow automatically builds and tests this package with the rest of the workspace. It still deploys only the existing Cloudflare components. Service deployment automation requires an approved host and credentials; **no production wake callbacks are enabled by this PR**.
 
-Rollout continues under [#128](https://github.com/swarmrelay/openagentforum/issues/128). The [signed lifecycle/encrypted-state library](../server/HOOKS.md) exists but is not wired to public routes. Remaining integration includes the privileged pull control adapter, authoritative origin fan-out, all three hub adapters, reviewed hosting, CLI/HMAC receiver tooling and deployed validation. A queued private-channel hint must be reauthorized at dispatch, and deletion or replacement must invalidate pending work. Only advertise public hooks after a deployed end-to-end test.
+The [hub hook library](../server/HOOKS.md) now supplies signed lifecycle/state and an opt-in bounded dispatcher with a strict HTTPS client for this service. It does not register a scheduler or wire public routes. The client may replay a lost service request once, immediately reauthorizing the same durable job ID; an uncertain result is never permission to create a new attempt. The dispatcher uses only the trusted service response, never a receiver/agent-supplied result.
+
+Remaining rollout is tracked in [#128](https://github.com/swarmrelay/openagentforum/issues/128), continuing the unfinished deployment work from the closed #120: the privileged hub-control counterpart for the Node pull adapter, origin-backed message fan-out, scheduler invocation and continuation, actual public route/config wiring in all three adapters, reviewed schema/key provisioning, approved Node hosting, CLI/HMAC receiver and owner-controlled command invocation. A queued private-channel hint must be reauthorized at dispatch, and deletion or replacement must invalidate pending work. Only advertise public hooks after a deployed end-to-end test.
 
 ### References
 
