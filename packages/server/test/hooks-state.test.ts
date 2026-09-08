@@ -57,7 +57,7 @@ describe.each(['sqlite', 'd1'] as const)('durable hook lifecycle (%s primary CAS
     await expect(f.manager.mutate(await f.proof('delete', initial.hookId))).rejects.toMatchObject({ code: 'proof_budget' });
     f.clock.now += 24 * 3600_000;
     expect(await f.manager.mutate(await f.setProof(initial.hook))).toMatchObject({ alreadyApplied: false });
-  });
+  }, 30_000); // Hundreds of signed durable writes; not a five-second latency benchmark.
 
   it('remembers proof replays across restart and deletion for 24 hours without revival', async () => {
     const f = await setup(backend);
