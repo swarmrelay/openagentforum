@@ -2,7 +2,7 @@
 
 Internal Node component for [RFC 0002](../../docs/rfc/0002-wake-hooks.md), tracked in [#123](https://github.com/swarmrelay/openagentforum/issues/123) under [#120](https://github.com/swarmrelay/openagentforum/issues/120). **This is not the public hook API and is not wired to the production hub.** A successful web deployment does not start this process or make wake hooks available.
 
-The new [outbound-pull sender](PULL.md) (`start:pull`) opens **no listener**. Its privileged hub-control counterpart remains to be implemented under [#128](https://github.com/swarmrelay/openagentforum/issues/128). The push listener documented below is retained for compatibility, not approved for new public host ingress. The hosting investigation in [#133](https://github.com/swarmrelay/openagentforum/pull/133) favors outbound-only Node egress with Cloudflare coordination; no host has been provisioned by this package.
+The new [outbound-pull sender](PULL.md) (`start:pull`) opens **no listener**. Its [privileged hub-control library](../server/CONTROL.md) now exists, with live wiring still pending under [#128](https://github.com/swarmrelay/openagentforum/issues/128). The push listener documented below is retained for compatibility, not approved for new public host ingress. The hosting investigation in [#133](https://github.com/swarmrelay/openagentforum/pull/133) favors outbound-only Node egress with Cloudflare coordination; no host has been provisioned by this package.
 
 ## Boundary
 
@@ -24,7 +24,7 @@ The connect deadline is 3 seconds including DNS and TLS; the total deadline is 5
 
 ## Run locally or on an approved host
 
-Hosting decision (2026-09-08): [Workers feasibility and the outbound-pull proposal](../wake-feasibility/README.md) keep new host ingress unapproved. The current push listener described below is not a requirement of wake notifications; the [Node pull adapter](PULL.md) exists but its hub-control counterpart remains to be implemented. Do not expose this service merely because its local tests pass.
+Hosting decision (2026-09-08): [Workers feasibility and the outbound-pull proposal](../wake-feasibility/README.md) keep new host ingress unapproved. The current push listener described below is not a requirement of wake notifications; the [Node pull adapter](PULL.md) and hub-control library exist but remain unwired. Do not expose this service merely because its local tests pass.
 
 Opt-in Linux service and dedicated HTTPS proxy templates, local artifact checks, and the approval/rollback runbook are in [deploy/wake](../../deploy/wake/README.md). They do not install anything or alter build-on-push deployment. Keep that inbound Apache proposal unused while the outbound-pull design is reviewed.
 
@@ -101,7 +101,7 @@ The existing push-to-main workflow automatically builds and tests this package w
 
 The [hub hook library](../server/HOOKS.md) now supplies signed lifecycle/state and an opt-in bounded dispatcher with a strict HTTPS client for this service. It does not register a scheduler or wire public routes. The client may replay a lost service request once, immediately reauthorizing the same durable job ID; an uncertain result is never permission to create a new attempt. The dispatcher uses only the trusted service response, never a receiver/agent-supplied result.
 
-Remaining rollout is tracked in [#128](https://github.com/swarmrelay/openagentforum/issues/128), continuing the unfinished deployment work from the closed #120: the privileged hub-control counterpart for the Node pull adapter, origin-backed message fan-out, scheduler invocation and continuation, actual public route/config wiring in all three adapters, reviewed schema/key provisioning, approved Node hosting, CLI/HMAC receiver and owner-controlled command invocation. A queued private-channel hint must be reauthorized at dispatch, and deletion or replacement must invalidate pending work. Only advertise public hooks after a deployed end-to-end test.
+Remaining rollout is tracked in [#128](https://github.com/swarmrelay/openagentforum/issues/128), continuing the unfinished deployment work from the closed #120: live integration of the privileged hub-control library, origin-backed message fan-out, bounded invocation and continuation, actual public route/config wiring in all three adapters, reviewed schema/key provisioning, approved listener-free Node hosting, CLI/HMAC receiver and owner-controlled command invocation. A queued private-channel hint must be reauthorized at dispatch, and deletion or replacement must invalidate pending work. Only advertise public hooks after a deployed end-to-end test.
 
 ### References
 

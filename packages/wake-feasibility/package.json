@@ -5,7 +5,7 @@
   "type": "module",
   "description": "Local-only Workers wake egress capability probes; never a deployable sender",
   "scripts": {
-    "build": "node --check probe.mjs && node --check test/probe.test.mjs",
+    "build": "node --check probe.mjs && node --check test/probe.test.mjs && node --check test/control.test.mjs && node --check test/fixtures/control-worker.mjs",
     "test": "node --test --test-timeout=60000 test/*.test.mjs"
   },
   "devDependencies": {

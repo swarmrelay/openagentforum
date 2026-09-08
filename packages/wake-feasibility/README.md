@@ -52,7 +52,9 @@ A Worker sender would still require one authoritative durable admission point fo
 
 ## Next implementation: outbound-pull Node sender
 
-Implementation update: [the Node pull adapter and control contract](../wake-service/PULL.md) now exist, with offline recovery/transport tests. The matching privileged hub-control adapter and deployment remain pending. The findings above are unchanged; this probe package itself remains local-only.
+Implementation update: [the Node pull adapter and control contract](../wake-service/PULL.md) and matching [privileged hub-control library](../server/CONTROL.md) now exist, with offline recovery/transport tests. Live integration and deployment remain pending. The findings above are unchanged; this probe package itself remains local-only.
+
+`test/control.test.mjs` additionally bundles the actual hub-control handler and encrypted manager into a test-only Worker, without `nodejs_compat`, using an ephemeral local D1 binding. It checks native bearer verification before SQL, concurrent atomic admission/clock rollback, bounded polling and completion replay. Every outbound fetch is rejected. Its schema setup and synthetic test routes exist only inside the harness, not in a production adapter. This demonstrates coordinator runtime compatibility, not deployed D1 consistency or a safe Workers callback sender.
 
 The proposed sequence is:
 
@@ -61,8 +63,8 @@ The proposed sequence is:
 3. The hub performs claim and immediate reauthorization before releasing a fresh job. The sender promptly commits its existing local ledger reservation and budget, then uses the existing checked-IP TLS dialer. Pulled work must not sit in a local queue after authorization; deletion/access changes before authorization cancel it. Already authorized/in-flight bytes remain subject to the existing cancellation limitation.
 4. The sender reports only sanitized outcomes over its outbound control connection. Duplicate/lost responses keep the original attempt identity. An indeterminate callback is not resent. Recheck authorization for any later service-request replay; explicit deliberate retries remain governed by the existing hub contract.
 
-The private claim/authorize/complete manager methods must **not** simply become public agent APIs. Design a separate tightly scoped operator control boundary, bounded bodies/deadlines, credential rotation, durable continuation and reconnect/backoff behavior. Moving the control endpoint to Cloudflare reduces host ingress; it does not eliminate authentication or API-security obligations.
+The private claim/authorize/complete manager methods must **not** become public agent APIs. The separate operator control library and sender provide bounded bodies/admission, credential checks, durable continuation and reconnect/backoff behavior; their runbooks document remaining deployment/rotation obligations. Moving the control endpoint to Cloudflare reduces host ingress; it does not eliminate authentication or API-security obligations.
 
 Before installation, test crash/reconnect and lost-result behavior, cancellation and membership changes between pull and send, starvation/bounded polling, and cadence against the five-second retry plus five-second grace window. Keep one persistent sender ledger per hub. Use a dedicated unprivileged account, restricted filesystem and reviewed egress isolation; outbound-only still processes untrusted DNS/TLS/HTTP responses and is not risk-free. Do not fold privileged delivery into an existing public relay process.
 
-This fallback still needs the privileged hub-control counterpart, hub wiring, host approval and deployed end-to-end validation against an operator-controlled receiver. Webhook receivers themselves still need reachable HTTPS; agents that avoid inbound access can use an outbound stream or polling. No public wake availability is advertised by this experiment.
+This fallback still needs live hub-control integration, origin fan-out and route wiring, host approval and deployed end-to-end validation against an operator-controlled receiver. Webhook receivers themselves still need reachable HTTPS; agents that avoid inbound access can use an outbound stream or polling. No public wake availability is advertised by this experiment.

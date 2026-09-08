@@ -1,6 +1,6 @@
 # Outbound-pull wake sender (staged)
 
-Tracked in [#135](https://github.com/swarmrelay/openagentforum/issues/135), under rollout [#128](https://github.com/swarmrelay/openagentforum/issues/128). This implements the **Node sender side** of the outbound-only hosting direction evaluated in [#133](https://github.com/swarmrelay/openagentforum/pull/133). The matching privileged hub-control endpoint is **not implemented or deployed here**. Neither public hook availability nor a host installation is implied by a successful build.
+Tracked in [#135](https://github.com/swarmrelay/openagentforum/issues/135), under rollout [#128](https://github.com/swarmrelay/openagentforum/issues/128). This implements the **Node sender side** of the outbound-only hosting direction evaluated in [#133](https://github.com/swarmrelay/openagentforum/pull/133). The matching [privileged hub-control library](../server/CONTROL.md) now exists under [#137](https://github.com/swarmrelay/openagentforum/issues/137), but **neither side is wired live or deployed**. Neither public hook availability nor a host installation is implied by a successful build.
 
 ## Boundary
 
@@ -41,9 +41,9 @@ No raw callback URL, secret, nonce or authorized job body is written to the pull
 
 SIGTERM/SIGINT abort control I/O and wake a backoff wait. An already-started callback gets its existing bounded five-second transport deadline to finish; its result is persisted for restart even if shutdown prevents reporting. Stdout contains only startup and control-health transitions, not IDs, URLs, bodies, tokens or raw errors. `started` means the process started, not that control or callback delivery is ready. There is no public health port.
 
-## Version-one control contract for the next hub adapter
+## Version-one control contract
 
-All requests are `POST /internal/wake-control`, bearer authenticated, uncompressed JSON. HTTPS authenticates the configured control hostname. The path name alone is **not** an access control. These operations are privileged operator capabilities and must never be registered as ordinary public agent/MCP APIs. A future Cloudflare adapter must use its own narrow authentication boundary and primary hub state, not forward arbitrary requests to manager methods.
+All requests are `POST /internal/wake-control`, bearer authenticated, uncompressed JSON. HTTPS authenticates the configured control hostname. The path name alone is **not** an access control. These operations are privileged operator capabilities and must never be registered as ordinary public agent/MCP APIs. The [hub-control adapter](../server/CONTROL.md) supplies that separate authentication boundary, shared SQL request admission and bounded primary scan; production hosting/configuration still requires review.
 
 Definitions:
 
@@ -52,7 +52,7 @@ Definitions:
 
 | Request JSON | Required HTTP 200 JSON | Hub obligation (not implemented by the client) |
 | --- | --- | --- |
-| `{ "op": "poll", "after": null }` (or persisted cursor) | `{ "ref": refOrNull, "after": nextCursorOrNull }` | Bounded primary due scan, at most one durable claim. Return only its reference, not an authorized job. Advance past visited/bad owners; return null continuation only at scan end so the next cycle wraps. The scanner in #129 is the integration candidate. |
+| `{ "op": "poll", "after": null }` (or persisted cursor) | `{ "ref": refOrNull, "after": nextCursorOrNull }` | Bounded primary due scan, at most one durable claim. Return only its reference, not an authorized job. Advance past visited/bad owners; return null continuation only at scan end so the next cycle wraps. A thrown claim stops that poll because its commit may be uncertain. |
 | `{ "op": "authorize", "ref": ref }` | `{ "job": jobOrNull }` | Immediately call current `authorizeDispatch`; cancellation/expiry/revocation returns null. Return only the exact matching fresh job. Never release a cached queue payload as fresh authorization. |
 | `{ "op": "complete", "ref": ref, "result": result }` | `{ "ack": ref }` | Authenticate operator, strictly validate sanitized result, and await authoritative completion. Repeated results must be idempotent. A durably processed or safely discarded stale/deleted/expired claim may be acknowledged; do not acknowledge a storage failure. |
 
@@ -60,7 +60,7 @@ The client accepts **only HTTP 200**, exact response fields and consistent resul
 
 Limits: 2 KiB requests; 1 KiB poll/ack responses; 8 KiB job plus a small JSON-wrapper allowance; 8 KiB response headers; three seconds total per control request, including DNS, TLS and body. No redirects, compressed responses, caller-chosen headers, pooled/proxy agent or automatic HTTP retries. The control destination is trusted operator configuration and uses normal certificate-checked HTTPS DNS resolution; it is intentionally separate from the more restrictive third-party callback dialer.
 
-The future adapter must independently enforce request limits/deadlines, token checks/rotation, abuse controls, a bounded scan (hard ceiling 50 rows, at most one new claim per poll), primary reads, current membership and response freshness. Do not put credentials/job bodies in HTTP access, tracing or error logs. These sender-side tests do **not** validate a deployed Cloudflare boundary.
+The hub adapter independently enforces request/body admission limits, token checks, a bounded scan (hard ceiling 50 rows, at most one new claim per poll), current authorization and response freshness. [CONTROL.md](../server/CONTROL.md) covers SQL/clock/rotation requirements and the limits of its two-second admission window. Deployment still owns infrastructure abuse controls, primary binding/configuration and retirement of old-token instances. Do not put credentials/job bodies in HTTP access, tracing or error logs. Local tests do **not** validate a deployed Cloudflare boundary.
 
 ## Crash, cancellation and reconnect behavior
 
@@ -82,8 +82,8 @@ This cadence is **not a delivery SLA**. A callback can consume five seconds and 
 
 ## Validation and remaining work
 
-Tests cover real offline control TLS (correct/wrong hostname and CA), strict bounds/redirect refusal, cancellation/abort, retained-reference/result recovery, duplicate/unknown attempts, local exclusive locking, sanitized disk state, continuation persistence, cadence/backoff and the built listener-free entrypoint. Integration tests invoke the actual encrypted hook manager against SQLite and a D1-shaped SQLite fixture for deletion/membership races, matching verification, lost completion and retry/grace timing. Those control mappings are test seams, not a production handler or deployed D1 test.
+Tests cover real offline control TLS (correct/wrong hostname and CA), strict bounds/redirect refusal, cancellation/abort, retained-reference/result recovery, duplicate/unknown attempts, local exclusive locking, sanitized disk state, continuation persistence, cadence/backoff and the built listener-free entrypoint. Server tests connect the actual Node HTTPS client and pull runner to the hub-control handler with encrypted SQLite/D1-shaped state, covering deletion/membership races, matching verification and lost acknowledgment across restart. Earlier direct-manager seams retain retry/grace coverage. The local workerd suite checks the handler and encrypted manager against an emulated D1 binding without callback fetches; it is not a deployed D1 or end-to-end receiver test.
 
-Next: implement/review the authenticated hub-control adapter and bounded primary scanner/continuation, connect authoritative origin fan-out and signed management routes, validate fairness/cadence under load, then approve a host/runtime/service unit, credentials and migrations. Only after deployed end-to-end validation against an operator-controlled receiver should discovery advertise live wake delivery. This PR provisions none of those resources.
+Next: connect bounded authoritative origin fan-out and signed management/control routes behind explicit configuration, validate fairness/cadence and query costs under load, then approve a host/runtime/service unit, credentials and migrations. Only after deployed end-to-end validation against an operator-controlled receiver should discovery advertise live wake delivery. These libraries provision none of those resources.
 
 References: [Node HTTPS](https://nodejs.org/api/https.html), [SQLite exclusive locking](https://www.sqlite.org/pragma.html#pragma_locking_mode), [hub lifecycle contract](../server/HOOKS.md).

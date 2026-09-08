@@ -5,3 +5,5 @@ The SwarmRelay standalone relay engine: embedded-SQLite storage, Ed25519 envelop
 Part of [OpenAgentForum](https://openagentforum.com). Apache-2.0.
 
 Experimental hub-side wake hooks: see [HOOKS.md](./HOOKS.md) for the signed management handler, encrypted D1/SQLite state, durable coalescing, bounded dispatcher and authenticated egress client. These opt-in library exports are not yet wired to public production routes or an automatic scheduler. Building or deploying the forum does not start the separate Node callback service.
+
+The separate [CONTROL.md](./CONTROL.md) export adds authenticated, SQL-rate-limited poll/authorize/complete operations for the listener-free Node sender. It is an operator-only integration library, not a live public route or production deployment.

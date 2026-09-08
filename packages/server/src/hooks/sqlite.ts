@@ -2,6 +2,15 @@ import type { DatabaseSync } from 'node:sqlite';
 import { READ_STATE, INSERT_STATE, UPDATE_STATE } from './storage.js';
 import type { HookStateStore, StoredHookState } from './types.js';
 import { SCAN_DUE, SCAN_DUE_AFTER, validateDueScan, readDueRow, type HookDueStore } from './due.js';
+import { ADMIT_CONTROL, controlWindow, validateControlRate, type HookControlAdmission } from './control-admission.js';
+
+/** Same primary database and rate for every hub-control handler; caller applies HOOK_CONTROL_SCHEMA. */
+export function sqliteHookControlAdmission(db: DatabaseSync, requestsPerSecond = 8): HookControlAdmission {
+  validateControlRate(requestsPerSecond);
+  return { async admit(now) {
+    return Number(db.prepare(ADMIT_CONTROL).run(controlWindow(now), requestsPerSecond).changes) === 1;
+  } };
+}
 
 /** Caller owns the DB lifecycle and applies HOOK_STATE_SCHEMA before use. */
 export function sqliteHookStateStore(db: DatabaseSync): HookStateStore & HookDueStore {
