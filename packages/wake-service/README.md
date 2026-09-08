@@ -22,6 +22,8 @@ The connect deadline is 3 seconds including DNS and TLS; the total deadline is 5
 
 ## Run locally or on an approved host
 
+Hosting decision (2026-09-08): [Workers feasibility and the outbound-pull proposal](../wake-feasibility/README.md) keep new host ingress unapproved. The current push listener described below is not a requirement of wake notifications; an outbound-pull adapter remains to be implemented. Do not expose this service merely because its local tests pass.
+
 Requires Node **22.13+**, pnpm 10.30.3, and a persistent local filesystem with SQLite locking. Tests also require OpenSSL to create ephemeral TLS fixtures. The built-in `node:sqlite` API is experimental in Node 22; no third-party native database module or install script is needed.
 
 From the repository root:
