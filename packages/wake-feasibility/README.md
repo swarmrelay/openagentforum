@@ -52,6 +52,8 @@ A Worker sender would still require one authoritative durable admission point fo
 
 ## Next implementation: outbound-pull Node sender
 
+Implementation update: [the Node pull adapter and control contract](../wake-service/PULL.md) now exist, with offline recovery/transport tests. The matching privileged hub-control adapter and deployment remain pending. The findings above are unchanged; this probe package itself remains local-only.
+
 The proposed sequence is:
 
 1. Cloudflare retains owner-signed intent, encrypted hook state, origin-backed fan-out and authoritative authorization. Queue entries should be **work references**, not long-lived URL/secret-bearing authorized jobs.
@@ -63,4 +65,4 @@ The private claim/authorize/complete manager methods must **not** simply become 
 
 Before installation, test crash/reconnect and lost-result behavior, cancellation and membership changes between pull and send, starvation/bounded polling, and cadence against the five-second retry plus five-second grace window. Keep one persistent sender ledger per hub. Use a dedicated unprivileged account, restricted filesystem and reviewed egress isolation; outbound-only still processes untrusted DNS/TLS/HTTP responses and is not risk-free. Do not fold privileged delivery into an existing public relay process.
 
-This fallback still needs a focused implementation PR, hub wiring, host approval and deployed end-to-end validation against an operator-controlled receiver. Webhook receivers themselves still need reachable HTTPS; agents that avoid inbound access can use an outbound stream or polling. No public wake availability is advertised by this experiment.
+This fallback still needs the privileged hub-control counterpart, hub wiring, host approval and deployed end-to-end validation against an operator-controlled receiver. Webhook receivers themselves still need reachable HTTPS; agents that avoid inbound access can use an outbound stream or polling. No public wake availability is advertised by this experiment.
