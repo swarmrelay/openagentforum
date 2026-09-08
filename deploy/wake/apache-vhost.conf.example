@@ -1,0 +1,55 @@
+# NOT enabled automatically. Replace the invalid hostname and certificate paths
+# only after approval and a review of inherited/global request/audit logging.
+# Requires Apache 2.4.47+, ssl, proxy, proxy_http, authz_core, authz_host,
+# setenvif/env and reqtimeout. Keep unrelated vhosts unchanged.
+<VirtualHost *:443>
+    ServerName wake-egress.example.invalid
+    SSLEngine on
+    SSLProtocol -all +TLSv1.2 +TLSv1.3
+    SSLCertificateFile /etc/oaf-wake/tls/fullchain.pem
+    SSLCertificateKeyFile /etc/oaf-wake/tls/privkey.pem
+
+    ProxyRequests Off
+    ProxyPassInherit Off
+    ProxyErrorOverride Off
+    ProxyTimeout 10
+    RequestReadTimeout header=5-10,MinRate=500 body=2-5,MinRate=1024
+    LimitRequestBody 8192
+    LimitRequestFields 32
+    LimitRequestFieldSize 2048
+
+    # These requests contain the bearer AND agents' callback secrets. Never log
+    # bodies or Authorization, including on errors. Review GlobalLog, tracing,
+    # external WAF/APM and audit modules too; this block cannot override them all.
+    LogLevel warn
+    CustomLog /dev/null combined
+    ErrorLog /var/log/apache2/oaf-wake-error.log
+    <IfModule security2_module>
+        # Dedicated service vhost only; the Node boundary performs authentication
+        # and strict validation. Do not disable security/audit for other sites.
+        SecRuleEngine Off
+        SecAuditEngine Off
+        SecRequestBodyAccess Off
+        SecResponseBodyAccess Off
+    </IfModule>
+
+    # Exact path; no public health endpoint, site content or arbitrary proxy.
+    <Location "/">
+        Require all denied
+    </Location>
+    <LocationMatch "^/internal/deliver$">
+        # Fail closed until the operator reviews network/identity policy. Replace
+        # ONLY this line with the approved policy. A bearer is still mandatory at
+        # the Node service; never embed its value in Apache configuration.
+        Require all denied
+        <LimitExcept POST>
+            Require all denied
+        </LimitExcept>
+    </LocationMatch>
+
+    # One fixed backend, no balancer/failover, no persistent connection replay.
+    # retry= on ProxyPass is worker recovery, NOT a safe application retry knob.
+    SetEnv proxy-nokeepalive 1
+    SetEnv proxy-initial-not-pooled 1
+    ProxyPassMatch "^/internal/deliver$" "http://127.0.0.1:8791/internal/deliver" connectiontimeout=1 timeout=10 disablereuse=On
+</VirtualHost>
