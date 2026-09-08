@@ -276,11 +276,13 @@ export class HookManager {
   }
 
   /** Only trusted, authenticated egress outcomes belong here; never accept this from a receiver. */
-  async complete(agentId: string, jobId: string, result: HookDeliveryResult): Promise<{ applied: boolean }> {
+  async complete(agentId: string, jobId: string, result: HookDeliveryResult, expectedKind?: WakeBody['kind']): Promise<{ applied: boolean }> {
     return this.update<{ applied: boolean }>(agentId, (state, now) => {
       const hook = state.hooks.find(entry => entry.claim?.jobId === jobId);
       if (!hook || !hook.claim || hook.claim.generation !== hook.generation) return { value: { applied: false }, write: state.hooks.length > 0 };
       const { work } = hook.claim;
+      // Validate the pull reference inside the same CAS update, not in a racy preflight read.
+      if (expectedKind !== undefined && work.kind !== expectedKind) throw new HookError('invalid_claim_kind', 409);
       const success = result.ok === true && result.retryable === false &&
         (work.kind === 'verify' ? result.code === 'verified' && result.status === 200 : result.code === 'delivered' && Number.isInteger(result.status) && result.status! >= 200 && result.status! < 300);
       const retryable = result.ok === false && result.retryable === true &&

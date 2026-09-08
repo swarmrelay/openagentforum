@@ -1,4 +1,5 @@
 import { HookError, type HookDeliveryResult, type HookDispatchJob } from './types.js';
+import { parseHookDeliveryResult } from './result.js';
 
 const MAX_JOB_BYTES = 8192;
 const MAX_RESULT_BYTES = 2048;
@@ -30,34 +31,8 @@ function exact(value: Record<string, unknown>, keys: string[]) {
 /** Reject unknown fields and contradictory results instead of trusting a 200 or retryable flag. */
 function outcome(value: unknown, kind: HookDispatchJob['body']['kind']): HookEgressOutcome | null {
   if (!object(value) || !exact(value, ['duplicate', 'result']) || typeof value.duplicate !== 'boolean' || !object(value.result)) return null;
-  const r = value.result;
-  const hasStatus = Object.hasOwn(r, 'status');
-  if (!exact(r, ['ok', 'code', 'retryable', ...(hasStatus ? ['status'] : [])]) ||
-      typeof r.ok !== 'boolean' || typeof r.retryable !== 'boolean' || typeof r.code !== 'string' ||
-      (hasStatus && (typeof r.status !== 'number' || !Number.isInteger(r.status) || r.status < 100 || r.status > 599))) return null;
-  const status = typeof r.status === 'number' ? r.status : undefined;
-  if (r.ok) {
-    if (r.retryable || (kind === 'verify'
-      ? r.code !== 'verified' || status !== 200
-      : r.code !== 'delivered' || status === undefined || status < 200 || status >= 300)) return null;
-  } else {
-    switch (r.code) {
-      case 'dns_failed': case 'timeout': case 'network_error':
-        if (!r.retryable || hasStatus) return null;
-        break;
-      case 'http_error':
-        if (status === undefined || status < 300 || r.retryable !== (status >= 500)) return null;
-        break;
-      case 'response_too_large': case 'invalid_verification':
-        if (r.retryable || status === undefined || status < 200 || status >= 300 || (r.code === 'invalid_verification' && kind !== 'verify')) return null;
-        break;
-      case 'unsafe_url': case 'unsafe_address': case 'tls_error': case 'indeterminate':
-        if (r.retryable || hasStatus) return null;
-        break;
-      default: return null;
-    }
-  }
-  return { kind: 'result', duplicate: value.duplicate, result: { ok: r.ok, code: r.code, retryable: r.retryable, ...(status === undefined ? {} : { status }) } };
+  const result = parseHookDeliveryResult(value.result, kind);
+  return result ? { kind: 'result', duplicate: value.duplicate, result } : null;
 }
 
 async function readResult(response: Response, signal: AbortSignal): Promise<unknown> {
