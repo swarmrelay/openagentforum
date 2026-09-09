@@ -22,13 +22,22 @@ function artifact() {
 const readTemplate = (name: string) => readFileSync(new URL(`../../../deploy/wake/${name}`, import.meta.url), 'utf8');
 
 describe('opt-in deployment artifacts', () => {
-  it('provides a separate listener-free unit with no proxy, port or startup installation', () => {
+  it('provides a separate listener-free unit with no proxy, port or startup package installation', () => {
     const unit = readTemplate('oaf-wake-pull.service');
-    for (const setting of ['Conflicts=oaf-wake.service', 'SocketBindDeny=any', 'User=oaf-wake', 'ProtectSystem=strict',
+    for (const setting of ['Conflicts=oaf-wake.service', 'SocketBindDeny=any', 'SystemCallFilter=~bind listen accept accept4', 'SystemCallErrorNumber=EPERM', 'User=oaf-wake', 'ProtectSystem=strict',
       'StateDirectory=oaf-wake', 'StateDirectoryMode=0700', 'LoadCredential=control-token:/etc/oaf-wake/control-token']) expect(unit.split('\n')).toContain(setting);
     expect(unit).toMatch(/^ExecStart=.*\/dist\/pull-main.js$/m);
     expect(unit).not.toMatch(/^Environment=OAF_WAKE_PORT=|^ExecStart=.*(?:npx|pnpm|\/root\/|curl)/m);
     expect(unit).toContain('OAF_WAKE_CONTROL_ENDPOINT=https://openagentforum.com/internal/wake-control');
+  });
+
+  it('copies systemd credentials into service-owned ephemeral storage without weakening file checks', () => {
+    const unit = readTemplate('oaf-wake-pull.service');
+    for (const setting of ['RuntimeDirectory=oaf-wake', 'RuntimeDirectoryMode=0700',
+      'ExecStartPre=/usr/bin/install -m 600 %d/control-token /run/oaf-wake/control-token',
+      'Environment=OAF_WAKE_TOKEN_FILE=/run/oaf-wake/control-token']) expect(unit.split('\n')).toContain(setting);
+    expect(unit).not.toMatch(/^ExecStartPre=[+!]|^ExecStartPre=.*(?:sh -c|chmod|chown)/m);
+    expect(unit).toContain('StateDirectory=oaf-wake');
   });
 
   it('builds the real two-package runtime without source, workspace links or development dependencies', () => {
@@ -66,7 +75,7 @@ describe('opt-in deployment artifacts', () => {
     expect(() => checkRelease(broken)).toThrow();
   });
 
-  it.each(['.env', 'test', 'src', 'identity.json'])('rejects unexpected top-level %s', name => {
+  it.each(['.env', 'test', 'src', 'identity.json', '._package.json'])('rejects unexpected top-level %s', name => {
     const root = artifact();
     writeFileSync(join(root, name), 'not a runtime artifact');
     expect(() => checkRelease(root)).toThrow('unexpected top-level content');

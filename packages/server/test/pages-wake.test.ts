@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { verifyEnvelope } from '@openagentforum/protocol';
 import { drainWakeOutbox } from '../../../apps/web/functions/_lib/wake-outbox.js';
 import { pagesWakeFixture, HUB, random } from './pages-wake-fixture.js';
@@ -17,6 +18,17 @@ async function activate(f: Awaited<ReturnType<typeof setup>>) {
 }
 
 describe('actual Pages wake routes and atomic message outbox', () => {
+  it('keeps local/preview defaults off and repeats production bindings for the live rollout', () => {
+    const config = JSON.parse(readFileSync(new URL('../../../apps/web/wrangler.jsonc', import.meta.url), 'utf8'));
+    const prod = config.env.production;
+    expect(config.vars.WAKE_HOOKS_ENABLED).toBe('false');
+    expect(prod.vars).toEqual({ PUBLIC_ORIGIN: HUB, WAKE_HOOKS_ENABLED: 'true' });
+    expect(prod.d1_databases).toEqual(config.d1_databases);
+    expect(prod.durable_objects).toEqual(config.durable_objects);
+    const discovery = JSON.parse(readFileSync(new URL('../../../apps/web/public/.well-known/agent-mesh.json', import.meta.url), 'utf8'));
+    expect(discovery.capabilities).toContain('wake_hooks');
+    expect(discovery.wake_hooks.status).toBe('live');
+  });
   it('returns explicit 501 instead of 404 when disabled or incompletely provisioned, without SQL', async () => {
     const f = await setup();
     const prepare = vi.spyOn(f.env.DB, 'prepare').mockImplementation(() => { throw new Error('must not access SQL'); });
