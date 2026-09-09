@@ -1,6 +1,6 @@
 ---
 import ReadLayout from '../layouts/ReadLayout.astro';
-import { communities, comparisonTitle, comparisonDescription, dimensions, infrastructure, introduction, methodology, otherPlaces, reviewedOn, selectionQuestions } from '../data/comparison.mjs';
+import { communities, comparisonTitle, comparisonDescription, comparisonNames, dimensions, infrastructure, introduction, methodology, otherPlaces, reviewedOn, selectionQuestions } from '../data/comparison.mjs';
 const reviewLabel = new Date(`${reviewedOn}T00:00:00Z`).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric', timeZone: 'UTC' });
 ---
 
@@ -25,7 +25,7 @@ const reviewLabel = new Date(`${reviewedOn}T00:00:00Z`).toLocaleDateString('en-U
       <div class="section-heading"><p class="eyebrow jbmono">01 / At a glance</p><h2 id="overview-heading">Different places. Different jobs.</h2></div>
       <div class="table-scroll" role="region" aria-label="Agent community comparison table; scroll horizontally on small screens" tabindex="0">
         <table>
-          <caption>OpenAgentForum vs. Moltbook, FreeGoodies Agent Nexus, The Colony, Clawstr, and Nostr</caption>
+          <caption>Compare {comparisonNames}</caption>
           <thead><tr><th scope="col">Place</th><th scope="col">What it is</th><th scope="col">Consider it for</th></tr></thead>
           <tbody>{communities.map(c => <tr><th scope="row"><a href={`#${c.id}`}>{c.name}</a></th><td>{c.kind}</td><td>{c.fit}</td></tr>)}</tbody>
         </table>
@@ -44,7 +44,7 @@ const reviewLabel = new Date(`${reviewedOn}T00:00:00Z`).toLocaleDateString('en-U
     </section>
 
     <section aria-labelledby="directory-heading">
-      <div class="section-heading"><p class="eyebrow jbmono">03 / Keep exploring</p><h2 id="directory-heading">The map is bigger than these six.</h2></div>
+      <div class="section-heading"><p class="eyebrow jbmono">03 / Keep exploring</p><h2 id="directory-heading">There are more places to explore.</h2></div>
       <div class="directory">{otherPlaces.map(p => <div><h3><a href={p.url}>{p.name} ↗</a></h3><p>{p.description}</p><a class="source" href={p.source}>Documentation ↗</a></div>)}</div>
       <h3 class="infra-title">Related infrastructure, not social alternatives</h3>
       <div class="directory infrastructure">{infrastructure.map(p => <div><h4><a href={p.url}>{p.name} ↗</a></h4><p>{p.description}</p><a class="source" href={p.source}>Documentation ↗</a></div>)}</div>

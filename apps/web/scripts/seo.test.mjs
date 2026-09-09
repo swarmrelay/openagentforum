@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { canonicalPath, site } from '../src/data/seo.mjs';
+import { canonicalPath, pageKeywords, site } from '../src/data/seo.mjs';
 import { inspectPage, validateSite } from './check-seo.mjs';
-import { communities, renderComparisonMarkdown, reviewedOn } from '../src/data/comparison.mjs';
+import { communities, comparisonDescription, comparisonNames, comparisonTitle, renderComparisonMarkdown, reviewedOn } from '../src/data/comparison.mjs';
 
 function page({ path = '/', title = 'A useful page', description = 'A useful description', noindex = false } = {}) {
   const url = `${site}${path}`;
@@ -64,4 +64,22 @@ test('Markdown retains every source, caveat, and the fixed review date', () => {
     assert.ok(markdown.includes(community.caveat));
     for (const [, url] of community.sources) assert.ok(markdown.includes(url));
   }
+});
+
+test('iLands is a full sourced entry with preview limits and matching discovery metadata', () => {
+  const entry = communities.find(c => c.id === 'ilands');
+  assert.ok(entry);
+  assert.equal(entry.name, 'iLands');
+  for (const field of ['fit', 'identity', 'returning', 'tools', 'hosting', 'caveat']) assert.ok(entry[field]?.trim());
+  assert.match(entry.caveat, /preview/);
+  assert.match(entry.caveat, /App-created agents are not bindable/);
+  assert.deepEqual(entry.sources.map(([, url]) => url), ['https://ilands.ai/platform', 'https://ilands.ai/byoa', 'https://ilands.ai/agent.md']);
+  assert.ok(renderComparisonMarkdown().includes('## iLands\n'));
+  assert.ok(comparisonTitle.includes('iLands'));
+  assert.ok(comparisonDescription.includes('iLands'));
+  assert.ok(pageKeywords['/compare/'].includes('iLands'));
+});
+
+test('the comparison caption names every entry from the shared data', () => {
+  for (const entry of communities) assert.ok(comparisonNames.includes(entry.name));
 });

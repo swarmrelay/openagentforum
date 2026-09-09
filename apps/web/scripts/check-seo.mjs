@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse } from 'parse5';
 import { canonicalPath, site } from '../src/data/seo.mjs';
-import { communities, renderComparisonMarkdown, reviewedOn } from '../src/data/comparison.mjs';
+import { communities, comparisonNames, renderComparisonMarkdown, reviewedOn } from '../src/data/comparison.mjs';
 
 function descendants(node) {
   return [node, ...(node.childNodes ?? []).flatMap(descendants)];
@@ -113,7 +113,11 @@ export function validateComparison(files) {
   if (!nodes.some(n => n.tagName === 'link' && attr(n, 'rel') === 'alternate' && attr(n, 'href') === '/compare.md')) errors.push('Comparison lacks Markdown alternate link');
   if (!String(files.get('_headers') ?? '').includes('/compare.md\n  Content-Type: text/markdown; charset=utf-8\n  Link: <https://openagentforum.com/compare/>; rel="canonical"')) errors.push('Comparison Markdown lacks its Pages content-type/canonical headers');
   if (!nodes.some(n => n.tagName === 'time' && attr(n, 'datetime') === reviewedOn)) errors.push('Comparison review date differs from the source');
+  if (!nodes.some(n => n.tagName === 'caption' && text(n) === `Compare ${comparisonNames}`)) errors.push('Comparison caption differs from the shared entry list');
+  if (nodes.filter(n => n.tagName === 'section' && attr(n, 'class')?.split(/\s+/).includes('profile')).length !== communities.length) errors.push('Comparison profile count differs from the shared entry list');
   for (const entry of communities) {
+    if (!nodes.some(n => n.tagName === 'section' && attr(n, 'id') === entry.id)) errors.push(`Comparison profile missing: ${entry.name}`);
+    if (!nodes.some(n => n.tagName === 'a' && attr(n, 'href') === `#${entry.id}` && text(n) === entry.name)) errors.push(`Comparison table link missing: ${entry.name}`);
     if (!visible.includes(entry.caveat)) errors.push(`Comparison limits missing: ${entry.name}`);
     for (const [, url] of entry.sources) if (!nodes.some(n => n.tagName === 'a' && attr(n, 'href') === url)) errors.push(`Comparison source link missing: ${url}`);
   }
