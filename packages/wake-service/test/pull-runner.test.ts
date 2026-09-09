@@ -173,11 +173,12 @@ describe('durable outbound-pull state machine', () => {
   it('persists empty-page continuation across restart and wraps only when instructed', async () => {
     const f = await setup();
     f.control.poll.mockResolvedValueOnce({ ref: null, after: f.after }).mockResolvedValue({ ref: null, after: null });
-    expect(await f.runner().step(signal())).toBe('idle');
-    expect(await f.restart().step(signal())).toBe('idle');
+    expect(await f.runner().step(signal())).toBe('scanning');
+    expect(await f.restart().step(signal())).toBe('scanning');
     expect(f.control.poll.mock.calls.map(([after]) => after)).toEqual([null, f.after]);
     expect(f.journal.read().after).toBeNull();
     expect(f.control.authorize).not.toHaveBeenCalled();
+    expect(await f.runner().step(signal())).toBe('idle');
   });
 
   it('rejects overlapping local steps and stops before send when authorization is interrupted', async () => {
@@ -209,6 +210,56 @@ describe('durable outbound-pull state machine', () => {
 });
 
 describe('bounded polling cadence', () => {
+  it('backs off only after sustained quiet, caps idle starts at four seconds, and aborts the idle wait', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] });
+    const stop = new AbortController();
+    const starts: number[] = [];
+    const runner = { step: vi.fn(async () => { starts.push(performance.now()); return 'idle' as const; }) };
+    const loop = runPullLoop(runner, stop.signal);
+    await vi.advanceTimersByTimeAsync(34_000);
+    expect(starts).toEqual([...Array.from({ length: 17 }, (_, i) => i * 1000), 18_000, 22_000, 26_000, 30_000, 34_000]);
+    stop.abort(); await loop;
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it.each(['reported', 'cancelled', 'scanning'] as const)('returns to fast cadence after %s and protects the entire known retry window', async outcome => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] });
+    const stop = new AbortController();
+    const runner = { step: vi.fn().mockResolvedValue('idle') };
+    const loop = runPullLoop(runner, stop.signal);
+    await vi.advanceTimersByTimeAsync(30_000);
+    runner.step.mockResolvedValueOnce(outcome);
+    await vi.advanceTimersByTimeAsync(4000);
+    const before = runner.step.mock.calls.length;
+    // Includes both the five-second retry due time and its five-second grace.
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(runner.step).toHaveBeenCalledTimes(before + 15);
+    stop.abort(); await loop;
+  });
+
+  it('discards idle backoff after a control outage and never overlaps a slow cycle', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] });
+    const stop = new AbortController();
+    const runner = { step: vi.fn().mockResolvedValue('idle') };
+    const loop = runPullLoop(runner, stop.signal);
+    await vi.advanceTimersByTimeAsync(30_000);
+    runner.step.mockRejectedValueOnce(new Error('unavailable'));
+    await vi.advanceTimersByTimeAsync(4000);
+    const before = runner.step.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(runner.step).toHaveBeenCalledTimes(before + 5);
+    let release!: (result: 'reported') => void;
+    runner.step.mockImplementationOnce(() => new Promise(resolve => { release = resolve; }));
+    await vi.advanceTimersByTimeAsync(1000);
+    const blocked = runner.step.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(runner.step).toHaveBeenCalledTimes(blocked);
+    release('reported');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(runner.step).toHaveBeenCalledTimes(blocked + 1);
+    stop.abort(); await loop;
+  });
+
   it('waits one second between healthy starts; abort wakes the wait', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] });
     const stop = new AbortController();

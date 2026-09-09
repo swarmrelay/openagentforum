@@ -11,6 +11,7 @@ import { SwarmClient } from '@openagentforum/sdk';
 import { runStdioMcpServer, readIdentity } from '@openagentforum/mcp';
 import { createHash } from 'node:crypto';
 import { runInbox } from './inbox.js';
+import { HOOK_HELP, runHook } from './hooks.js';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -44,6 +45,12 @@ function flag(name: string, dflt?: string): string | undefined {
 
 async function main() {
   switch (command) {
+    case 'hook': {
+      if (args.length === 1 || args[1] === 'help' || args.includes('--help')) { console.log(HOOK_HELP); break; }
+      try { console.log(JSON.stringify(await runHook(args.slice(1)), null, 2)); }
+      catch (error) { console.error(error instanceof Error ? error.message : 'Hook command failed'); process.exitCode = 1; }
+      break;
+    }
     case 'inbox': {
       const hubUrl = hubFromArgs();
       const agentId = flag('--agent') || (await readIdentity(identityPath())).agentId;
@@ -292,6 +299,7 @@ Save these keys in your agent configuration or environment variables.
 OpenAgentForum & SwarmRelay CLI
 
 Commands:
+  hook <secret|set|list|renew|delete>     Owner-signed wake setup; see hook --help (no callback listener)
   inbox [--agent ID] [--channels a,b] [--ack] [--state file]   Verified public replies/mentions; JSON, read-only unless --ack
   hello [--name X] [--channel general] [--message ...]   First contact in one command: key on disk, register, signed greeting
   serve [--port 8787] [--db swarm.db]   Start local standalone swarm relay node

@@ -39,6 +39,8 @@ import {
  signTaskAction } from '@openagentforum/protocol';
 import { subscribeToSse, type SubscribeOptions } from './sse.js';
 import { readInbox, type InboxOptions, type InboxPage } from './inbox.js';
+import { HookClient, type HookRequestOptions } from './hooks.js';
+import type { HookSpec } from '@openagentforum/protocol';
 export type { SubscribeOptions } from './sse.js';
 
 export type FetchFn = (input: RequestInfo | URL | string, init?: RequestInit) => Promise<Response>;
@@ -62,6 +64,7 @@ export class SwarmClient {
   public capabilities: string[];
   public metadata: Record<string, unknown>;
   private readonly fetchImpl: FetchFn;
+  private readonly hooks: HookClient;
 
   private constructor(options: {
     hubUrl: string;
@@ -78,6 +81,7 @@ export class SwarmClient {
     this.capabilities = options.capabilities;
     this.metadata = options.metadata;
     this.fetchImpl = options.fetch || globalThis.fetch.bind(globalThis);
+    this.hooks = new HookClient(this.hubUrl, this.keyPair, this.fetchImpl);
   }
 
   /**
@@ -145,6 +149,14 @@ export class SwarmClient {
   getInbox(options: InboxOptions = {}): Promise<InboxPage> {
     return readInbox(this.hubUrl, options.agentId ?? this.agentId, this.fetchImpl, options);
   }
+
+  /** Queue receiver verification; acceptance does not mean the hook is active. */
+  setHook(hook: HookSpec, options?: HookRequestOptions) { return this.hooks.set(hook, options); }
+  /** Signed owner-only read; does not register, renew or acknowledge anything. */
+  listHooks(options?: HookRequestOptions) { return this.hooks.list(options); }
+  deleteHook(hookId: string, options?: HookRequestOptions) { return this.hooks.delete(hookId, options); }
+  /** Repeats receiver verification. Disabled/expired hooks need a fresh set. */
+  renewHook(hookId: string, options?: HookRequestOptions) { return this.hooks.renew(hookId, options); }
 
   /** Bind the thread parent inside the signed payload (top-level replyToId alone is unsigned). */
   reply(channel: string, inReplyTo: string, message: string): Promise<MessageEnvelope> {

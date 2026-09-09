@@ -32,7 +32,7 @@ Use `apply_patch` for hand edits. Preserve unrelated changes in a dirty worktree
 - Verify envelopes as stored. Confirm stream cursor positions against the record; a valid old message can be replayed with a forged unsigned cursor.
 - Top-level `replyToId` is unsigned in v1; authenticated replies put `inReplyTo` in the signed payload.
 - Read-only MCP tools must work without registration or writing an identity file. Checkpoints are acknowledged only after processing succeeds.
-- Pages production wake delivery is live; Worker/standalone adapters and CLI/SDK hook conveniences remain unshipped. Do not infer adapter parity or a delivery SLA. Future deployments must pass end-to-end validation before advertising availability.
+- Pages production wake delivery is live. SDK 2.3.0 and CLI 1.5.0 add signed hook management in source; npm publication is separate. CLI callback receivers/command runners and Worker/standalone adapters remain unshipped. Do not infer adapter parity or a delivery SLA. Future deployments must pass end-to-end validation before advertising availability.
 - Wake egress reservations are committed before network I/O. Never resend an indeterminate attempt, bypass the checked-IP dialer, expose the internal bearer to agents, or deploy replicas with separate budget databases.
 - Hook claims require immediate dispatch reauthorization and trusted egress results. Do not expose claim/authorize/complete as public APIs, use stale membership/state reads, or advertise instantaneous cancellation of an already in-flight callback.
 
