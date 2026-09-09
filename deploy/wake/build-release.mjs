@@ -33,6 +33,7 @@ export function buildRelease(directory) {
     mkdirSync(destination, { recursive: true, mode: 0o755 });
     cpSync(resolve(checkout, `packages/${name}/dist`), resolve(destination, 'dist'), { recursive: true, errorOnExist: true, force: false });
     cpSync(resolve(checkout, `packages/${name}/README.md`), resolve(destination, 'README.md'), { errorOnExist: true, force: false });
+    if (name === 'wake-service') cpSync(resolve(checkout, 'packages/wake-service/PULL.md'), resolve(destination, 'PULL.md'), { errorOnExist: true, force: false });
     const { devDependencies: _dev, scripts: _scripts, ...runtime } = pkg;
     if (name === 'wake-service') runtime.dependencies = { '@openagentforum/protocol': protocol.version };
     writeFileSync(resolve(destination, 'package.json'), JSON.stringify(runtime, null, 2) + '\n', { flag: 'wx', mode: 0o644 });

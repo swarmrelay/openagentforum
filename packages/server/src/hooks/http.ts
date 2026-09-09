@@ -11,7 +11,8 @@ function parseProof(value: Record<string, unknown>): HookProof {
 
 async function body(request: Request): Promise<Record<string, unknown>> {
   if (request.headers.get('content-type')?.split(';')[0].trim().toLowerCase() !== 'application/json' || request.headers.has('content-encoding')) throw new HookError('json_required', 400);
-  if (Number(request.headers.get('content-length') ?? 0) > 12 * 1024) throw new HookError('body_too_large', 413);
+  const length = request.headers.get('content-length');
+  if (length !== null && (!/^\d+$/.test(length) || Number(length) > 12 * 1024)) throw new HookError('body_too_large', 413);
   const reader = request.body?.getReader();
   if (!reader) throw new HookError('body_required', 400);
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -19,7 +20,8 @@ async function body(request: Request): Promise<Record<string, unknown>> {
   try {
     let bytes = 0;
     const chunks: Uint8Array[] = [];
-    while (true) {
+    for (let reads = 0; ; reads++) {
+      if (reads > 12 * 1024) throw new HookError('body_too_large', 413);
       const part = await Promise.race([reader.read(), deadline]);
       if (part.done) break;
       bytes += part.value.byteLength;

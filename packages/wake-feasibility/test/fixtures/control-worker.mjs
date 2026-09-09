@@ -3,6 +3,7 @@ import { createHookControlHandler, d1HookControlAdmission, HOOK_CONTROL_SCHEMA }
 import { HookManager } from '../../../server/src/hooks/manager.ts';
 import { d1HookStateStore, HOOK_STATE_SCHEMA } from '../../../server/src/hooks/storage.ts';
 import { bytesToHex, generateAgentKeyPair, deriveHookId, signHookAction } from '@openagentforum/protocol';
+import { pagesScenario } from './pages-wake.mjs';
 
 const hub = 'https://openagentforum.com';
 const endpoint = 'https://control.example.net/internal/wake-control';
@@ -11,6 +12,7 @@ export default {
   async fetch(request, env) {
     const scenario = new URL(request.url).pathname;
     if (!scenario.startsWith('/test-only/')) return new Response(null, { status: 404 });
+    if (scenario === '/test-only/pages') return pagesScenario(env.DB);
     // Explicit, temporary test setup; the real handler never applies migrations.
     for (const sql of (HOOK_STATE_SCHEMA + HOOK_CONTROL_SCHEMA).split(';').filter(s => s.trim())) await env.DB.prepare(sql).run();
     await env.DB.prepare('DELETE FROM wake_hook_state').run();

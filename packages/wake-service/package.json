@@ -4,7 +4,7 @@
   "private": true,
   "description": "Internal Node wake-hook egress; not a public hook registration API",
   "type": "module",
-  "files": ["dist", "README.md"],
+  "files": ["dist", "README.md", "PULL.md"],
   "scripts": {
     "build": "tsc",
     "test": "vitest run",

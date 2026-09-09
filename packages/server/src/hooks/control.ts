@@ -19,6 +19,8 @@ export interface HookControlOptions {
   store: HookDueStore;
   /** Required durable, shared primary admission gate; no in-memory fallback. */
   admission: HookControlAdmission;
+  /** Trusted bounded origin fan-out, only after operator auth/admission and a valid poll. Await all SQL; stop admitting work when inTime() is false. */
+  preparePoll?: (inTime: () => boolean) => Promise<void>;
   scanLimit?: number;
   /** Stops admitting more work and suppresses late jobs; does not cancel SQL already in progress. */
   admissionMs?: number;
@@ -137,6 +139,8 @@ export async function createHookControlHandler(options: HookControlOptions): Pro
       requireTime();
       if (!object(input)) throw new HookError('invalid_control_request', 400);
       if (input.op === 'poll' && exact(input, ['op', 'after']) && (input.after === null || cursor(input.after))) {
+        if (options.preparePoll) await options.preparePoll(inTime);
+        requireTime();
         const after = input.after;
         const page = await store.scanDue(time, scanLimit, after);
         requireTime();
