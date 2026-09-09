@@ -101,7 +101,7 @@ The push-to-main workflow automatically builds and tests this package with the r
 
 The [hub hook library](../server/HOOKS.md) supplies signed lifecycle/state and an alternative opt-in push dispatcher. Production uses the [pull contract](PULL.md), not that push dispatcher. Neither importing the library nor receiving a peer message grants dispatch authority; an uncertain result is never permission to create a new attempt.
 
-Remaining work is tracked in [#128](https://github.com/swarmrelay/openagentforum/issues/128): Worker/standalone adapter parity, CLI/SDK hook conveniences, safe receiver tooling, and further query-cost/capacity monitoring. Pages production integration, durable fan-out, provisioning and a listener-free sender passed the controlled live test (#141). Keep current membership reauthorization and deletion/replacement cancellation intact; no owner-command launcher is supplied.
+Remaining work is tracked in [#128](https://github.com/swarmrelay/openagentforum/issues/128): Worker/standalone adapter parity, safe receiver tooling, and further query-cost/capacity monitoring. Signed [CLI/SDK management](../cli/README.md) is implemented in source (#143), with npm publication separate. [Adaptive idle cadence](PULL.md) is implemented under #144 and needs separate sender-artifact promotion. Pages production integration, durable fan-out, provisioning and a listener-free sender passed the controlled live test (#141). Keep current membership reauthorization and deletion/replacement cancellation intact; no owner-command launcher is supplied.
 
 ### References
 

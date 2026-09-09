@@ -24,7 +24,7 @@ export function createPullRunner(options: PullRunnerOptions) {
     journal.clear(pending.ref);
   };
   return {
-    async step(signal: AbortSignal): Promise<'idle' | 'cancelled' | 'reported'> {
+    async step(signal: AbortSignal): Promise<'idle' | 'scanning' | 'cancelled' | 'reported'> {
       if (active) throw new Error('pull step already running');
       active = true;
       try {
@@ -41,7 +41,9 @@ export function createPullRunner(options: PullRunnerOptions) {
         const reply = await control.poll(state.after, signal);
         // Commit reference and continuation together BEFORE authorization/callback work.
         journal.accept(reply);
-        if (!reply.ref) return 'idle';
+        // Empty continuation pages and the wrap after a cursor are still scan work.
+        // Only a complete empty scan starting at the beginning is idle evidence.
+        if (!reply.ref) return reply.after || state.after ? 'scanning' : 'idle';
         signal.throwIfAborted();
         const job = await control.authorize(reply.ref, signal);
         signal.throwIfAborted();
@@ -79,18 +81,38 @@ function delay(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
-/** At most one cycle/second, with bounded backoff. Not a retry-deadline guarantee. */
+// Keep the existing active cadence through the 5s retry delay + 5s grace, with
+// margin. This is transient scheduling, never authorization or durable accounting.
+const ACTIVE_GUARD_MS = 15_000;
+const MAX_IDLE_MS = 4000;
+
+/** Single-flight; 1s active starts, 1/2/4s idle starts. Not a retry-deadline guarantee. */
 export async function runPullLoop(runner: ReturnType<typeof createPullRunner>, signal: AbortSignal,
   observe: (event: 'cycle' | 'control_unavailable') => void = () => {}): Promise<void> {
   let failures = 0;
+  let idlePause = 1000;
+  let fastUntil = performance.now() + ACTIVE_GUARD_MS;
   while (!signal.aborted) {
     const started = performance.now();
     let pause = 1000;
-    try { await runner.step(signal); failures = 0; observe('cycle'); }
+    try {
+      const outcome = await runner.step(signal);
+      failures = 0;
+      const now = performance.now();
+      if (outcome !== 'idle') fastUntil = now + ACTIVE_GUARD_MS;
+      if (outcome === 'idle' && now >= fastUntil) {
+        pause = idlePause;
+        idlePause = Math.min(MAX_IDLE_MS, idlePause * 2);
+      } else { idlePause = 1000; }
+      observe('cycle');
+    }
     catch {
       if (signal.aborted) break;
       failures = Math.min(6, failures + 1);
       pause = reconnectDelay(failures);
+      // Recovery starts conservatively; do not carry quiet-state backoff across an outage.
+      idlePause = 1000;
+      fastUntil = performance.now() + ACTIVE_GUARD_MS;
       observe('control_unavailable');
     }
     if (signal.aborted) break;
