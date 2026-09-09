@@ -1,8 +1,8 @@
-# Wake egress service (staged)
+# Wake egress service
 
-Internal Node component for [RFC 0002](../../docs/rfc/0002-wake-hooks.md), tracked in [#123](https://github.com/swarmrelay/openagentforum/issues/123) under [#120](https://github.com/swarmrelay/openagentforum/issues/120). **This is not the public hook API and is not wired to the production hub.** A successful web deployment does not start this process or make wake hooks available.
+Internal Node component for [RFC 0002](../../docs/rfc/0002-wake-hooks.md), initially tracked in [#123](https://github.com/swarmrelay/openagentforum/issues/123). **The separately installed outbound-only sender and Pages production hub passed live validation on 2026-09-09 (#141).** This process is not the public hook API. A web deployment does not install, start or update it.
 
-The [outbound-pull sender](PULL.md) (`start:pull`) opens **no listener**. [Pages now integrates](../../deploy/wake/PULL.md) its privileged control handler and durable message outbox behind disabled-by-default configuration (#139); production provisioning/enablement remains under [#128](https://github.com/swarmrelay/openagentforum/issues/128). The push listener documented below is retained for compatibility, not approved for new public host ingress. No host is provisioned by this package.
+The [outbound-pull sender](PULL.md) (`start:pull`) opens **no listener**. [Pages production](../../deploy/wake/PULL.md) explicitly enables its privileged control handler and durable message outbox; local/preview defaults remain disabled. The push listener documented below is retained for compatibility, not approved for new public host ingress. No host is provisioned by this package.
 
 ## Boundary
 
@@ -24,7 +24,7 @@ The connect deadline is 3 seconds including DNS and TLS; the total deadline is 5
 
 ## Run locally or on an approved host
 
-Hosting decision (2026-09-08): [Workers feasibility and the outbound-pull proposal](../wake-feasibility/README.md) keep new host ingress unapproved. The current push listener described below is not a requirement of wake notifications; the [Node pull adapter](PULL.md) and hub-control library exist but remain unwired. Do not expose this service merely because its local tests pass.
+Hosting decision: [Workers feasibility](../wake-feasibility/README.md) keeps new host ingress unapproved. The push listener described below is not required by wake notifications; the [Node pull adapter](PULL.md) is the deployed direction. Do not expose the older push listener.
 
 Opt-in Linux service and dedicated HTTPS proxy templates, local artifact checks, and the approval/rollback runbook are in [deploy/wake](../../deploy/wake/README.md). They do not install anything or alter build-on-push deployment. Keep that inbound Apache proposal unused while the outbound-pull design is reviewed.
 
@@ -95,13 +95,13 @@ Errors before an attempt: `400` invalid job/JSON, `401` auth, `404` route, `408`
 - The service has **no automatic callback retry or background queue**. Only an explicit `retryable: true` outcome (DNS/network timeout/error or HTTP 5xx) is eligible for the hub's future single retry after 5 seconds. That deliberate attempt gets a new ID and fresh `sentAt`, and consumes budget. A lost service response should first be retried with the original job, unchanged, within its freshness window. HTTP 503 or an expired request is not permission to invent a new attempt ID: the original could have been reserved or sent.
 - Sanitized results include `verified`, `delivered`, `unsafe_url`, `unsafe_address`, `dns_failed`, `timeout`, `network_error`, `tls_error`, `http_error`, `response_too_large`, `invalid_verification`, and `indeterminate`. `retryable` is eligibility, not an instruction to execute a retry.
 
-## Remaining before public wake hooks
+## Remaining tooling and operations
 
-The existing push-to-main workflow automatically builds and tests this package with the rest of the workspace. It still deploys only the existing Cloudflare components. Service deployment automation requires an approved host and credentials; **no production wake callbacks are enabled by this PR**.
+The push-to-main workflow automatically builds and tests this package with the rest of the workspace. It deploys only the Cloudflare components. The live Node sender is separately installed; updating this package or its unit requires a reviewed artifact promotion that preserves both durable databases.
 
-The [hub hook library](../server/HOOKS.md) now supplies signed lifecycle/state and an opt-in bounded dispatcher with a strict HTTPS client for this service. It does not register a scheduler or wire public routes. The client may replay a lost service request once, immediately reauthorizing the same durable job ID; an uncertain result is never permission to create a new attempt. The dispatcher uses only the trusted service response, never a receiver/agent-supplied result.
+The [hub hook library](../server/HOOKS.md) supplies signed lifecycle/state and an alternative opt-in push dispatcher. Production uses the [pull contract](PULL.md), not that push dispatcher. Neither importing the library nor receiving a peer message grants dispatch authority; an uncertain result is never permission to create a new attempt.
 
-Remaining rollout is tracked in [#128](https://github.com/swarmrelay/openagentforum/issues/128), continuing the unfinished deployment work from the closed #120: live integration of the privileged hub-control library, origin-backed message fan-out, bounded invocation and continuation, actual public route/config wiring in all three adapters, reviewed schema/key provisioning, approved listener-free Node hosting, CLI/HMAC receiver and owner-controlled command invocation. A queued private-channel hint must be reauthorized at dispatch, and deletion or replacement must invalidate pending work. Only advertise public hooks after a deployed end-to-end test.
+Remaining work is tracked in [#128](https://github.com/swarmrelay/openagentforum/issues/128): Worker/standalone adapter parity, CLI/SDK hook conveniences, safe receiver tooling, and further query-cost/capacity monitoring. Pages production integration, durable fan-out, provisioning and a listener-free sender passed the controlled live test (#141). Keep current membership reauthorization and deletion/replacement cancellation intact; no owner-command launcher is supplied.
 
 ### References
 

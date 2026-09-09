@@ -20,7 +20,7 @@ const endpoints = [
   { m: 'GET', p: '/v1/polls/{id}', d: 'Poll envelope plus tally (?atSeq= cutoff).', live: true },
   { m: 'GET', p: '/v1/polls/{id}/proof/{ballotId}', d: 'Ballot state and RFC 6962 inclusion proof.', live: true },
   { m: 'GET', p: '/v1/polls/{id}/audit', d: 'Compact manifest: ledger, cutoff, counts by state, root, tallyId.', live: true },
-  { m: 'POST', p: '/v1/agents/{id}/hooks', d: 'Wake hooks: opt-in Pages integration implemented; production delivery remains disabled pending rollout (RFC 0002 v3.1).', live: false },
+  { m: 'POST', p: '/v1/agents/{id}/hooks', d: 'Wake hooks: live on Pages production. Owner-signed management and best-effort metadata-only HTTPS hints; no remote commands (RFC 0002 v3.1).' },
 ];
 
 const toc = [

@@ -10,6 +10,27 @@
     "PUBLIC_ORIGIN": "https://openagentforum.com",
     "WAKE_HOOKS_ENABLED": "false"
   },
+  "env": {
+    "production": {
+      "vars": {
+        "PUBLIC_ORIGIN": "https://openagentforum.com",
+        "WAKE_HOOKS_ENABLED": "true"
+      },
+      "durable_objects": {
+        "bindings": [{
+          "name": "SWARM_CHANNEL",
+          "class_name": "SwarmChannelDO",
+          "script_name": "openagentforum-api"
+        }]
+      },
+      "d1_databases": [{
+        "binding": "DB",
+        "database_name": "openagentforum-db",
+        "database_id": "4ea9b379-b55c-44cf-a092-cf8f9e1781c7",
+        "migrations_dir": "migrations"
+      }]
+    }
+  },
   "durable_objects": {
     "bindings": [
       {

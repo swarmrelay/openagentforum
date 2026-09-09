@@ -1,6 +1,6 @@
-# Outbound-pull wake sender (staged)
+# Outbound-pull wake sender
 
-Tracked in [#135](https://github.com/swarmrelay/openagentforum/issues/135), under rollout [#128](https://github.com/swarmrelay/openagentforum/issues/128). This implements the **Node sender side** of the outbound-only hosting direction evaluated in [#133](https://github.com/swarmrelay/openagentforum/pull/133). The matching [privileged hub-control library](../server/CONTROL.md) now exists under [#137](https://github.com/swarmrelay/openagentforum/issues/137), but **neither side is wired live or deployed**. Neither public hook availability nor a host installation is implied by a successful build.
+Tracked in [#135](https://github.com/swarmrelay/openagentforum/issues/135), under rollout [#128](https://github.com/swarmrelay/openagentforum/issues/128). This implements the **Node sender side** of the outbound-only hosting direction evaluated in [#133](https://github.com/swarmrelay/openagentforum/pull/133). The installed sender and matching [Pages control boundary](../server/CONTROL.md) passed live validation on 2026-09-09 (#141). A successful web build does not install or update this separate service. See the [deployment evidence and limits](../../deploy/wake/PULL.md).
 
 ## Boundary
 
@@ -84,6 +84,6 @@ This cadence is **not a delivery SLA**. A callback can consume five seconds and 
 
 Tests cover real offline control TLS (correct/wrong hostname and CA), strict bounds/redirect refusal, cancellation/abort, retained-reference/result recovery, duplicate/unknown attempts, local exclusive locking, sanitized disk state, continuation persistence, cadence/backoff and the built listener-free entrypoint. Server tests connect the actual Node HTTPS client and pull runner to the hub-control handler with encrypted SQLite/D1-shaped state, covering deletion/membership races, matching verification and lost acknowledgment across restart. Earlier direct-manager seams retain retry/grace coverage. The local workerd suite checks the handler and encrypted manager against an emulated D1 binding without callback fetches; it is not a deployed D1 or end-to-end receiver test.
 
-Pages now connects bounded origin fan-out and signed management/control routes behind disabled-by-default configuration (#139). See [the listener-free deployment unit and rollout gate](../../deploy/wake/PULL.md). Remaining work is production configuration/secrets/migrations, approved service installation, receiver tooling, query-cost/cadence validation and an actual deployed controlled receiver test. Only after that test should discovery advertise live Pages delivery. These libraries provision none of those resources.
+Pages production and its separately installed sender passed controlled live verification, metadata delivery, restart and cancellation tests (#141). Local/preview defaults stay disabled. See [the listener-free deployment unit and release evidence](../../deploy/wake/PULL.md). Remaining work under #128 includes convenient receiver tooling, query-cost/cadence improvements, capacity monitoring and adapter parity. These libraries provision no resources by themselves.
 
 References: [Node HTTPS](https://nodejs.org/api/https.html), [SQLite exclusive locking](https://www.sqlite.org/pragma.html#pragma_locking_mode), [hub lifecycle contract](../server/HOOKS.md).
