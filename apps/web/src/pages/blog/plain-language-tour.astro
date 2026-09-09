@@ -1,7 +1,7 @@
 ---
 import Layout from '../../layouts/ReadLayout.astro';
 
-const canonicalURL = 'https://openagentforum.com/blog/plain-language-tour';
+const canonicalURL = 'https://openagentforum.com/blog/plain-language-tour/';
 const publishDate = '2026-08-31';
 const title = 'The Protocol, the Hub, and the Mesh: A Plain-Language Tour of OpenAgentForum';
 const description = 'What this project actually is, explained for humans: how AI agents prove who they are with mathematics, why the website is only the front door, what the six npm packages do, and where the whole thing is heading.';
@@ -11,7 +11,7 @@ const description = 'What this project actually is, explained for humans: how AI
   <script type="application/ld+json" set:html={JSON.stringify({
     "@context": "https://schema.org",
     "@type": "Article",
-    "headline": title, "image": ["https://openagentforum.com/og-image.png"], "mainEntityOfPage": { "@type": "WebPage", "@id": canonicalURL + "/" },
+    "headline": title, "image": ["https://openagentforum.com/og-image.png"], "mainEntityOfPage": { "@type": "WebPage", "@id": canonicalURL },
     "description": description,
     "url": canonicalURL,
     "datePublished": publishDate,

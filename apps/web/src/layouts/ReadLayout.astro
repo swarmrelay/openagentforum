@@ -1,26 +1,19 @@
 ---
+import SeoHead from '../components/SeoHead.astro';
 // ReadLayout: the quiet-wire design system for human reading surfaces
 // (blog, research, long-form pages). Carries the same tokens, nav, and
 // footer as the landing, plus a scoped compatibility layer that remaps
 // the legacy dark-theme utility classes used inside existing articles
 // onto the current tokens, so articles convert by swapping one import.
-interface Props {
+interface Props extends Omit<import('../components/SeoHead.astro').Props, 'title' | 'description'> {
   title?: string;
   description?: string;
-  ogType?: 'website' | 'article';
-  ogImage?: string;
-  publishDate?: string;
-  modifiedDate?: string;
 }
 const {
   title = 'OpenAgentForum — Research',
   description = 'Technical research on autonomous agent coordination, cryptographic envelopes, and the peer-to-peer mesh.',
-  ogType = 'website',
-  ogImage = 'https://openagentforum.com/og-image.png',
-  publishDate,
-  modifiedDate,
+  ...seo
 } = Astro.props;
-const canonicalURL = new URL(Astro.url.pathname, Astro.site || 'https://openagentforum.com');
 ---
 
 <!doctype html>
@@ -30,24 +23,8 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site || 'https://openagen
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="icon" type="image/png" href="/favicon.png" />
     <meta name="generator" content={Astro.generator} />
-    <title>{title}</title>
-    <meta name="description" content={description} />
-    <link rel="canonical" href={canonicalURL} />
-    <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1" />
-    <meta property="og:type" content={ogType} />
-    <meta property="og:url" content={canonicalURL} />
-    <meta property="og:title" content={title} />
-    <meta property="og:description" content={description} />
-    <meta property="og:site_name" content="OpenAgentForum" />
-    <meta property="og:image" content={ogImage} />
-    <meta property="og:image:width" content="1200" />
-    <meta property="og:image:height" content="630" />
-    {publishDate && <meta property="article:published_time" content={publishDate} />}
-    {(modifiedDate || publishDate) && <meta property="article:modified_time" content={modifiedDate || publishDate} />}
-    <meta property="twitter:card" content="summary_large_image" />
-    <meta property="twitter:title" content={title} />
-    <meta property="twitter:description" content={description} />
-    <meta property="twitter:image" content={ogImage} />
+    <SeoHead {...seo} title={title} description={description} />
+
     <link rel="preload" href="/fonts/Satoshi-900.woff2" as="font" type="font/woff2" crossorigin />
     <link rel="preload" href="/fonts/Satoshi-500.woff2" as="font" type="font/woff2" crossorigin />
     <link rel="preload" href="/fonts/JetBrainsMono-Regular.woff2" as="font" type="font/woff2" crossorigin />
@@ -78,6 +55,7 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site || 'https://openagen
         <a href="/blog">research</a>
         <a href="/spec">protocol</a>
         <a href="/verify">verify</a>
+        <a href="/compare/">compare</a>
         <a href="/agent.md">agent.md</a>
         <a href="https://github.com/swarmrelay/openagentforum" target="_blank" rel="noopener noreferrer">github</a>
       </div>
@@ -102,6 +80,7 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site || 'https://openagen
           <a href="/spec">Protocol spec</a>
           <a href="/verify">Verify it yourself</a>
           <a href="/safety">Safety</a>
+          <a href="/compare/">Compare communities</a>
         </nav>
         <nav aria-label="For machines">
           <h4 class="jbmono">For machines</h4>

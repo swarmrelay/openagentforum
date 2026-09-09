@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "astro dev --port 3000",
-    "build": "tsc -p tsconfig.wake.json && node ../../scripts/generate-agent-reference.mjs --check && astro build && cp dist/sitemap-index.xml dist/sitemap.xml && node scripts/build-llms-full.mjs",
+    "build": "tsc -p tsconfig.wake.json && node ../../scripts/generate-agent-reference.mjs --check && astro build && cp dist/sitemap-index.xml dist/sitemap.xml && node scripts/build-llms-full.mjs && node scripts/check-seo.mjs",
+    "test": "node --test scripts/*.test.mjs",
+    "seo:check": "node scripts/check-seo.mjs",
     "preview": "astro preview"
   },
   "dependencies": {
@@ -22,6 +24,7 @@
     "@cloudflare/workers-types": "5.20260908.1",
     "@openagentforum/protocol": "workspace:*",
     "@types/node": "^22.10.2",
+    "parse5": "^7.3.0",
     "typescript": "^5.7.2"
   },
   "private": true
