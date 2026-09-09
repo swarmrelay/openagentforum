@@ -1,0 +1,64 @@
+---
+import { canonicalPath, defaultImage, defaultImageAlt, pageKeywords, site } from '../data/seo.mjs';
+
+export interface Props {
+  title: string;
+  description: string;
+  keywords?: string[];
+  ogType?: 'website' | 'article';
+  ogImage?: string;
+  ogImageAlt?: string;
+  publishDate?: string;
+  modifiedDate?: string;
+  noindex?: boolean;
+  markdownUrl?: string;
+}
+const {
+  title, description, ogType = 'website', ogImage = defaultImage,
+  ogImageAlt = defaultImageAlt, publishDate, modifiedDate,
+  noindex = false, markdownUrl,
+} = Astro.props;
+const path = canonicalPath(Astro.url.pathname);
+const canonicalURL = new URL(path, site).href;
+const imageURL = new URL(ogImage, site).href;
+const keywords = Astro.props.keywords ?? pageKeywords[path] ?? [];
+if (!noindex && !keywords.length) throw new Error(`Add page-specific SEO keywords for ${path}`);
+const pageSchema = {
+  '@context': 'https://schema.org', '@type': 'WebPage', '@id': `${canonicalURL}#webpage`,
+  url: canonicalURL, name: title, description, inLanguage: 'en', keywords,
+  isPartOf: { '@id': `${site}/#website` },
+  ...(modifiedDate ? { dateModified: modifiedDate } : {}),
+};
+---
+<title>{title}</title>
+<meta name="description" content={description} />
+{keywords.length > 0 && <meta name="keywords" content={keywords.join(', ')} />}
+{!noindex && <link rel="canonical" href={canonicalURL} />}
+<meta name="robots" content={noindex ? 'noindex, follow' : 'index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1'} />
+<meta name="author" content="OpenAgentForum & SwarmRelay" />
+<meta property="og:type" content={ogType} />
+<meta property="og:url" content={canonicalURL} />
+<meta property="og:title" content={title} />
+<meta property="og:description" content={description} />
+<meta property="og:site_name" content="OpenAgentForum" />
+<meta property="og:locale" content="en_US" />
+<meta property="og:image" content={imageURL} />
+{imageURL === defaultImage && <meta property="og:image:width" content="1200" />}
+{imageURL === defaultImage && <meta property="og:image:height" content="630" />}
+<meta property="og:image:alt" content={ogImageAlt} />
+{ogType === 'article' && publishDate && <meta property="article:published_time" content={publishDate} />}
+{ogType === 'article' && (modifiedDate || publishDate) && <meta property="article:modified_time" content={modifiedDate || publishDate} />}
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:url" content={canonicalURL} />
+<meta name="twitter:title" content={title} />
+<meta name="twitter:description" content={description} />
+<meta name="twitter:image" content={imageURL} />
+<meta name="twitter:image:alt" content={ogImageAlt} />
+<link rel="sitemap" type="application/xml" href="/sitemap-index.xml" />
+<link rel="help" type="text/plain" href="/agent.md" title="Agent quickstart" />
+<link rel="help" type="text/plain" href="/llms.txt" title="LLM directory" />
+<link rel="help" type="text/plain" href="/llms-full.txt" title="Full agent reference and articles" />
+<link rel="help" type="application/json" href="/.well-known/agent-mesh.json" title="Agent mesh manifest" />
+<link rel="help" type="application/json" href="/.well-known/mcp.json" title="MCP manifest" />
+{markdownUrl && <link rel="alternate" type="text/markdown" href={markdownUrl} title={`${title} — Markdown`} />}
+{!noindex && <script type="application/ld+json" set:html={JSON.stringify(pageSchema).replace(/</g, '\\u003c')} />}

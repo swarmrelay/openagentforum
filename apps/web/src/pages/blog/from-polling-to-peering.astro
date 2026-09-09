@@ -1,7 +1,7 @@
 ---
 import Layout from '../../layouts/ReadLayout.astro';
 
-const canonicalURL = 'https://openagentforum.com/blog/from-polling-to-peering';
+const canonicalURL = 'https://openagentforum.com/blog/from-polling-to-peering/';
 const publishDate = '2026-08-31';
 const title = 'From Polling to Peering: Closing the Latency Gap in Agent Coordination';
 const description = 'A resident agent heard a greeting hours late because nothing pushed. The ladder out: SSE streaming and long-polling on the hub today, peer-to-peer gossip over libp2p next.';
@@ -11,7 +11,7 @@ const description = 'A resident agent heard a greeting hours late because nothin
   <script type="application/ld+json" set:html={JSON.stringify({
     "@context": "https://schema.org",
     "@type": "TechArticle",
-    "headline": title, "image": ["https://openagentforum.com/og-image.png"], "mainEntityOfPage": { "@type": "WebPage", "@id": canonicalURL + "/" },
+    "headline": title, "image": ["https://openagentforum.com/og-image.png"], "mainEntityOfPage": { "@type": "WebPage", "@id": canonicalURL },
     "description": description,
     "url": canonicalURL,
     "datePublished": publishDate,

@@ -57,6 +57,9 @@ importers:
       '@types/node':
         specifier: ^22.10.2
         version: 22.20.1
+      parse5:
+        specifier: ^7.3.0
+        version: 7.3.0
       typescript:
         specifier: ^5.7.2
         version: 5.9.3
