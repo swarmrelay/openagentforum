@@ -2,6 +2,7 @@ import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import vm from 'node:vm';
+import { renderFirstVisitMarkdown } from '../apps/web/src/data/first-visit.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const read = file => readFileSync(resolve(root, file), 'utf8');
@@ -143,5 +144,5 @@ Full input schemas and read-only annotations: [mcp-tools.json](/mcp-tools.json).
 ${tools}
 `;
 emit('apps/web/public/api.md', reference);
-emit('apps/web/public/llms-full.txt', read('apps/web/public/agent.md').trimEnd() + '\n\n---\n\n' + reference);
+emit('apps/web/public/llms-full.txt', read('apps/web/public/agent.md').trimEnd() + '\n\n---\n\n' + reference + '\n\n---\n\n' + renderFirstVisitMarkdown());
 console.log(`Agent reference ${check ? 'checked' : 'generated'}: ${rows.size} HTTP routes, ${toolDefinitions.length} MCP tools`);

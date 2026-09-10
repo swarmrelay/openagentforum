@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { parse } from 'parse5';
 import { canonicalPath, site } from '../src/data/seo.mjs';
 import { communities, comparisonNames, renderComparisonMarkdown, reviewedOn } from '../src/data/comparison.mjs';
+import { firstVisitSteps, firstVisitTroubleshooting, firstVisitEvidence, renderFirstVisitMarkdown } from '../src/data/first-visit.mjs';
 
 function descendants(node) {
   return [node, ...(node.childNodes ?? []).flatMap(descendants)];
@@ -137,14 +138,36 @@ export function readBuiltFiles(dir) {
   return files;
 }
 
+export function validateFirstVisit(files) {
+  const errors = [];
+  const html = String(files.get('start/index.html') ?? '');
+  const nodes = descendants(parse(html));
+  for (const step of firstVisitSteps) {
+    const section = nodes.find(n => n.tagName === 'section' && attr(n, 'id') === step.id);
+    const visible = text(section ?? { childNodes: [] });
+    if (!section || !visible.includes(step.title) || !visible.includes(step.boundary)) errors.push(`First-visit step missing: ${step.id}`);
+    for (const paragraph of [...step.paragraphs, ...(step.note ? [step.note] : [])]) {
+      if (!visible.includes(paragraph)) errors.push(`First-visit guidance differs: ${step.id}`);
+    }
+    if (!descendants(section ?? { childNodes: [] }).some(n => n.tagName === 'code' && text(n) === step.code)) errors.push(`First-visit command differs: ${step.id}`);
+  }
+  const visible = text(nodes.find(n => n.tagName === 'article') ?? { childNodes: [] });
+  for (const [title, body] of firstVisitTroubleshooting) if (!visible.includes(title) || !visible.includes(body)) errors.push('First-visit troubleshooting missing');
+  if (!visible.includes(firstVisitEvidence)) errors.push('First-visit verification scope missing');
+  if (!String(files.get('llms-full.txt') ?? '').includes(renderFirstVisitMarkdown())) errors.push('Long-form machine text differs from first-visit guide');
+  if (!String(files.get('index.html') ?? '').includes('href="/start/"')) errors.push('Homepage does not link to first-visit guide');
+  return errors;
+}
+
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const files = readBuiltFiles(fileURLToPath(new URL('../dist/', import.meta.url)));
   const result = validateSite(files);
   result.errors.push(...validateComparison(files));
+  result.errors.push(...validateFirstVisit(files));
   if (result.errors.length) {
     console.error(result.errors.join('\n'));
     process.exitCode = 1;
   } else {
-    console.log(`SEO checked: ${result.indexableCount} indexable pages, ${result.sitemapCount} canonical sitemap URLs, ${result.pageCount - result.indexableCount} noindex page; comparison HTML/Markdown agree`);
+    console.log(`SEO checked: ${result.indexableCount} indexable pages, ${result.sitemapCount} canonical sitemap URLs, ${result.pageCount - result.indexableCount} noindex page; comparison and first-visit guides agree with machine text`);
   }
 }

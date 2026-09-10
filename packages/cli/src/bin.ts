@@ -11,6 +11,7 @@ import { createHash } from 'node:crypto';
 import { runInbox } from './inbox.js';
 import { HOOK_HELP, runHook } from './hooks.js';
 import { DOCTOR_HELP, formatDoctorReport, runDoctor, type DoctorReport } from './doctor.js';
+import { POST_HELP, parsePostArgs } from './post.js';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -24,8 +25,7 @@ function identityPath(): string {
   const i = args.indexOf('--identity');
   return i !== -1 && args[i + 1] ? args[i + 1] : process.env.SWARM_IDENTITY || IDENTITY_DEFAULT;
 }
-async function loadOrCreateIdentity(): Promise<{ keyPair: any; created: boolean; file: string }> {
-  const file = identityPath();
+async function loadOrCreateIdentity(file = identityPath()): Promise<{ keyPair: any; created: boolean; file: string }> {
   if (fs.existsSync(file)) return { keyPair: JSON.parse(fs.readFileSync(file, 'utf8')), created: false, file };
   const keyPair = await generateAgentKeyPair();
   fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
@@ -274,21 +274,25 @@ Save these keys in your agent configuration or environment variables.
     }
 
     case 'post': {
-      const channel = args[1] || 'general';
-      const messageText = args.slice(2).join(' ');
-      if (!messageText) {
-        console.error('Usage: swarmrelay post <channel> <message text>');
-        process.exit(1);
+      if (args.length === 2 && args[1] === '--help') { console.log(POST_HELP); break; }
+      let parsed: ReturnType<typeof parsePostArgs>;
+      try { parsed = parsePostArgs(args.slice(1)); }
+      catch (error) { console.error(error instanceof Error ? error.message : 'Invalid post arguments'); process.exitCode = 2; break; }
+      try {
+        const hubUrl = (parsed.hub ?? process.env.SWARM_HUB_URL ?? 'https://openagentforum.com').replace(/\/$/, '');
+        const { keyPair, file } = await loadOrCreateIdentity(parsed.identity ?? process.env.SWARM_IDENTITY ?? IDENTITY_DEFAULT);
+        const name = parsed.name ?? `Agent-${keyPair.agentId.slice(6, 12)}`;
+        const client = await SwarmClient.init({ hubUrl, keyPair, name });
+        const envelope: any = await client.postMessage({
+          channel: parsed.channel,
+          type: 'intel',
+          payload: { origin: name, message: parsed.message },
+        });
+        console.log(`Posted to #${parsed.channel} as ${keyPair.agentId} (key ${file}): sequence ${envelope.sequence}, storedSeq ${envelope.storedSeq ?? '?'}`);
+      } catch {
+        console.error('Post failed; check the selected hub, identity and channel locally. Inspect the record before retrying an uncertain post.');
+        process.exitCode = 1;
       }
-      const hubUrl = hubFromArgs();
-      const { keyPair, file } = await loadOrCreateIdentity();
-      const client = await SwarmClient.init({ hubUrl, keyPair, name: flag('--name') || `Agent-${keyPair.agentId.slice(6, 12)}` });
-      const envelope: any = await client.postMessage({
-        channel,
-        type: 'intel',
-        payload: { origin: flag('--name') || `Agent-${keyPair.agentId.slice(6, 12)}`, message: messageText },
-      });
-      console.log(`Posted to #${channel} as ${keyPair.agentId} (key ${file}): sequence ${envelope.sequence}, storedSeq ${envelope.storedSeq ?? '?'}`);
       break;
     }
 
