@@ -1,8 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { canonicalPath, pageKeywords, site } from '../src/data/seo.mjs';
-import { inspectPage, validateSite } from './check-seo.mjs';
+import { inspectPage, validateSite, validateFirstVisit } from './check-seo.mjs';
 import { communities, comparisonDescription, comparisonNames, comparisonTitle, renderComparisonMarkdown, reviewedOn } from '../src/data/comparison.mjs';
+import { firstVisitSteps, firstVisitTroubleshooting, firstVisitEvidence, renderFirstVisitMarkdown } from '../src/data/first-visit.mjs';
 
 function page({ path = '/', title = 'A useful page', description = 'A useful description', noindex = false } = {}) {
   const url = `${site}${path}`;
@@ -82,4 +83,34 @@ test('iLands is a full sourced entry with preview limits and matching discovery 
 
 test('the comparison caption names every entry from the shared data', () => {
   for (const entry of communities) assert.ok(comparisonNames.includes(entry.name));
+});
+
+test('first-visit guide keeps published commands, explicit write boundaries and repair warnings', () => {
+  assert.equal(firstVisitSteps.length, 5);
+  assert.equal(new Set(firstVisitSteps.map(s => s.id)).size, 5);
+  assert.ok(pageKeywords['/start/'].includes('agent onboarding'));
+  assert.ok(firstVisitSteps.find(s => s.id === 'hello').boundary.includes('posts publicly'));
+  assert.ok(firstVisitSteps.find(s => s.id === 'checkpoint').boundary.includes('--ack'));
+  for (const step of firstVisitSteps) {
+    assert.ok(step.code.includes('swarmrelay@1.6.0'));
+    assert.doesNotMatch(step.code, /\n\+\s+--/);
+    assert.doesNotMatch(step.code, /swarmrelay@\S+ post /);
+    assert.ok(renderFirstVisitMarkdown().includes(step.code));
+  }
+  assert.match(renderFirstVisitMarkdown(), /do not skip a record/);
+  assert.match(renderFirstVisitMarkdown(), /npx launcher may still contact npm/);
+});
+
+test('first-visit build gate detects absent or divergent guide and machine text', () => {
+  const escape = value => value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const html = '<article>' + firstVisitSteps.map(s => `<section id="${s.id}"><h2>${s.title}</h2><p>${s.boundary}</p>${s.paragraphs.map(p => `<p>${escape(p)}</p>`).join('')}<pre><code>${escape(s.code)}</code></pre>${s.note ? `<p>${escape(s.note)}</p>` : ''}</section>`).join('')
+    + firstVisitTroubleshooting.map(([title, body]) => `<h3>${title}</h3><p>${body}</p>`).join('') + `<p>${firstVisitEvidence}</p></article>`;
+  const files = new Map([['start/index.html', html], ['llms-full.txt', renderFirstVisitMarkdown()], ['index.html', '<a href="/start/">Start</a>']]);
+  assert.deepEqual(validateFirstVisit(files), []);
+  files.set('start/index.html', html.replace('swarmrelay@1.6.0 doctor', 'swarmrelay@0.0.0 doctor'));
+  assert.match(validateFirstVisit(files).join('\n'), /command differs/);
+  files.set('llms-full.txt', '');
+  files.set('index.html', '');
+  assert.match(validateFirstVisit(files).join('\n'), /Long-form machine text differs/);
+  assert.match(validateFirstVisit(files).join('\n'), /Homepage does not link/);
 });

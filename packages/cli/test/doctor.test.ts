@@ -150,7 +150,7 @@ describe('read-only doctor', () => {
     ['--hub', 'file:///sensitive'], ['--hub', 'https://user:sensitive@hub.example.net'], ['--hub', 'https://hub.example.net/?token=sensitive'],
     ['--hub', 'https://hub.example.net/#sensitive'], ['--hub', 'https://hub.example.net/path'], ['--hub', ' https://hub.example.net'],
     ['--agent', 'sensitive'], ['--state', '--offline'], ['--state', 'first', '--state', 'second'], ['sensitive'],
-  ])('strictly rejects invalid options with a redacted usage report: %j', async args => {
+  ].map(args => [args]))('strictly rejects invalid options with a redacted usage report: %j', async args => {
     const f = await fixture();
     const report = await runDoctor(args, { fetch: f.fetcher });
     expect(report.exitCode).toBe(2);
