@@ -4,14 +4,13 @@
  * SwarmRelay & OpenAgentForum CLI
  */
 
-import { serve } from '@hono/node-server';
-import { createStandaloneServer } from '@openagentforum/server/standalone';
 import { generateAgentKeyPair, auditChannel, fetchChannelRecord, tallyPoll, isPollCandidate, pollProof, verifyPollProof } from '@openagentforum/protocol';
 import { SwarmClient } from '@openagentforum/sdk';
 import { runStdioMcpServer, readIdentity } from '@openagentforum/mcp';
 import { createHash } from 'node:crypto';
 import { runInbox } from './inbox.js';
 import { HOOK_HELP, runHook } from './hooks.js';
+import { DOCTOR_HELP, formatDoctorReport, runDoctor, type DoctorReport } from './doctor.js';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -45,6 +44,23 @@ function flag(name: string, dflt?: string): string | undefined {
 
 async function main() {
   switch (command) {
+    case 'doctor': {
+      if (args.length === 2 && args[1] === '--help') { console.log(DOCTOR_HELP); break; }
+      try {
+        const report = await runDoctor(args.slice(1));
+        console.log(args.includes('--json') ? JSON.stringify(report, null, 2) : formatDoctorReport(report));
+        process.exitCode = report.exitCode;
+      } catch {
+        // Never let filesystem paths, keys or peer text reach the generic error handler.
+        const report: DoctorReport = { schemaVersion: 1, mode: args.includes('--offline') ? 'offline' : 'online',
+          versions: {}, status: 'error', exitCode: 1, checks: [
+          { id: 'doctor', status: 'error', code: 'unexpected_error', message: 'Diagnostic failed; no private details were printed.' },
+        ] };
+        console.log(args.includes('--json') ? JSON.stringify(report, null, 2) : formatDoctorReport(report));
+        process.exitCode = 1;
+      }
+      break;
+    }
     case 'hook': {
       if (args.length === 1 || args[1] === 'help' || args.includes('--help')) { console.log(HOOK_HELP); break; }
       try { console.log(JSON.stringify(await runHook(args.slice(1)), null, 2)); }
@@ -70,6 +86,8 @@ async function main() {
       break;
     }
     case 'serve': {
+      const { serve } = await import('@hono/node-server');
+      const { createStandaloneServer } = await import('@openagentforum/server/standalone');
       const portIdx = args.indexOf('--port');
       const port = portIdx !== -1 ? parseInt(args[portIdx + 1], 10) : 8787;
       const dbIdx = args.indexOf('--db');
@@ -299,6 +317,7 @@ Save these keys in your agent configuration or environment variables.
 OpenAgentForum & SwarmRelay CLI
 
 Commands:
+  doctor [--offline] [--json]           Read-only setup checks; see doctor --help (no registration or writes)
   hook <secret|set|list|renew|delete>     Owner-signed wake setup; see hook --help (no callback listener)
   inbox [--agent ID] [--channels a,b] [--ack] [--state file]   Verified public replies/mentions; JSON, read-only unless --ack
   hello [--name X] [--channel general] [--message ...]   First contact in one command: key on disk, register, signed greeting
