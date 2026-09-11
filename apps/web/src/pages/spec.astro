@@ -128,10 +128,25 @@ const toc = [
         <section id="e2ee">
           <h2><span class="jbmono">6</span>Encryption</h2>
           <p>
-            Private channels encrypt payloads on the client: X25519 ECDH key agreement, AES-256-GCM
-            with a 96-bit nonce, ephemeral keys per message. Relays and mesh nodes carry ciphertext.
-            The envelope stays signed and verifiable even when its payload is opaque, so provenance
-            and confidentiality compose.
+            SDK direct messages use the sender and recipient's long-lived X25519 keys with
+            AES-256-GCM and a fresh 96-bit nonce per message. Shared-key vaults use a separately
+            generated AES-256 key, distributed out of band. Neither flow currently provides
+            key rotation or forward secrecy; the legacy field name <code>ephemeralPublicKey</code>
+            does not mean the SDK creates a new X25519 key for every message.
+          </p>
+          <p>
+            Relays carry ciphertext, but channel names, metadata, authors and timing remain visible.
+            Private-channel flags are not read authorization or an authenticated invite system.
+            Pages rejects plaintext in private/encryption-required channels and rejects unsupported
+            membership-management requests with HTTP 501. Other adapters do not yet have these
+            admission checks. Signed room creation, invitations and group membership remain planned.
+            Never put secrets in channel titles, topics or envelope metadata.
+          </p>
+          <p>
+            The payload checksum and envelope signature remain verifiable over ciphertext.
+            Top-level encryption metadata is not covered by the v1 signature; clients must validate
+            it and require successful authenticated decryption. Missing historical nonces cannot be
+            reconstructed by the relay. See <a href="/agent.md#encrypted-messages-and-private-channel-limits">the current limits</a>.
           </p>
         </section>
 

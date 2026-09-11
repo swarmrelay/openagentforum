@@ -1,6 +1,7 @@
 import { tallyPoll, pollProof, checkVoteIngest, checkPollIngest, isPollCandidate, type PollTally } from '@openagentforum/protocol';
 import { createMcpManifest } from '../_lib/mcp-manifest.js';
 import { handlePagesHookRequest, type HubEnv } from '../_lib/wake.js';
+import { encryptionError, storedEnvelope, type EnvelopeRow } from '../_lib/envelopes.js';
 
 /**
  * Cloudflare Pages Functions Native API Handler for /v1/*
@@ -43,6 +44,10 @@ interface MessageRecord {
   signature: string;
   checksum: string;
   encrypted?: boolean;
+  replyToId?: string;
+  recipientKeys?: Record<string, string>;
+  ephemeralPublicKey?: string;
+  nonce?: string;
 }
 
 interface TaskRecord {
@@ -59,6 +64,13 @@ interface TaskRecord {
   resultPayload?: any;
   createdAt: number;
   updatedAt: number;
+}
+
+// Unsigned v1 metadata must still match what a replay acknowledgment says was stored.
+function envelopeMetadata(envelope: MessageRecord) {
+  return { encrypted: envelope.encrypted === true, replyToId: envelope.replyToId ?? null,
+    nonce: envelope.nonce ?? null, ephemeralPublicKey: envelope.ephemeralPublicKey ?? null,
+    recipientKeys: envelope.recipientKeys ?? null };
 }
 
 // In-Memory fallback store (used only if D1 is not bound)
@@ -385,17 +397,40 @@ export const onRequest: PagesFunction<HubEnv> = async (context) => {
     if (path === '/v1/channels' && method === 'POST') {
       const body = (await request.json()) as any;
       const { name, title, topic = '', isPrivate = false, e2eeRequired = false, creatorId = 'system' } = body;
+      // Membership is not an authenticated public API yet (#162). Never silently
+      // accept or persist an unverified ACL (wake access also relies on this column).
+      if (body.allowedAgents !== undefined && (!Array.isArray(body.allowedAgents) || body.allowedAgents.length)) {
+        return jsonResponse({ error: 'Signed membership management is not implemented', reason: 'membership_management_unavailable' }, 501);
+      }
+      if (typeof isPrivate !== 'boolean' || typeof e2eeRequired !== 'boolean') return jsonResponse({ error: 'Channel privacy flags must be booleans' }, 400);
       if (!name || !title) return jsonResponse({ error: 'name and title required' }, 400);
 
       const slug = name.toLowerCase().trim().replace(/[^a-z0-9-_]/g, '-');
       const now = Date.now();
+      if (!env?.DB && (isPrivate || e2eeRequired) && memoryFallback.messages.get(slug)?.length) {
+        return jsonResponse({ error: 'Cannot turn existing public history into a private channel', reason: 'channel_exists' }, 409);
+      }
+
+      const existingChannel = env?.DB
+        ? await env.DB.prepare('SELECT is_private, e2ee_required FROM channels WHERE name = ?').bind(slug).first<{ is_private: number; e2ee_required: number }>()
+        : memoryFallback.channels.has(slug) ? {
+          is_private: Number(memoryFallback.channels.get(slug)!.isPrivate),
+          e2ee_required: Number(memoryFallback.channels.get(slug)!.e2eeRequired),
+        } : null;
+      if (existingChannel && (isPrivate || e2eeRequired || existingChannel.is_private || existingChannel.e2ee_required)) {
+        return jsonResponse({ error: 'Private channel already exists; authenticated updates are not implemented', reason: 'channel_exists' }, 409);
+      }
 
       if (env?.DB) {
-        await env.DB.prepare(`
+        const written = await env.DB.prepare(`
           INSERT INTO channels (name, title, topic, is_private, e2ee_required, creator_id, created_at, message_count)
           VALUES (?, ?, ?, ?, ?, ?, ?, 0)
           ON CONFLICT(name) DO UPDATE SET title = excluded.title, topic = excluded.topic
-        `).bind(slug, title, topic, isPrivate ? 1 : 0, e2eeRequired ? 1 : 0, creatorId, now).run();
+          WHERE channels.is_private = 0 AND channels.e2ee_required = 0
+            AND excluded.is_private = 0 AND excluded.e2ee_required = 0
+          RETURNING name
+        `).bind(slug, title, topic, isPrivate ? 1 : 0, e2eeRequired ? 1 : 0, creatorId, now).first<{ name: string }>();
+        if (!written) return jsonResponse({ error: 'Private channel already exists', reason: 'channel_exists' }, 409);
       }
 
       const channel: ChannelRecord = {
@@ -538,12 +573,7 @@ export const onRequest: PagesFunction<HubEnv> = async (context) => {
             for (const r of batch) {
               const sseq = r.stored_seq ?? r.sequence;
               cursor = Math.max(cursor, sseq);
-              const data = JSON.stringify({
-                id: r.id, channel: r.channel, sender: r.sender, type: r.type,
-                sequence: r.sequence, storedSeq: sseq, timestamp: r.timestamp,
-                payload: JSON.parse(r.payload_json), signature: r.signature,
-                checksum: r.checksum, encrypted: r.encrypted === 1,
-              });
+              const data = JSON.stringify(storedEnvelope(r));
               await send(`id: ${sseq}\nevent: envelope\ndata: ${data}\n\n`);
             }
             if (!batch.length) await send(': ping\n\n');
@@ -574,19 +604,6 @@ export const onRequest: PagesFunction<HubEnv> = async (context) => {
       if (method === 'GET') {
         // `sequence` is the value the sender signed (verify-as-stored, #7);
         // `storedSeq` is unsigned relay ingest order — never verified against.
-        const mapRow = (r: any) => ({
-          id: r.id,
-          channel: r.channel,
-          sender: r.sender,
-          type: r.type,
-          sequence: r.sequence,
-          storedSeq: r.stored_seq ?? r.sequence,
-          timestamp: r.timestamp,
-          payload: JSON.parse(r.payload_json),
-          signature: r.signature,
-          checksum: r.checksum,
-          encrypted: r.encrypted === 1,
-        });
         const afterRaw = url.searchParams.get('after');
         const after = afterRaw === null ? null : Number(afterRaw);
         const hasAfter = after !== null;
@@ -611,7 +628,7 @@ export const onRequest: PagesFunction<HubEnv> = async (context) => {
             await new Promise((r) => setTimeout(r, 2000));
             results = await fetchRows();
           }
-          const msgs = results.map(mapRow);
+          const msgs = results.map(storedEnvelope);
           return jsonResponse({ channel: chName, messages: msgs, count: msgs.length });
         }
 
@@ -663,6 +680,12 @@ export const onRequest: PagesFunction<HubEnv> = async (context) => {
           return jsonResponse({ error: 'Invalid Ed25519 signature' }, 403);
         }
 
+        const channelPolicy = env?.DB
+          ? await env.DB.prepare('SELECT is_private, e2ee_required FROM channels WHERE name = ?').bind(chName).first<{ is_private: number; e2ee_required: number }>()
+          : { is_private: Number(memoryFallback.channels.get(chName)?.isPrivate ?? false), e2ee_required: Number(memoryFallback.channels.get(chName)?.e2eeRequired ?? false) };
+        const encryptionReason = encryptionError(envelope, Boolean(channelPolicy?.is_private || channelPolicy?.e2ee_required || envelope.type === 'e2ee_blob'));
+        if (encryptionReason) return jsonResponse({ error: 'Encrypted envelopes require ciphertext and valid encryption metadata', reason: encryptionReason }, encryptionReason === 'encryption_required' ? 403 : 400);
+
         // (RFC 0001) poll and ballot envelopes: ingest checks on top of the envelope checks
         if (envelope.type === 'vote' || envelope.type === 'poll') {
           const p: any = envelope.payload;
@@ -691,10 +714,11 @@ export const onRequest: PagesFunction<HubEnv> = async (context) => {
           // Idempotency (#33) with integrity (#35): only a byte-identical
           // replay is acknowledged. A different envelope reusing an id is a
           // conflict, never a confirmation.
-          const existing = await env.DB.prepare('SELECT stored_seq, sequence, signature FROM messages WHERE id = ?').bind(envelope.id).first<{ stored_seq: number; sequence: number; signature: string }>();
+          const existing = await env.DB.prepare('SELECT * FROM messages WHERE id = ?').bind(envelope.id).first<EnvelopeRow>();
           if (existing) {
-            if (existing.signature === envelope.signature) {
-              return jsonResponse({ success: true, alreadyStored: true, envelope: { ...envelope, storedSeq: existing.stored_seq ?? existing.sequence } });
+            const saved = storedEnvelope(existing);
+            if (existing.signature === envelope.signature && canonicalizeJson(envelopeMetadata(saved)) === canonicalizeJson(envelopeMetadata(envelope))) {
+              return jsonResponse({ success: true, alreadyStored: true, envelope: saved });
             }
             return jsonResponse({ error: 'Envelope id is already bound to a different envelope' }, 409);
           }
@@ -715,9 +739,15 @@ export const onRequest: PagesFunction<HubEnv> = async (context) => {
             const seqRes = await env.DB.prepare('SELECT COALESCE(MAX(stored_seq), 0) + 1 as next_seq FROM messages WHERE channel = ?').bind(chName).first<{ next_seq: number }>();
             storedSeq = seqRes?.next_seq ?? 1;
             try {
-              await env.DB.prepare(`
-                INSERT INTO messages (id, channel, sender, type, sequence, stored_seq, timestamp, payload_json, signature, checksum, encrypted)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              // Recheck at the write boundary: a private channel can be created
+              // concurrently after the earlier policy read for a new slug.
+              const saved = await env.DB.prepare(`
+                INSERT INTO messages (id, channel, sender, type, sequence, stored_seq, timestamp, payload_json, signature, checksum, encrypted, reply_to_id, recipient_keys_json, ephemeral_public_key, nonce)
+                SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                WHERE ? = 1 OR NOT EXISTS (
+                  SELECT 1 FROM channels WHERE name = ? AND (is_private = 1 OR e2ee_required = 1)
+                )
+                RETURNING id
               `).bind(
                 envelope.id,
                 chName,
@@ -729,8 +759,15 @@ export const onRequest: PagesFunction<HubEnv> = async (context) => {
                 JSON.stringify(envelope.payload),
                 envelope.signature,
                 envelope.checksum,
-                envelope.encrypted ? 1 : 0
-              ).run();
+                envelope.encrypted ? 1 : 0,
+                envelope.replyToId ?? null,
+                envelope.recipientKeys === undefined ? null : JSON.stringify(envelope.recipientKeys),
+                envelope.ephemeralPublicKey ?? null,
+                envelope.nonce ?? null,
+                envelope.encrypted === true ? 1 : 0,
+                chName
+              ).first<{ id: string }>();
+              if (!saved) return jsonResponse({ error: 'Channel now requires encryption', reason: 'encryption_required' }, 403);
               inserted = true;
             } catch (e: any) {
               if (!String(e?.message || e).includes('UNIQUE')) throw e;
@@ -743,7 +780,18 @@ export const onRequest: PagesFunction<HubEnv> = async (context) => {
           await env.DB.prepare('UPDATE channels SET message_count = message_count + 1, last_message_at = ? WHERE name = ?').bind(envelope.timestamp, chName).run();
           await env.DB.prepare('UPDATE agents SET last_seen_at = ? WHERE agent_id = ?').bind(now, envelope.sender).run();
         } else {
+          const currentPolicy = memoryFallback.channels.get(chName);
+          if ((currentPolicy?.isPrivate || currentPolicy?.e2eeRequired) && envelope.encrypted !== true) {
+            return jsonResponse({ error: 'Channel now requires encryption', reason: 'encryption_required' }, 403);
+          }
           const list = memoryFallback.messages.get(chName) || [];
+          const existing = Array.from(memoryFallback.messages.values()).flat().find(record => record.id === envelope.id);
+          if (existing) {
+            if (existing.signature === envelope.signature && canonicalizeJson(envelopeMetadata(existing)) === canonicalizeJson(envelopeMetadata(envelope))) {
+              return jsonResponse({ success: true, alreadyStored: true, envelope: existing });
+            }
+            return jsonResponse({ error: 'Envelope id is already bound to a different envelope' }, 409);
+          }
           storedSeq = list.length + 1;
           (envelope as any).storedSeq = storedSeq;
           list.push(envelope);

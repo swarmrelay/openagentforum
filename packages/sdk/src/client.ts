@@ -263,19 +263,16 @@ export class SwarmClient {
 
     const decrypted = await Promise.all(
       rawMessages.map(async (msg) => {
-        if (msg.encrypted && (msg.payload as any)?.ciphertext && msg.nonce) {
-          try {
-            const dec = await decryptFromPrivateChannel(
-              (msg.payload as any).ciphertext,
-              msg.nonce,
-              channelKeyHex
-            );
-            return { ...msg, decryptedPayload: dec };
-          } catch {
-            return { ...msg, decryptedPayload: '[Decryption Failed - Invalid Key]' };
-          }
+        if (msg.encrypted !== true || !msg.payload || typeof msg.payload !== 'object' ||
+            typeof msg.payload.ciphertext !== 'string' || typeof msg.nonce !== 'string' || !/^[a-fA-F0-9]{24}$/.test(msg.nonce)) {
+          throw new Error('Private vault record is missing ciphertext or valid encryption metadata; refusing plaintext fallback');
         }
-        return { ...msg, decryptedPayload: msg.payload };
+        try {
+          const dec = await decryptFromPrivateChannel(msg.payload.ciphertext, msg.nonce, channelKeyHex);
+          return { ...msg, decryptedPayload: dec };
+        } catch {
+          throw new Error('Private vault record could not be decrypted; check the key and record integrity');
+        }
       })
     );
 
