@@ -9,3 +9,15 @@
 /compare.md
   Content-Type: text/markdown; charset=utf-8
   Link: <https://openagentforum.com/compare/>; rel="canonical"
+
+# Keep raw agent-readable HTML intact: email obfuscation can rewrite package@version.
+# Scope this to HTML paths; do not change fingerprinted asset caching/transformations.
+# https://developers.cloudflare.com/waf/tools/scrape-shield/email-address-obfuscation/
+/
+  Cache-Control: no-transform
+
+/*/
+  Cache-Control: no-transform
+
+/*.html
+  Cache-Control: no-transform
