@@ -159,15 +159,45 @@ export function validateFirstVisit(files) {
   return errors;
 }
 
+// Check delivered copy, including metadata and the article text appended at build
+// time. Client helpers are not evidence of a deployed payment integration.
+export function validatePaymentMessaging(files) {
+  const errors = [];
+  const pages = ['payments/index.html', 'commerce/index.html', 'tasks/index.html', 'blog/autonomous-agent-affiliate-protocol-earning-usdc/index.html'];
+  const documents = [...pages, 'agent.md', 'llms-full.txt'];
+  const read = file => String(files.get(file) ?? '');
+  const visible = file => (file.endsWith('.html') ? text(parse(read(file))) : read(file)).replace(/\s+/g, ' ');
+  for (const file of documents) {
+    if (!visible(file).includes('No built-in escrow or automatic payouts')) errors.push(`${file}: missing payment availability boundary`);
+  }
+  for (const file of ['payments/index.html', 'agent.md', 'llms-full.txt']) {
+    if (!visible(file).includes('No wallet provider or network is required to use the forum')) errors.push(`${file}: missing payment independence boundary`);
+    if (!visible(file).includes('not proof of payment')) errors.push(`${file}: missing receipt verification boundary`);
+  }
+  for (const file of ['commerce/index.html', 'blog/autonomous-agent-affiliate-protocol-earning-usdc/index.html', 'agent.md', 'llms-full.txt']) {
+    if (!visible(file).includes('Campaign routes are not implemented in the bundled hub adapters')) errors.push(`${file}: missing campaign availability boundary`);
+  }
+  const unsupported = /KeyKeeper automated escrow|Funds auto-release upon|Instant finality|Zero[- ](?:gas|fee) (?:internal )?micro|commissions auto-release|instant (?:non-custodial )?USDC payouts|automated Stripe webhook payouts|sales trigger automated payouts|LIVE REVENUE SHARE|\/v1\/campaigns\/[^\s<"']+\/(?:join|convert)|keykeeper\.world\/api\/v1\/agent\//i;
+  for (const file of [...documents, 'blog/index.html', 'llms.txt']) {
+    // Raw HTML includes descriptions/OG/JSON-LD as well as visible page copy.
+    if (unsupported.test(read(file))) errors.push(`${file}: unsupported payment or campaign promise`);
+  }
+  if (/btn-gen-ref-link|btn-copy-owner-prompt/.test(read('commerce/index.html'))) errors.push('commerce/index.html: unavailable campaign call to action');
+  if (!visible('blog/autonomous-agent-affiliate-protocol-earning-usdc/index.html').includes('Correction: proposal, not a live payout system')) errors.push('Affiliate article lacks its correction notice');
+  if (!visible('llms-full.txt').includes('Correction: proposal, not a live payout system')) errors.push('Long-form machine text lacks the affiliate correction');
+  return errors;
+}
+
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const files = readBuiltFiles(fileURLToPath(new URL('../dist/', import.meta.url)));
   const result = validateSite(files);
   result.errors.push(...validateComparison(files));
   result.errors.push(...validateFirstVisit(files));
+  result.errors.push(...validatePaymentMessaging(files));
   if (result.errors.length) {
     console.error(result.errors.join('\n'));
     process.exitCode = 1;
   } else {
-    console.log(`SEO checked: ${result.indexableCount} indexable pages, ${result.sitemapCount} canonical sitemap URLs, ${result.pageCount - result.indexableCount} noindex page; comparison and first-visit guides agree with machine text`);
+    console.log(`SEO checked: ${result.indexableCount} indexable pages, ${result.sitemapCount} canonical sitemap URLs, ${result.pageCount - result.indexableCount} noindex page; comparison, first-visit and payment guidance checked against machine text`);
   }
 }
