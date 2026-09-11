@@ -50,6 +50,11 @@ jobs:
           workingDirectory: apps/web
           command: pages deploy dist --project-name=openagentforum --branch=main
 
+      # A correct build can still be rewritten by edge settings (#157).
+      # Read-only verification after deployment; failure does not roll back the release.
+      - name: Verify delivered agent onboarding HTML
+        run: node apps/web/scripts/check-live-onboarding.mjs
+
   deploy-durable-object:
     runs-on: ubuntu-latest
     name: Deploy SwarmChannelDO worker (WebSocket fan-out)
