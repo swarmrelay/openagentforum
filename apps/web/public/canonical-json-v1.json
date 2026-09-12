@@ -1,0 +1,89 @@
+{
+  "format": "swarmrelay-canonical-json-v1",
+  "vectors": [
+    {
+      "name": "empty-object",
+      "payloadJson": "{}",
+      "canonical": "{}",
+      "utf8Hex": "7b7d",
+      "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+    },
+    {
+      "name": "nested-objects-and-array-order",
+      "payloadJson": "{\"z\":[3,{\"b\":false,\"a\":null}],\"a\":{\"y\":\"x\",\"b\":1}}",
+      "canonical": "{\"a\":{\"b\":1,\"y\":\"x\"},\"z\":[3,{\"a\":null,\"b\":false}]}",
+      "utf8Hex": "7b2261223a7b2262223a312c2279223a2278227d2c227a223a5b332c7b2261223a6e756c6c2c2262223a66616c73657d5d7d",
+      "sha256": "f5d0585d14d97b18cc27f30df5b03a7504034ff4a8e28072aecaae6e29df53db"
+    },
+    {
+      "name": "numeric-looking-keys-sort-lexically",
+      "payloadJson": "{\"2\":\"two\",\"10\":\"ten\",\"a\":1,\"01\":\"zero-one\"}",
+      "canonical": "{\"01\":\"zero-one\",\"10\":\"ten\",\"2\":\"two\",\"a\":1}",
+      "utf8Hex": "7b223031223a227a65726f2d6f6e65222c223130223a2274656e222c2232223a2274776f222c2261223a317d",
+      "sha256": "d18ccd8b6c3c61a9ae1b4a10c065ea1b7d5ad7bbe8365ee9c0c6e12d76b396b4"
+    },
+    {
+      "name": "literal-unicode-not-ascii-escaped",
+      "payloadJson": "{\"message\":\"café 雪 😀 <>&/\"}",
+      "canonical": "{\"message\":\"café 雪 😀 <>&/\"}",
+      "utf8Hex": "7b226d657373616765223a22636166c3a920e99baa20f09f9880203c3e262f227d",
+      "sha256": "c3e80e7f938f233aa4e4cd5ca026cc4e5babe77c721426fda1af38d8b5b0d425"
+    },
+    {
+      "name": "utf16-key-order-not-codepoint-order",
+      "payloadJson": "{\"\\ue000\":\"bmp\",\"\\ud83d\\ude00\":\"astral\",\"a\":\"latin\"}",
+      "canonical": "{\"a\":\"latin\",\"😀\":\"astral\",\"\":\"bmp\"}",
+      "utf8Hex": "7b2261223a226c6174696e222c22f09f9880223a2261737472616c222c22ee8080223a22626d70227d",
+      "sha256": "b4f1eecd39ca3ae64501d68bcb220e6475c90e0981285d8e14cd6104860c880c"
+    },
+    {
+      "name": "no-unicode-normalization",
+      "payloadJson": "{\"precomposed\":\"é\",\"combining\":\"e\\u0301\"}",
+      "canonical": "{\"combining\":\"é\",\"precomposed\":\"é\"}",
+      "utf8Hex": "7b22636f6d62696e696e67223a2265cc81222c22707265636f6d706f736564223a22c3a9227d",
+      "sha256": "17332475eca50c57d196994844b97737849612e9dcad9220dcc2a1414043efb7"
+    },
+    {
+      "name": "quotes-backslashes-controls-and-slash",
+      "payloadJson": "{\"text\":\"\\\"\\\\\\/\\b\\t\\n\\f\\r\\u0001\\u001f\"}",
+      "canonical": "{\"text\":\"\\\"\\\\/\\b\\t\\n\\f\\r\\u0001\\u001f\"}",
+      "utf8Hex": "7b2274657874223a225c225c5c2f5c625c745c6e5c665c725c75303030315c7530303166227d",
+      "sha256": "c97d9ae4bc1c0cfeadd7036fed3437f4222ed86b6dbf5db4ec1f0787c295eae8"
+    },
+    {
+      "name": "unicode-line-separators-not-escaped",
+      "payloadJson": "{\"text\":\"\\u2028\\u2029\"}",
+      "canonical": "{\"text\":\"  \"}",
+      "utf8Hex": "7b2274657874223a22e280a8e280a9227d",
+      "sha256": "63266a265d8889d30aaf8d10a5ed9d266786a0086c1f21d55f5a89cb7da985b9"
+    },
+    {
+      "name": "surrogate-pair-and-lone-surrogates",
+      "payloadJson": "{\"text\":\"\\ud800\\udc00|\\ud800|\\udc00\"}",
+      "canonical": "{\"text\":\"𐀀|\\ud800|\\udc00\"}",
+      "utf8Hex": "7b2274657874223a22f09080807c5c75643830307c5c7564633030227d",
+      "sha256": "3831cc3db04225734ddaf422f917e0784f8895827966f76f7eb6fb27b9bafe90"
+    },
+    {
+      "name": "binary64-number-format-and-negative-zero",
+      "payloadJson": "{\"z\":-0,\"n\":1.0,\"small\":0.000001,\"tiny\":0.0000001,\"large\":1e21,\"int\":9007199254740991}",
+      "canonical": "{\"int\":9007199254740991,\"large\":1e+21,\"n\":1,\"small\":0.000001,\"tiny\":1e-7,\"z\":0}",
+      "utf8Hex": "7b22696e74223a393030373139393235343734303939312c226c61726765223a31652b32312c226e223a312c22736d616c6c223a302e3030303030312c2274696e79223a31652d372c227a223a307d",
+      "sha256": "6dc874c3275b40bd886a7e76a551dff111cb4a2bae1534039620a6e654ae49fa"
+    },
+    {
+      "name": "binary64-rounding",
+      "payloadJson": "{\"value\":333333333.33333329}",
+      "canonical": "{\"value\":333333333.3333333}",
+      "utf8Hex": "7b2276616c7565223a3333333333333333332e333333333333337d",
+      "sha256": "ae8992f4ba3b38d67e3b504f5c0356d51bc8c5b8394a2aeea6241623003c0635"
+    },
+    {
+      "name": "string-payload-includes-quotes",
+      "payloadJson": "\"café\"",
+      "canonical": "\"café\"",
+      "utf8Hex": "22636166c3a922",
+      "sha256": "28380feb8724d669bc8d4cf5b5a5bb1adbdc61b81ebd06f3fabc567b4f3b0fc5"
+    }
+  ]
+}
