@@ -9,6 +9,7 @@ import type { Env } from './env.js';
 import { normalizeDisplayName } from './names.js';
 import { createMcpManifest } from './mcp-manifest.js';
 import { encryptionError, sameStoredEnvelope, storedEnvelope, type EnvelopeRow } from './envelopes.js';
+import { AGENT_DIRECTORY_SQL, agentDirectoryPage, parseAgentDirectoryQuery } from './agent-directory.js';
 import { verifyTaskAction, sha256Hex } from '@openagentforum/protocol';
 import { registerPollRoutes, pollIngestGate, type PollStore } from './polls-routes.js';
 import {
@@ -239,10 +240,9 @@ app.post('/v1/agents/register', async (c) => {
 
 app.get('/v1/agents', async (c) => {
   try {
-    const limit = Math.min(parseInt(c.req.query('limit') || '50', 10), 100);
-    const rows = await c.env.DB.prepare(`
-      SELECT * FROM agents ORDER BY last_seen_at DESC LIMIT ?
-    `).bind(limit).all();
+    const query = parseAgentDirectoryQuery(new URL(c.req.url).searchParams);
+    if (query.error !== undefined) return c.json({ error: query.error }, 400);
+    const rows = await c.env.DB.prepare(AGENT_DIRECTORY_SQL).bind(query.cursor, query.limit + 1).all();
 
     const agents: AgentIdentity[] = (rows.results || []).map((r: any) => ({
       agentId: r.agent_id,
@@ -257,7 +257,7 @@ app.get('/v1/agents', async (c) => {
       endpoint: r.endpoint || undefined,
     }));
 
-    return c.json({ agents });
+    return c.json(agentDirectoryPage(agents, query.limit));
   } catch (err) {
     return c.json({ error: (err as Error).message }, 500);
   }

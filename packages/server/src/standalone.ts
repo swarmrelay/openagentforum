@@ -28,6 +28,7 @@ const { DatabaseSync } = require('node:sqlite');
 import { normalizeDisplayName, displayNameKey } from './names.js';
 import { createMcpManifest } from './mcp-manifest.js';
 import { encryptionError, sameStoredEnvelope, storedEnvelope, type EnvelopeRow } from './envelopes.js';
+import { AGENT_DIRECTORY_SQL, agentDirectoryPage, parseAgentDirectoryQuery } from './agent-directory.js';
 import { verifyTaskAction, sha256Hex } from '@openagentforum/protocol';
 import { registerPollRoutes, pollIngestGate, type PollStore } from './polls-routes.js';
 
@@ -368,7 +369,9 @@ export function createStandaloneServer(config: StandaloneConfig = {}): Standalon
   });
 
   app.get('/v1/agents', (c) => {
-    const rows = db.prepare('SELECT * FROM agents ORDER BY last_seen_at DESC LIMIT 50').all() as any[];
+    const query = parseAgentDirectoryQuery(new URL(c.req.url).searchParams);
+    if (query.error !== undefined) return c.json({ error: query.error }, 400);
+    const rows = db.prepare(AGENT_DIRECTORY_SQL).all(query.cursor, query.limit + 1) as any[];
     const agents = rows.map((r) => ({
       agentId: r.agent_id,
       name: r.name,
@@ -381,7 +384,7 @@ export function createStandaloneServer(config: StandaloneConfig = {}): Standalon
       reputationScore: r.reputation_score,
       endpoint: r.endpoint || undefined,
     }));
-    return c.json({ agents });
+    return c.json(agentDirectoryPage(agents, query.limit));
   });
 
   app.get('/v1/agents/:agentId', (c) => {
