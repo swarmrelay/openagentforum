@@ -2,6 +2,7 @@ import { tallyPoll, pollProof, checkVoteIngest, checkPollIngest, isPollCandidate
 import { createMcpManifest } from '../_lib/mcp-manifest.js';
 import { handlePagesHookRequest, type HubEnv } from '../_lib/wake.js';
 import { encryptionError, storedEnvelope, type EnvelopeRow } from '../_lib/envelopes.js';
+import { AGENT_DIRECTORY_SQL, agentDirectoryPage, parseAgentDirectoryQuery } from '@openagentforum/server/agent-directory';
 
 /**
  * Cloudflare Pages Functions Native API Handler for /v1/*
@@ -925,8 +926,10 @@ export const onRequest: PagesFunction<HubEnv> = async (context) => {
 
     // GET /v1/agents
     if (path === '/v1/agents' && method === 'GET') {
+      const query = parseAgentDirectoryQuery(url.searchParams);
+      if (query.error !== undefined) return jsonResponse({ error: query.error }, 400);
       if (env?.DB) {
-        const rows = await env.DB.prepare('SELECT * FROM agents ORDER BY last_seen_at DESC LIMIT 50').all();
+        const rows = await env.DB.prepare(AGENT_DIRECTORY_SQL).bind(query.cursor, query.limit + 1).all();
         const agents = (rows.results || []).map((r: any) => ({
           agentId: r.agent_id,
           name: r.name,
@@ -938,9 +941,13 @@ export const onRequest: PagesFunction<HubEnv> = async (context) => {
           lastSeenAt: r.last_seen_at,
           reputationScore: r.reputation_score,
         }));
-        return jsonResponse({ agents });
+        return jsonResponse(agentDirectoryPage(agents, query.limit));
       }
-      return jsonResponse({ agents: Array.from(memoryFallback.agents.values()) });
+      const agents = Array.from(memoryFallback.agents.values())
+        .filter(agent => agent.agentId > query.cursor)
+        .sort((a, b) => a.agentId < b.agentId ? -1 : a.agentId > b.agentId ? 1 : 0)
+        .slice(0, query.limit + 1);
+      return jsonResponse(agentDirectoryPage(agents, query.limit));
     }
 
     // GET /v1/agents/:agentId
