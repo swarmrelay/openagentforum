@@ -1,12 +1,17 @@
 {
   "name": "@openagentforum/server",
-  "version": "1.8.3",
+  "version": "1.8.4",
   "description": "Cloudflare Edge Hub & Standalone Relay Engine for OpenAgentForum & SwarmRelay",
   "main": "./dist/index.js",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "type": "module",
   "exports": {
+    "./envelopes": {
+      "types": "./dist/envelopes.d.ts",
+      "import": "./dist/envelopes.js",
+      "default": "./dist/envelopes.js"
+    },
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js",

@@ -8,6 +8,7 @@ import { cors } from 'hono/cors';
 import type { Env } from './env.js';
 import { normalizeDisplayName } from './names.js';
 import { createMcpManifest } from './mcp-manifest.js';
+import { encryptionError, sameStoredEnvelope, storedEnvelope, type EnvelopeRow } from './envelopes.js';
 import { verifyTaskAction, sha256Hex } from '@openagentforum/protocol';
 import { registerPollRoutes, pollIngestGate, type PollStore } from './polls-routes.js';
 import {
@@ -17,7 +18,6 @@ import {
   type Channel,
   type MessageEnvelope,
   type TaskBounty,
-  type MessageType,
 } from '@openagentforum/protocol';
 
 export const app = new Hono<{ Bindings: Env }>();
@@ -306,7 +306,7 @@ app.get('/v1/channels', async (c) => {
       topic: r.topic,
       isPrivate: r.is_private === 1,
       e2eeRequired: r.e2ee_required === 1,
-      allowedAgents: JSON.parse(r.allowed_agents_json || '[]'),
+      allowedAgents: [], // Legacy unsigned lists are not authenticated membership.
       creatorId: r.creator_id,
       createdAt: r.created_at,
       messageCount: r.message_count,
@@ -324,27 +324,35 @@ app.post('/v1/channels', async (c) => {
     const body = await c.req.json();
     const { name, title, topic = '', isPrivate = false, e2eeRequired = false, allowedAgents = [], creatorId } = body;
 
-    if (!name || !title) {
+    if (!Array.isArray(allowedAgents) || allowedAgents.length) {
+      return c.json({ error: 'Signed membership management is not implemented', reason: 'membership_management_unavailable' }, 501);
+    }
+    if (typeof isPrivate !== 'boolean' || typeof e2eeRequired !== 'boolean') return c.json({ error: 'Channel privacy flags must be booleans' }, 400);
+
+    if (typeof name !== 'string' || !name || typeof title !== 'string' || !title) {
       return c.json({ error: 'Channel name and title are required' }, 400);
     }
 
     const slug = name.toLowerCase().trim().replace(/[^a-z0-9-_]/g, '-');
     const now = Date.now();
 
-    await c.env.DB.prepare(`
+    const written = await c.env.DB.prepare(`
       INSERT INTO channels (
         name, title, topic, is_private, e2ee_required, allowed_agents_json, creator_id, created_at, message_count
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)
+      ON CONFLICT(name) DO NOTHING
+      RETURNING name
     `).bind(
       slug,
       title,
       topic,
       isPrivate ? 1 : 0,
       e2eeRequired ? 1 : 0,
-      JSON.stringify(allowedAgents),
+      '[]',
       creatorId || 'system',
       now
-    ).run();
+    ).first<{ name: string }>();
+    if (!written) return c.json({ error: 'Channel already exists; authenticated updates are not implemented', reason: 'channel_exists' }, 409);
 
     // Initialize DO state
     const doStub = c.env.SWARM_CHANNEL.getByName(slug);
@@ -383,7 +391,7 @@ app.get('/v1/channels/:name', async (c) => {
       topic: r.topic,
       isPrivate: r.is_private === 1,
       e2eeRequired: r.e2ee_required === 1,
-      allowedAgents: JSON.parse(r.allowed_agents_json || '[]'),
+      allowedAgents: [], // Legacy unsigned lists are not authenticated membership.
       creatorId: r.creator_id,
       createdAt: r.created_at,
       messageCount: r.message_count,
@@ -456,24 +464,8 @@ app.get('/v1/channels/:name/messages', async (c) => {
       params.push(limit);
     }
 
-    const rows = await c.env.DB.prepare(query).bind(...params).all();
-    const messages: MessageEnvelope[] = (rows.results || []).map((r: any) => ({
-      id: r.id,
-      channel: r.channel,
-      sender: r.sender,
-      type: r.type as MessageType,
-      sequence: r.sequence,
-      storedSeq: r.stored_seq ?? r.sequence,
-      timestamp: r.timestamp,
-      payload: JSON.parse(r.payload_json),
-      signature: r.signature,
-      checksum: r.checksum,
-      replyToId: r.reply_to_id || undefined,
-      encrypted: r.encrypted === 1,
-      recipientKeys: r.recipient_keys_json ? JSON.parse(r.recipient_keys_json) : undefined,
-      ephemeralPublicKey: r.ephemeral_public_key || undefined,
-      nonce: r.nonce || undefined,
-    }));
+    const rows = await c.env.DB.prepare(query).bind(...params).all<EnvelopeRow>();
+    const messages = (rows.results || []).map(storedEnvelope);
 
     // (#60) no cursor: the DESC newest page is returned oldest-first within
     // the page; an explicit cursor is already ASC and must never be reversed.
@@ -508,19 +500,26 @@ app.post('/v1/channels/:name/messages', async (c) => {
     if (!verification.valid) {
       return c.json({ error: `Cryptographic validation failed: ${verification.error}` }, 403);
     }
+    if (typeof envelope.sequence !== 'number' || typeof envelope.timestamp !== 'number') {
+      return c.json({ error: 'sequence and timestamp must be numbers and are part of the sign string' }, 400);
+    }
+    if (envelope.channel !== channelName) {
+      return c.json({ error: `Envelope channel ${envelope.channel} does not match URL channel ${channelName}` }, 400);
+    }
+    const existingChannel = await c.env.DB.prepare('SELECT is_private, e2ee_required FROM channels WHERE name = ?')
+      .bind(channelName).first<{ is_private: number; e2ee_required: number }>();
+    const encryptionReason = encryptionError(envelope, Boolean(existingChannel?.is_private || existingChannel?.e2ee_required ||
+      (!existingChannel && channelName.startsWith('dm-')) || envelope.type === 'e2ee_blob'));
+    if (encryptionReason) return c.json({ error: 'Encrypted envelopes require ciphertext and valid encryption metadata', reason: encryptionReason }, encryptionReason === 'encryption_required' ? 403 : 400);
     // (RFC 0001) poll and ballot envelopes get the ingest checks on top
     const pollRefusal = await pollIngestGate(d1PollStore(c.env.DB), envelope, (c.env as any).PUBLIC_ORIGIN || new URL(c.req.url).origin);
     if (pollRefusal) return c.json(pollRefusal.body, pollRefusal.status as any);
 
     // 2.5 Ensure Channel exists (auto-create dynamic DM or private channels)
-    const existingChannel = await c.env.DB.prepare('SELECT name FROM channels WHERE name = ?')
-      .bind(channelName)
-      .first<{ name: string }>();
-
     if (!existingChannel) {
       const isDm = channelName.startsWith('dm-');
       await c.env.DB.prepare(`
-        INSERT INTO channels (name, title, topic, is_private, e2ee_required, allowed_agents_json, creator_id, created_at, message_count)
+        INSERT OR IGNORE INTO channels (name, title, topic, is_private, e2ee_required, allowed_agents_json, creator_id, created_at, message_count)
         VALUES (?, ?, ?, ?, ?, '[]', ?, ?, 0)
       `).bind(
         channelName,
@@ -535,16 +534,11 @@ app.post('/v1/channels/:name/messages', async (c) => {
 
     // (#29) verify-as-stored: the client-signed sequence is stored verbatim;
     // the Durable Object counter provides unsigned ingest order (storedSeq).
-    if (typeof envelope.sequence !== 'number' || typeof envelope.timestamp !== 'number') {
-      return c.json({ error: 'sequence and timestamp must be numbers and are part of the sign string' }, 400);
-    }
-    if (envelope.channel !== channelName) {
-      return c.json({ error: `Envelope channel ${envelope.channel} does not match URL channel ${channelName}` }, 400);
-    }
-    const existingMsg = await c.env.DB.prepare('SELECT stored_seq, sequence, signature FROM messages WHERE id = ?').bind(envelope.id).first<any>();
+    const existingMsg = await c.env.DB.prepare('SELECT * FROM messages WHERE id = ?').bind(envelope.id).first<EnvelopeRow>();
     if (existingMsg) {
-      if (existingMsg.signature === envelope.signature) {
-        return c.json({ success: true, alreadyStored: true, envelope: { ...envelope, channel: channelName, storedSeq: existingMsg.stored_seq ?? existingMsg.sequence } });
+      const saved = storedEnvelope(existingMsg);
+      if (sameStoredEnvelope(saved, envelope)) {
+        return c.json({ success: true, alreadyStored: true, envelope: saved });
       }
       return c.json({ error: 'Envelope id is already bound to a different envelope' }, 409);
     }
@@ -552,10 +546,14 @@ app.post('/v1/channels/:name/messages', async (c) => {
     const storedSeq = await doStub.getNextSequence();
 
     // 4. Save to D1 Relational DB
-    await c.env.DB.prepare(`
+    const savedRow = await c.env.DB.prepare(`
       INSERT INTO messages (
         id, channel, sender, type, sequence, stored_seq, timestamp, payload_json, signature, checksum, reply_to_id, encrypted, recipient_keys_json, ephemeral_public_key, nonce
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+      WHERE ? = 1 OR NOT EXISTS (
+        SELECT 1 FROM channels WHERE name = ? AND (is_private = 1 OR e2ee_required = 1)
+      )
+      RETURNING *
     `).bind(
       envelope.id,
       channelName,
@@ -567,12 +565,16 @@ app.post('/v1/channels/:name/messages', async (c) => {
       JSON.stringify(envelope.payload),
       envelope.signature,
       envelope.checksum,
-      envelope.replyToId || null,
+      envelope.replyToId ?? null,
       envelope.encrypted ? 1 : 0,
       envelope.recipientKeys ? JSON.stringify(envelope.recipientKeys) : null,
       envelope.ephemeralPublicKey || null,
-      envelope.nonce || null
-    ).run();
+      envelope.nonce ?? null,
+      envelope.encrypted === true ? 1 : 0,
+      channelName
+    ).first<EnvelopeRow>();
+    if (!savedRow) return c.json({ error: 'Channel now requires encryption', reason: 'encryption_required' }, 403);
+    const saved = storedEnvelope(savedRow);
 
     // 5. Update Channel metadata & Agent activity
     await c.env.DB.prepare(`
@@ -584,9 +586,9 @@ app.post('/v1/channels/:name/messages', async (c) => {
     `).bind(envelope.timestamp, envelope.sender).run();
 
     // 6. Broadcast through DO to active WebSockets & Subscribers
-    await doStub.broadcastMessage(envelope);
+    await doStub.broadcastMessage(saved);
 
-    return c.json({ success: true, envelope: { ...envelope, storedSeq } });
+    return c.json({ success: true, envelope: saved });
   } catch (err) {
     return c.json({ error: (err as Error).message }, 500);
   }
