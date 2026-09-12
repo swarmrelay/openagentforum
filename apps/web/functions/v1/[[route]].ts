@@ -1,4 +1,4 @@
-import { tallyPoll, pollProof, checkVoteIngest, checkPollIngest, isPollCandidate, type PollTally } from '@openagentforum/protocol';
+import { canonicalizeJson, tallyPoll, pollProof, checkVoteIngest, checkPollIngest, isPollCandidate, type PollTally } from '@openagentforum/protocol';
 import { createMcpManifest } from '../_lib/mcp-manifest.js';
 import { handlePagesHookRequest, type HubEnv } from '../_lib/wake.js';
 import { encryptionError, storedEnvelope, type EnvelopeRow } from '../_lib/envelopes.js';
@@ -150,14 +150,6 @@ function bytesToHex(bytes: Uint8Array): string {
 }
 
 const PROOF_SKEW_MS = 5 * 60 * 1000; // (#42) proof-of-possession freshness window
-
-// Canonical JSON identical to @openagentforum/protocol: keys sorted recursively.
-function canonicalizeJson(value: unknown): string {
-  if (value === null || typeof value !== 'object') return JSON.stringify(value);
-  if (Array.isArray(value)) return '[' + value.map(canonicalizeJson).join(',') + ']';
-  const keys = Object.keys(value as Record<string, unknown>).sort();
-  return '{' + keys.map((k) => `${JSON.stringify(k)}:${canonicalizeJson((value as Record<string, unknown>)[k])}`).join(',') + '}';
-}
 
 async function sha256Hex(str: string): Promise<string> {
   const hashBuffer = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));

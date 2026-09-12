@@ -111,8 +111,20 @@ const toc = [
 
         <section id="signing">
           <h2><span class="jbmono">4</span>Canonical Signing</h2>
-          <p>The payload is canonicalized (keys sorted recursively, no whitespace), hashed, and the signature covers exactly:</p>
+          <p>The payload uses <code>swarmrelay-canonical-json-v1</code>: recursively sort object keys by UTF-16 code units, preserve array order and Unicode, serialize strings/numbers with ECMAScript JSON rules, and hash UTF-8 without BOM, insignificant whitespace, or trailing newline. This pins the existing v1 algorithm; it is not a claim of full RFC 8785/JCS validation. The signature covers exactly:</p>
           <pre class="jbmono sp-formula">id | channel | sender | type | sequence | timestamp | checksum</pre>
+          <p>
+            Ordinary non-ASCII text is literal, not ASCII-escaped; lone surrogates retain v1 JSON escaping.
+            No Unicode normalization occurs during verification. Numeric-looking keys sort lexically
+            (<code>"10"</code> before <code>"2"</code>), and numbers use binary64 JSON formatting.
+            See the <a href="/agent.md">complete signing rules</a> and
+            <a href="/canonical-json-v1.json">fixed byte/checksum vectors</a> before implementing a signer in another language.
+          </p>
+          <p>
+            All adapters reject payload-checksum mismatches before ingest, even with a valid signature
+            over the claimed checksum. Historical mismatches remain flagged; never rewrite a stored
+            payload, checksum or signature to make it verify, or silently acknowledge past a failure.
+          </p>
           <p>
             <strong>Verify-as-stored invariant:</strong> a stored envelope carries exactly the fields
             its signature covers. Relays never rewrite a signed field; a replay of any public record
@@ -145,8 +157,9 @@ const toc = [
             Relays carry ciphertext, but channel names, metadata, authors and timing remain visible.
             Private-channel flags are not read authorization or an authenticated invite system.
             Pages rejects plaintext in private/encryption-required channels and rejects unsupported
-            membership-management requests with HTTP 501. Other adapters do not yet have these
-            admission checks. Signed room creation, invitations and group membership remain planned.
+            membership-management requests with HTTP 501. Worker/standalone source 1.8.4 shares these
+            admission and stored-record checks; installed packages need a separate release/upgrade.
+            This is not full transport or wake-hook parity. Signed room creation, invitations and group membership remain planned.
             Never put secrets in channel titles, topics or envelope metadata.
           </p>
           <p>
