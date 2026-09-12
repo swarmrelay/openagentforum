@@ -27,6 +27,7 @@ const require = createRequire(import.meta.url);
 const { DatabaseSync } = require('node:sqlite');
 import { normalizeDisplayName, displayNameKey } from './names.js';
 import { createMcpManifest } from './mcp-manifest.js';
+import { encryptionError, sameStoredEnvelope, storedEnvelope, type EnvelopeRow } from './envelopes.js';
 import { verifyTaskAction, sha256Hex } from '@openagentforum/protocol';
 import { registerPollRoutes, pollIngestGate, type PollStore } from './polls-routes.js';
 
@@ -411,7 +412,7 @@ export function createStandaloneServer(config: StandaloneConfig = {}): Standalon
       topic: r.topic,
       isPrivate: r.is_private === 1,
       e2eeRequired: r.e2ee_required === 1,
-      allowedAgents: JSON.parse(r.allowed_agents_json || '[]'),
+      allowedAgents: [], // Legacy unsigned lists are not authenticated membership.
       creatorId: r.creator_id,
       createdAt: r.created_at,
       messageCount: r.message_count,
@@ -422,15 +423,22 @@ export function createStandaloneServer(config: StandaloneConfig = {}): Standalon
 
   app.post('/v1/channels', async (c) => {
     const { name, title, topic = '', isPrivate = false, e2eeRequired = false, allowedAgents = [], creatorId } = await c.req.json();
-    if (!name || !title) return c.json({ error: 'name and title required' }, 400);
+    if (!Array.isArray(allowedAgents) || allowedAgents.length) {
+      return c.json({ error: 'Signed membership management is not implemented', reason: 'membership_management_unavailable' }, 501);
+    }
+    if (typeof isPrivate !== 'boolean' || typeof e2eeRequired !== 'boolean') return c.json({ error: 'Channel privacy flags must be booleans' }, 400);
+    if (typeof name !== 'string' || !name || typeof title !== 'string' || !title) return c.json({ error: 'name and title required' }, 400);
 
     const slug = name.toLowerCase().trim().replace(/[^a-z0-9-_]/g, '-');
     const now = Date.now();
 
-    db.prepare(`
+    const written = db.prepare(`
       INSERT INTO channels (name, title, topic, is_private, e2ee_required, allowed_agents_json, creator_id, created_at, message_count)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)
-    `).run(slug, title, topic, isPrivate ? 1 : 0, e2eeRequired ? 1 : 0, JSON.stringify(allowedAgents), creatorId || 'system', now);
+      ON CONFLICT(name) DO NOTHING
+      RETURNING name
+    `).get(slug, title, topic, isPrivate ? 1 : 0, e2eeRequired ? 1 : 0, '[]', creatorId || 'system', now);
+    if (!written) return c.json({ error: 'Channel already exists; authenticated updates are not implemented', reason: 'channel_exists' }, 409);
 
     return c.json({
       success: true,
@@ -482,23 +490,7 @@ export function createStandaloneServer(config: StandaloneConfig = {}): Standalon
       ? db.prepare('SELECT * FROM messages WHERE channel = ? AND COALESCE(stored_seq, sequence) > ? ORDER BY COALESCE(stored_seq, sequence) ASC LIMIT ?').all(slug, afterSeq, limit)
       : (db.prepare('SELECT * FROM messages WHERE channel = ? ORDER BY COALESCE(stored_seq, sequence) DESC LIMIT ?').all(slug, limit) as any[]).reverse()) as any[];
 
-    const messages = rows.map((r) => ({
-      id: r.id,
-      channel: r.channel,
-      sender: r.sender,
-      type: r.type,
-      sequence: r.sequence,
-      storedSeq: r.stored_seq ?? r.sequence,
-      timestamp: r.timestamp,
-      payload: JSON.parse(r.payload_json),
-      signature: r.signature,
-      checksum: r.checksum,
-      replyToId: r.reply_to_id || undefined,
-      encrypted: r.encrypted === 1,
-      recipientKeys: r.recipient_keys_json ? JSON.parse(r.recipient_keys_json) : undefined,
-      ephemeralPublicKey: r.ephemeral_public_key || undefined,
-      nonce: r.nonce || undefined,
-    }));
+    const messages = rows.map(storedEnvelope);
 
     return c.json({ channel: slug, messages, count: messages.length });
   });
@@ -523,16 +515,22 @@ export function createStandaloneServer(config: StandaloneConfig = {}): Standalon
     if (!verification.valid) {
       return c.json({ error: `Validation failed: ${verification.error}` }, 403);
     }
+    if (typeof envelope.sequence !== 'number' || typeof envelope.timestamp !== 'number') {
+      return c.json({ error: 'sequence and timestamp must be numbers and are part of the sign string' }, 400);
+    }
+    const existingChannel = db.prepare('SELECT is_private, e2ee_required FROM channels WHERE name = ?').get(channelName) as { is_private: number; e2ee_required: number } | undefined;
+    const encryptionReason = encryptionError(envelope, Boolean(existingChannel?.is_private || existingChannel?.e2ee_required ||
+      (!existingChannel && channelName.startsWith('dm-')) || envelope.type === 'e2ee_blob'));
+    if (encryptionReason) return c.json({ error: 'Encrypted envelopes require ciphertext and valid encryption metadata', reason: encryptionReason }, encryptionReason === 'encryption_required' ? 403 : 400);
     // (RFC 0001) poll and ballot envelopes get the ingest checks on top
     const pollRefusal = await pollIngestGate(pollStore, envelope, publicOrigin(c));
     if (pollRefusal) return c.json(pollRefusal.body, pollRefusal.status as any);
 
     // Ensure Channel exists (auto-create dynamic DM or private channels)
-    const existingChannel = db.prepare('SELECT name FROM channels WHERE name = ?').get(channelName);
     if (!existingChannel) {
       const isDm = channelName.startsWith('dm-');
       db.prepare(`
-        INSERT INTO channels (name, title, topic, is_private, e2ee_required, allowed_agents_json, creator_id, created_at, message_count)
+        INSERT OR IGNORE INTO channels (name, title, topic, is_private, e2ee_required, allowed_agents_json, creator_id, created_at, message_count)
         VALUES (?, ?, ?, ?, ?, '[]', ?, ?, 0)
       `).run(
         channelName,
@@ -547,24 +545,26 @@ export function createStandaloneServer(config: StandaloneConfig = {}): Standalon
 
     // (#29) verify-as-stored: sequence is a SIGNED field, stored verbatim.
     // Relay ingest order lives in the unsigned stored_seq column.
-    if (typeof envelope.sequence !== 'number' || typeof envelope.timestamp !== 'number') {
-      return c.json({ error: 'sequence and timestamp must be numbers and are part of the sign string' }, 400);
-    }
     // (#35) idempotency only for byte-identical replays; id reuse is a conflict
-    const existingMsg = db.prepare('SELECT stored_seq, sequence, signature FROM messages WHERE id = ?').get(envelope.id) as any;
+    const existingMsg = db.prepare('SELECT * FROM messages WHERE id = ?').get(envelope.id) as EnvelopeRow | undefined;
     if (existingMsg) {
-      if (existingMsg.signature === envelope.signature) {
-        return c.json({ success: true, alreadyStored: true, envelope: { ...envelope, channel: channelName, storedSeq: existingMsg.stored_seq ?? existingMsg.sequence } });
+      const saved = storedEnvelope(existingMsg);
+      if (sameStoredEnvelope(saved, envelope)) {
+        return c.json({ success: true, alreadyStored: true, envelope: saved });
       }
       return c.json({ error: 'Envelope id is already bound to a different envelope' }, 409);
     }
     const nextSeqRes = db.prepare('SELECT COALESCE(MAX(stored_seq), 0) + 1 as next_seq FROM messages WHERE channel = ?').get(channelName) as any;
     const storedSeq = nextSeqRes.next_seq;
 
-    db.prepare(`
+    const savedRow = db.prepare(`
       INSERT INTO messages (id, channel, sender, type, sequence, stored_seq, timestamp, payload_json, signature, checksum, reply_to_id, encrypted, recipient_keys_json, ephemeral_public_key, nonce)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
+      SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+      WHERE ? = 1 OR NOT EXISTS (
+        SELECT 1 FROM channels WHERE name = ? AND (is_private = 1 OR e2ee_required = 1)
+      )
+      RETURNING *
+    `).get(
       envelope.id,
       channelName,
       envelope.sender,
@@ -575,12 +575,16 @@ export function createStandaloneServer(config: StandaloneConfig = {}): Standalon
       JSON.stringify(envelope.payload),
       envelope.signature,
       envelope.checksum,
-      envelope.replyToId || null,
+      envelope.replyToId ?? null,
       envelope.encrypted ? 1 : 0,
       envelope.recipientKeys ? JSON.stringify(envelope.recipientKeys) : null,
       envelope.ephemeralPublicKey || null,
-      envelope.nonce || null
-    );
+      envelope.nonce ?? null,
+      envelope.encrypted === true ? 1 : 0,
+      channelName
+    ) as EnvelopeRow | undefined;
+    if (!savedRow) return c.json({ error: 'Channel now requires encryption', reason: 'encryption_required' }, 403);
+    const saved = storedEnvelope(savedRow);
 
     db.prepare('UPDATE channels SET message_count = message_count + 1, last_message_at = ? WHERE name = ?').run(envelope.timestamp, channelName);
     db.prepare('UPDATE agents SET last_seen_at = ? WHERE agent_id = ?').run(envelope.timestamp, envelope.sender);
@@ -589,11 +593,11 @@ export function createStandaloneServer(config: StandaloneConfig = {}): Standalon
     broadcastToChannel(channelName, {
       event: 'message',
       channel: channelName,
-      data: envelope,
+      data: saved,
       timestamp: Date.now(),
     });
 
-    return c.json({ success: true, envelope: { ...envelope, storedSeq } });
+    return c.json({ success: true, envelope: saved });
   });
 
   // SSE Stream
