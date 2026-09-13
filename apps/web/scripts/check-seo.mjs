@@ -5,6 +5,7 @@ import { parse } from 'parse5';
 import { canonicalPath, site } from '../src/data/seo.mjs';
 import { communities, comparisonNames, renderComparisonMarkdown, reviewedOn } from '../src/data/comparison.mjs';
 import { firstVisitSteps, firstVisitTroubleshooting, firstVisitEvidence, renderFirstVisitMarkdown } from '../src/data/first-visit.mjs';
+import { capabilitiesReviewedOn, capabilitiesScope, communicationCapabilities, communicationIssueUrl, renderCommunicationCapabilitiesMarkdown } from '../src/data/communication-capabilities.mjs';
 
 function descendants(node) {
   return [node, ...(node.childNodes ?? []).flatMap(descendants)];
@@ -125,6 +126,37 @@ export function validateComparison(files) {
   return errors;
 }
 
+// A dated shared availability statement must reach both humans and agents. Do
+// not let a pretty page, static guide or generated API reference drift alone.
+export function validateCommunicationCapabilities(files) {
+  const errors = [];
+  const read = file => String(files.get(file) ?? '');
+  for (const file of ['start/index.html', 'compare/index.html']) {
+    const nodes = descendants(parse(read(file)));
+    const section = nodes.find(n => attr(n, 'id') === 'communication-capabilities');
+    const contents = descendants(section ?? { childNodes: [] });
+    if (!text(section ?? { childNodes: [] }).includes(capabilitiesScope)) errors.push(`${file}: missing communication capability scope`);
+    if (!contents.some(n => n.tagName === 'time' && attr(n, 'datetime') === capabilitiesReviewedOn)) errors.push(`${file}: capability review date differs`);
+    for (const capability of communicationCapabilities) {
+      const row = contents.find(n => attr(n, 'id') === `capability-${capability.id}`);
+      const visible = text(row ?? { childNodes: [] });
+      if (![capability.name, capability.status, capability.detail].every(value => visible.includes(value))) errors.push(`${file}: capability differs: ${capability.id}`);
+      for (const issue of capability.issues) {
+        if (!descendants(row ?? { childNodes: [] }).some(n => n.tagName === 'a' && attr(n, 'href') === communicationIssueUrl(issue))) errors.push(`${file}: capability tracking missing: #${issue}`);
+      }
+    }
+  }
+  for (const file of ['agent.md', 'llms.txt', 'api.md', 'llms-full.txt', 'compare.md']) {
+    if (!read(file).includes(renderCommunicationCapabilitiesMarkdown())) errors.push(`${file}: communication capabilities differ from the shared source`);
+  }
+  for (const file of ['index.html', 'spec/index.html']) {
+    if (!read(file).includes('href="/start/#communication-capabilities"')) errors.push(`${file}: missing capability limits link`);
+  }
+  if (read('index.html').includes('Operator-blind sub-swarms')) errors.push('index.html: unsupported private-room promise');
+  if (/Eliminating prompt injection/.test(read('llms.txt'))) errors.push('llms.txt: signatures do not eliminate prompt injection');
+  return errors;
+}
+
 export function readBuiltFiles(dir) {
   const files = new Map();
   function walk(path, prefix = '') {
@@ -193,11 +225,12 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const result = validateSite(files);
   result.errors.push(...validateComparison(files));
   result.errors.push(...validateFirstVisit(files));
+  result.errors.push(...validateCommunicationCapabilities(files));
   result.errors.push(...validatePaymentMessaging(files));
   if (result.errors.length) {
     console.error(result.errors.join('\n'));
     process.exitCode = 1;
   } else {
-    console.log(`SEO checked: ${result.indexableCount} indexable pages, ${result.sitemapCount} canonical sitemap URLs, ${result.pageCount - result.indexableCount} noindex page; comparison, first-visit and payment guidance checked against machine text`);
+    console.log(`SEO checked: ${result.indexableCount} indexable pages, ${result.sitemapCount} canonical sitemap URLs, ${result.pageCount - result.indexableCount} noindex page; comparison, first-visit, communication capabilities and payment guidance checked against machine text`);
   }
 }

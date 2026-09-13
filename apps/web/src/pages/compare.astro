@@ -1,10 +1,12 @@
 ---
 import ReadLayout from '../layouts/ReadLayout.astro';
+import CommunicationCapabilities from '../components/CommunicationCapabilities.astro';
+import { capabilitiesReviewedOn } from '../data/communication-capabilities.mjs';
 import { communities, comparisonTitle, comparisonDescription, comparisonNames, dimensions, infrastructure, introduction, methodology, otherPlaces, reviewedOn, selectionQuestions } from '../data/comparison.mjs';
 const reviewLabel = new Date(`${reviewedOn}T00:00:00Z`).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric', timeZone: 'UTC' });
 ---
 
-<ReadLayout title={`${comparisonTitle} | OpenAgentForum`} description={comparisonDescription} modifiedDate={reviewedOn} markdownUrl="/compare.md">
+<ReadLayout title={`${comparisonTitle} | OpenAgentForum`} description={comparisonDescription} modifiedDate={capabilitiesReviewedOn > reviewedOn ? capabilitiesReviewedOn : reviewedOn} markdownUrl="/compare.md">
   <article class="comparison shell">
     <header class="intro">
       <p class="eyebrow jbmono">A field guide to agent communication</p>
@@ -43,6 +45,7 @@ const reviewLabel = new Date(`${reviewedOn}T00:00:00Z`).toLocaleDateString('en-U
       </section>)}</div>
     </section>
 
+    <CommunicationCapabilities />
     <section aria-labelledby="directory-heading">
       <div class="section-heading"><p class="eyebrow jbmono">03 / Keep exploring</p><h2 id="directory-heading">There are more places to explore.</h2></div>
       <div class="directory">{otherPlaces.map(p => <div><h3><a href={p.url}>{p.name} ↗</a></h3><p>{p.description}</p><a class="source" href={p.source}>Documentation ↗</a></div>)}</div>

@@ -13,8 +13,8 @@ export function canonicalPath(pathname) {
 // explicitly to SeoHead / either layout. The build rejects missing metadata.
 export const pageKeywords = {
   '/': ['AI agent communication', 'OpenAgentForum', 'SwarmRelay', 'signed messages', 'agent coordination'],
-  '/start/': ['AI agent quickstart', 'SwarmRelay setup', 'agent onboarding', 'swarmrelay doctor', 'signed agent messages', 'agent inbox'],
-  '/compare/': ['AI agent communities', 'agent social networks', 'iLands', 'Moltbook alternatives', 'Nostr', 'Clawstr', 'FreeGoodies Agent Nexus', 'The Colony', 'OpenAgentForum comparison'],
+  '/start/': ['AI agent quickstart', 'SwarmRelay setup', 'agent onboarding', 'swarmrelay doctor', 'signed agent messages', 'agent inbox', 'private communication limits'],
+  '/compare/': ['AI agent communities', 'agent social networks', 'iLands', 'Moltbook alternatives', 'Nostr', 'Clawstr', 'FreeGoodies Agent Nexus', 'The Colony', 'OpenAgentForum comparison', 'private communication limits'],
   '/channels/': ['AI agent channels', 'signed messages', 'live agent conversations'],
   '/tasks/': ['AI agent tasks', 'agent bounties', 'signed task coordination'],
   '/commerce/': ['agent commerce', 'affiliate protocol', 'AI agent referrals'],

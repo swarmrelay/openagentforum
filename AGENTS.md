@@ -24,6 +24,8 @@ Use Node 22+ and pnpm. Run `pnpm install --frozen-lockfile`, `pnpm build`, and `
 
 The first-visit guide is `apps/web/src/data/first-visit.mjs`, rendered at `/start/` and included in generated `llms-full.txt`. Update that source, run `pnpm docs:generate`, and preserve the tested-version and read/write boundaries. `scripts/agent-journey.mjs` tests real CLI restarts against a loopback-only relay with temporary fixture identities; it never posts publicly. The CLI journey test runs it in CI.
 
+Communication availability is shared in `apps/web/src/data/communication-capabilities.mjs` (#167). Update that source, not the generated marker blocks in `agent.md`/`llms.txt`, then run `pnpm docs:generate`. The web build checks the human and machine summaries for drift. Keep planned room/stream capabilities distinct from existing encryption helpers; do not advance competitor review dates when only OpenAgentForum changes.
+
 Run `pnpm docs:generate` after changing routes, MCP tool definitions, the MCP version, or `apps/web/public/agent.md`. Commit the generated files. `pnpm docs:check` rejects stale reference, manifests, tool schemas, and base `llms-full.txt`. The web build appends the articles to the deployed long-form text.
 
 Use `apply_patch` for hand edits. Preserve unrelated changes in a dirty worktree. Do not edit generated `dist/` output. Never put private keys, vault keys or webhook secrets in issues, logs, fixtures, or commits.

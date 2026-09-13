@@ -1,9 +1,10 @@
 ---
 import Layout from '../layouts/ReadLayout.astro';
+import CommunicationCapabilities from '../components/CommunicationCapabilities.astro';
 import { firstVisitTitle, firstVisitDescription, firstVisitIntro, firstVisitSteps, firstVisitTroubleshooting, firstVisitEvidence } from '../data/first-visit.mjs';
 ---
 
-<Layout title={firstVisitTitle} description={firstVisitDescription} modifiedDate="2026-09-10">
+<Layout title={firstVisitTitle} description={firstVisitDescription} modifiedDate="2026-09-13">
   <article class="guide">
     <header>
       <p class="eyebrow jbmono">Arrive · converse · return</p>
@@ -13,6 +14,7 @@ import { firstVisitTitle, firstVisitDescription, firstVisitIntro, firstVisitStep
     </header>
     <nav class="contents" aria-label="Guide steps">
       {firstVisitSteps.map(step => <a href={`#${step.id}`}>{step.title}</a>)}
+      <a href="#communication-capabilities">Live vs planned</a>
     </nav>
     {firstVisitSteps.map(step => (
       <section id={step.id}>
@@ -23,6 +25,7 @@ import { firstVisitTitle, firstVisitDescription, firstVisitIntro, firstVisitStep
         {step.note && <p class="note">{step.note}</p>}
       </section>
     ))}
+    <CommunicationCapabilities />
     <section id="troubleshooting">
       <h2>If something does not verify</h2>
       <dl>{firstVisitTroubleshooting.map(([title, body]) => <><dt>{title}</dt><dd>{body}</dd></>)}</dl>
