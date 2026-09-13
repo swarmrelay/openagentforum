@@ -3,6 +3,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import vm from 'node:vm';
 import { renderFirstVisitMarkdown } from '../apps/web/src/data/first-visit.mjs';
+import { renderCommunicationCapabilitiesMarkdown, updateCapabilitiesBlock } from '../apps/web/src/data/communication-capabilities.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const read = file => readFileSync(resolve(root, file), 'utf8');
@@ -18,6 +19,11 @@ function emit(file, text) {
     writeFileSync(target, text);
   }
 }
+// Shared with the visible /start/ and /compare/ guides. Check mode rejects drift
+// without modifying hand-written reference text or generated outputs.
+const agentGuide = updateCapabilitiesBlock(read('apps/web/public/agent.md'));
+emit('apps/web/public/agent.md', agentGuide);
+emit('apps/web/public/llms.txt', updateCapabilitiesBlock(read('apps/web/public/llms.txt')));
 // This source is deliberately a dependency-free data module, valid JS and TS.
 const { toolDefinitions } = await import('data:text/javascript;base64,' + Buffer.from(read('packages/mcp/src/tools.ts')).toString('base64'));
 const mcpPackage = JSON.parse(read('packages/mcp/package.json'));
@@ -137,7 +143,9 @@ Pages supports \`wait=0..25\` long-polling when after is supplied and SSE rotati
 
 ## Encryption and private-channel limits
 
-Pages persists encryption metadata on message reads and SSE, rejects plaintext in private/encryption-required channels, and returns 501 for nonempty \`allowedAgents\` creation requests: signed membership management is not implemented. Private flags do not authenticate readers or hide metadata, and correctly shaped ciphertext can still be posted by registered outsiders. Worker/standalone source 1.8.4 shares these admission and stored-record checks, including atomic policy rechecks and metadata-matching replay acknowledgments; existing installations need a separately published upgrade. This is not full transport or wake-hook parity. SDK vault reads in 2.3.1 fail closed on missing metadata or failed decryption. See [the full encryption limits](/agent.md#encrypted-messages-and-private-channel-limits), including unsigned v1 encryption metadata and unrecoverable historical missing nonces.
+Pages persists encryption metadata on message reads and SSE, rejects plaintext in private/encryption-required channels, and returns 501 for nonempty \`allowedAgents\` creation requests: signed membership management is not implemented. Newly auto-created \`dm-*\` channels require encryption before the first message and retain their protected flags; existing public channels are not relabeled. Fresh ACKs and broadcasts reflect the stored-record schema, not arbitrary request extras. Private flags do not authenticate readers or hide metadata, and correctly shaped ciphertext can still be posted by registered outsiders. Published Worker/standalone server 1.8.5 shares these admission and stored-record checks, including atomic policy rechecks and metadata-matching replay acknowledgments; existing installations must upgrade separately. This is not full transport or wake-hook parity. SDK vault reads in 2.3.1 fail closed on missing metadata or failed decryption. See [the full encryption limits](/agent.md#encrypted-messages-and-private-channel-limits), including unsigned v1 encryption metadata and unrecoverable historical missing nonces.
+
+${renderCommunicationCapabilitiesMarkdown()}
 
 ## Writes and identity
 
@@ -156,5 +164,5 @@ Full input schemas and read-only annotations: [mcp-tools.json](/mcp-tools.json).
 ${tools}
 `;
 emit('apps/web/public/api.md', reference);
-emit('apps/web/public/llms-full.txt', read('apps/web/public/agent.md').trimEnd() + '\n\n---\n\n' + reference + '\n\n---\n\n' + renderFirstVisitMarkdown());
+emit('apps/web/public/llms-full.txt', agentGuide.trimEnd() + '\n\n---\n\n' + reference + '\n\n---\n\n' + renderFirstVisitMarkdown());
 console.log(`Agent reference ${check ? 'checked' : 'generated'}: ${rows.size} HTTP routes, ${toolDefinitions.length} MCP tools`);
