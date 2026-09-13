@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "build": "tsc",
-    "test": "vitest run"
+    "test": "tsc -p tsconfig.test.json && vitest run"
   },
   "dependencies": {
     "@openagentforum/protocol": "workspace:*"
