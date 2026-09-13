@@ -1,0 +1,166 @@
+{
+  "protocol": "oaf-room-control-v1-draft1",
+  "note": "Public verification material only. Disposable generation keys were not retained. These historical proofs are evaluated only at the fixture clock, not at wall time.",
+  "hub": "https://relay.example.com",
+  "now": 1800000000000,
+  "vectors": [
+    {
+      "name": "create",
+      "publicKey": "44dca327a7a626f2fd3a7aab2ebb3c1d565e6c5a6fae2a5e4bb649647bb58f56",
+      "action": {
+        "protocol": "oaf-room-control-v1-draft1",
+        "hub": "https://relay.example.com",
+        "roomId": "room_acc2c26e911d6a4eff0b9905295da2d1",
+        "actor": "agent_b72703785282fb5b",
+        "requestId": "00000000000000000000000000000001",
+        "issuedAt": 1800000000000,
+        "expiresAt": 1800000060000,
+        "expectedRevision": 0,
+        "action": "create",
+        "payload": {
+          "encryptionPublicKey": "d9adff02ee95473c9c194ba8c97b34e8418ee0ba16c06135286ba867ac858371"
+        }
+      },
+      "signString": "oaf-room-control-v1-draft1\n{\"action\":\"create\",\"actor\":\"agent_b72703785282fb5b\",\"expectedRevision\":0,\"expiresAt\":1800000060000,\"hub\":\"https://relay.example.com\",\"issuedAt\":1800000000000,\"payload\":{\"encryptionPublicKey\":\"d9adff02ee95473c9c194ba8c97b34e8418ee0ba16c06135286ba867ac858371\"},\"protocol\":\"oaf-room-control-v1-draft1\",\"requestId\":\"00000000000000000000000000000001\",\"roomId\":\"room_acc2c26e911d6a4eff0b9905295da2d1\"}",
+      "signBytesHex": "6f61662d726f6f6d2d636f6e74726f6c2d76312d6472616674310a7b22616374696f6e223a22637265617465222c226163746f72223a226167656e745f62373237303337383532383266623562222c2265787065637465645265766973696f6e223a302c22657870697265734174223a313830303030303036303030302c22687562223a2268747470733a2f2f72656c61792e6578616d706c652e636f6d222c226973737565644174223a313830303030303030303030302c227061796c6f6164223a7b22656e6372797074696f6e5075626c69634b6579223a2264396164666630326565393534373363396331393462613863393762333465383431386565306261313663303631333532383662613836376163383538333731227d2c2270726f746f636f6c223a226f61662d726f6f6d2d636f6e74726f6c2d76312d647261667431222c22726571756573744964223a223030303030303030303030303030303030303030303030303030303030303031222c22726f6f6d4964223a22726f6f6d5f6163633263323665393131643661346566663062393930353239356461326431227d",
+      "proofDigest": "e17c9ceab46c74d331afb288a37d2af6aac5c4cd82121639d6bf1f9c6f9456e8",
+      "wire": "{\"action\":\"create\",\"actor\":\"agent_b72703785282fb5b\",\"expectedRevision\":0,\"expiresAt\":1800000060000,\"hub\":\"https://relay.example.com\",\"issuedAt\":1800000000000,\"payload\":{\"encryptionPublicKey\":\"d9adff02ee95473c9c194ba8c97b34e8418ee0ba16c06135286ba867ac858371\"},\"protocol\":\"oaf-room-control-v1-draft1\",\"requestId\":\"00000000000000000000000000000001\",\"roomId\":\"room_acc2c26e911d6a4eff0b9905295da2d1\",\"signature\":\"a425a56d31c58859676851ce27ce7537220c925be35c6fd70fc5b05734bad421a15690126aa9a91b3341ec34610c8519f98c7adc20dda7123df4835178d08f00\"}",
+      "expectedState": {
+        "protocol": "oaf-room-control-v1-draft1",
+        "hub": "https://relay.example.com",
+        "roomId": "room_acc2c26e911d6a4eff0b9905295da2d1",
+        "revision": 1,
+        "status": "open",
+        "owner": {
+          "agentId": "agent_b72703785282fb5b",
+          "signingPublicKey": "44dca327a7a626f2fd3a7aab2ebb3c1d565e6c5a6fae2a5e4bb649647bb58f56",
+          "encryptionPublicKey": "d9adff02ee95473c9c194ba8c97b34e8418ee0ba16c06135286ba867ac858371"
+        },
+        "peer": null,
+        "invitation": null
+      }
+    },
+    {
+      "name": "invite",
+      "publicKey": "44dca327a7a626f2fd3a7aab2ebb3c1d565e6c5a6fae2a5e4bb649647bb58f56",
+      "action": {
+        "protocol": "oaf-room-control-v1-draft1",
+        "hub": "https://relay.example.com",
+        "roomId": "room_acc2c26e911d6a4eff0b9905295da2d1",
+        "actor": "agent_b72703785282fb5b",
+        "requestId": "00000000000000000000000000000002",
+        "issuedAt": 1800000000000,
+        "expiresAt": 1800000060000,
+        "expectedRevision": 1,
+        "action": "invite",
+        "payload": {
+          "recipient": "agent_276f8a845c34ee58",
+          "recipientSigningPublicKey": "a876a15ec5eecc7bc15a8212b48ae715f5c5df5f3587eb8b0435af5ceefa9e59",
+          "inviteExpiresAt": 1800000600000
+        }
+      },
+      "signString": "oaf-room-control-v1-draft1\n{\"action\":\"invite\",\"actor\":\"agent_b72703785282fb5b\",\"expectedRevision\":1,\"expiresAt\":1800000060000,\"hub\":\"https://relay.example.com\",\"issuedAt\":1800000000000,\"payload\":{\"inviteExpiresAt\":1800000600000,\"recipient\":\"agent_276f8a845c34ee58\",\"recipientSigningPublicKey\":\"a876a15ec5eecc7bc15a8212b48ae715f5c5df5f3587eb8b0435af5ceefa9e59\"},\"protocol\":\"oaf-room-control-v1-draft1\",\"requestId\":\"00000000000000000000000000000002\",\"roomId\":\"room_acc2c26e911d6a4eff0b9905295da2d1\"}",
+      "signBytesHex": "6f61662d726f6f6d2d636f6e74726f6c2d76312d6472616674310a7b22616374696f6e223a22696e76697465222c226163746f72223a226167656e745f62373237303337383532383266623562222c2265787065637465645265766973696f6e223a312c22657870697265734174223a313830303030303036303030302c22687562223a2268747470733a2f2f72656c61792e6578616d706c652e636f6d222c226973737565644174223a313830303030303030303030302c227061796c6f6164223a7b22696e76697465457870697265734174223a313830303030303630303030302c22726563697069656e74223a226167656e745f32373666386138343563333465653538222c22726563697069656e745369676e696e675075626c69634b6579223a2261383736613135656335656563633762633135613832313262343861653731356635633564663566333538376562386230343335616635636565666139653539227d2c2270726f746f636f6c223a226f61662d726f6f6d2d636f6e74726f6c2d76312d647261667431222c22726571756573744964223a223030303030303030303030303030303030303030303030303030303030303032222c22726f6f6d4964223a22726f6f6d5f6163633263323665393131643661346566663062393930353239356461326431227d",
+      "proofDigest": "f49669b6a2d764c844a86b8ae9ee179c0769a6df4ed4e39f66f35a5a3ceb31a9",
+      "wire": "{\"action\":\"invite\",\"actor\":\"agent_b72703785282fb5b\",\"expectedRevision\":1,\"expiresAt\":1800000060000,\"hub\":\"https://relay.example.com\",\"issuedAt\":1800000000000,\"payload\":{\"inviteExpiresAt\":1800000600000,\"recipient\":\"agent_276f8a845c34ee58\",\"recipientSigningPublicKey\":\"a876a15ec5eecc7bc15a8212b48ae715f5c5df5f3587eb8b0435af5ceefa9e59\"},\"protocol\":\"oaf-room-control-v1-draft1\",\"requestId\":\"00000000000000000000000000000002\",\"roomId\":\"room_acc2c26e911d6a4eff0b9905295da2d1\",\"signature\":\"0310efc7668a351607fbbba3c524b898bbe27bfb7c7c71d2839a88ff83d1505ca1ebee1ba270970abf532e051f038047f89de2b3e29eefa166c9039350cc6303\"}",
+      "expectedState": {
+        "protocol": "oaf-room-control-v1-draft1",
+        "hub": "https://relay.example.com",
+        "roomId": "room_acc2c26e911d6a4eff0b9905295da2d1",
+        "revision": 2,
+        "status": "open",
+        "owner": {
+          "agentId": "agent_b72703785282fb5b",
+          "signingPublicKey": "44dca327a7a626f2fd3a7aab2ebb3c1d565e6c5a6fae2a5e4bb649647bb58f56",
+          "encryptionPublicKey": "d9adff02ee95473c9c194ba8c97b34e8418ee0ba16c06135286ba867ac858371"
+        },
+        "peer": null,
+        "invitation": {
+          "digest": "f49669b6a2d764c844a86b8ae9ee179c0769a6df4ed4e39f66f35a5a3ceb31a9",
+          "recipient": "agent_276f8a845c34ee58",
+          "recipientSigningPublicKey": "a876a15ec5eecc7bc15a8212b48ae715f5c5df5f3587eb8b0435af5ceefa9e59",
+          "expiresAt": 1800000600000
+        }
+      }
+    },
+    {
+      "name": "accept",
+      "publicKey": "a876a15ec5eecc7bc15a8212b48ae715f5c5df5f3587eb8b0435af5ceefa9e59",
+      "action": {
+        "protocol": "oaf-room-control-v1-draft1",
+        "hub": "https://relay.example.com",
+        "roomId": "room_acc2c26e911d6a4eff0b9905295da2d1",
+        "actor": "agent_276f8a845c34ee58",
+        "requestId": "00000000000000000000000000000003",
+        "issuedAt": 1800000000000,
+        "expiresAt": 1800000060000,
+        "expectedRevision": 2,
+        "action": "accept",
+        "payload": {
+          "invitationDigest": "f49669b6a2d764c844a86b8ae9ee179c0769a6df4ed4e39f66f35a5a3ceb31a9",
+          "encryptionPublicKey": "0a47d9726dfec0e5492eaebdca10699c28de171236550d01ae8c9f944b58f32e"
+        }
+      },
+      "signString": "oaf-room-control-v1-draft1\n{\"action\":\"accept\",\"actor\":\"agent_276f8a845c34ee58\",\"expectedRevision\":2,\"expiresAt\":1800000060000,\"hub\":\"https://relay.example.com\",\"issuedAt\":1800000000000,\"payload\":{\"encryptionPublicKey\":\"0a47d9726dfec0e5492eaebdca10699c28de171236550d01ae8c9f944b58f32e\",\"invitationDigest\":\"f49669b6a2d764c844a86b8ae9ee179c0769a6df4ed4e39f66f35a5a3ceb31a9\"},\"protocol\":\"oaf-room-control-v1-draft1\",\"requestId\":\"00000000000000000000000000000003\",\"roomId\":\"room_acc2c26e911d6a4eff0b9905295da2d1\"}",
+      "signBytesHex": "6f61662d726f6f6d2d636f6e74726f6c2d76312d6472616674310a7b22616374696f6e223a22616363657074222c226163746f72223a226167656e745f32373666386138343563333465653538222c2265787065637465645265766973696f6e223a322c22657870697265734174223a313830303030303036303030302c22687562223a2268747470733a2f2f72656c61792e6578616d706c652e636f6d222c226973737565644174223a313830303030303030303030302c227061796c6f6164223a7b22656e6372797074696f6e5075626c69634b6579223a2230613437643937323664666563306535343932656165626463613130363939633238646531373132333635353064303161653863396639343462353866333265222c22696e7669746174696f6e446967657374223a2266343936363962366132643736346338343461383662386165396565313739633037363961366466346564346533396636366633356135613363656233316139227d2c2270726f746f636f6c223a226f61662d726f6f6d2d636f6e74726f6c2d76312d647261667431222c22726571756573744964223a223030303030303030303030303030303030303030303030303030303030303033222c22726f6f6d4964223a22726f6f6d5f6163633263323665393131643661346566663062393930353239356461326431227d",
+      "proofDigest": "f6efae22bcbb2ddecb4d4549dc4fd6ac8025771ced9e5ebb3bf0630c9192c0e1",
+      "wire": "{\"action\":\"accept\",\"actor\":\"agent_276f8a845c34ee58\",\"expectedRevision\":2,\"expiresAt\":1800000060000,\"hub\":\"https://relay.example.com\",\"issuedAt\":1800000000000,\"payload\":{\"encryptionPublicKey\":\"0a47d9726dfec0e5492eaebdca10699c28de171236550d01ae8c9f944b58f32e\",\"invitationDigest\":\"f49669b6a2d764c844a86b8ae9ee179c0769a6df4ed4e39f66f35a5a3ceb31a9\"},\"protocol\":\"oaf-room-control-v1-draft1\",\"requestId\":\"00000000000000000000000000000003\",\"roomId\":\"room_acc2c26e911d6a4eff0b9905295da2d1\",\"signature\":\"5c3f741b05fa6086e85f55818d9fed06e3987e46d38f506e9440988f590b9df9c8f8d6aae8cdf0bd0b2d8e5ed9076143175d259e8d595786c98f29919fb7680f\"}",
+      "expectedState": {
+        "protocol": "oaf-room-control-v1-draft1",
+        "hub": "https://relay.example.com",
+        "roomId": "room_acc2c26e911d6a4eff0b9905295da2d1",
+        "revision": 3,
+        "status": "open",
+        "owner": {
+          "agentId": "agent_b72703785282fb5b",
+          "signingPublicKey": "44dca327a7a626f2fd3a7aab2ebb3c1d565e6c5a6fae2a5e4bb649647bb58f56",
+          "encryptionPublicKey": "d9adff02ee95473c9c194ba8c97b34e8418ee0ba16c06135286ba867ac858371"
+        },
+        "peer": {
+          "agentId": "agent_276f8a845c34ee58",
+          "signingPublicKey": "a876a15ec5eecc7bc15a8212b48ae715f5c5df5f3587eb8b0435af5ceefa9e59",
+          "encryptionPublicKey": "0a47d9726dfec0e5492eaebdca10699c28de171236550d01ae8c9f944b58f32e"
+        },
+        "invitation": null
+      }
+    },
+    {
+      "name": "close",
+      "publicKey": "a876a15ec5eecc7bc15a8212b48ae715f5c5df5f3587eb8b0435af5ceefa9e59",
+      "action": {
+        "protocol": "oaf-room-control-v1-draft1",
+        "hub": "https://relay.example.com",
+        "roomId": "room_acc2c26e911d6a4eff0b9905295da2d1",
+        "actor": "agent_276f8a845c34ee58",
+        "requestId": "00000000000000000000000000000004",
+        "issuedAt": 1800000000000,
+        "expiresAt": 1800000060000,
+        "expectedRevision": 3,
+        "action": "close",
+        "payload": {}
+      },
+      "signString": "oaf-room-control-v1-draft1\n{\"action\":\"close\",\"actor\":\"agent_276f8a845c34ee58\",\"expectedRevision\":3,\"expiresAt\":1800000060000,\"hub\":\"https://relay.example.com\",\"issuedAt\":1800000000000,\"payload\":{},\"protocol\":\"oaf-room-control-v1-draft1\",\"requestId\":\"00000000000000000000000000000004\",\"roomId\":\"room_acc2c26e911d6a4eff0b9905295da2d1\"}",
+      "signBytesHex": "6f61662d726f6f6d2d636f6e74726f6c2d76312d6472616674310a7b22616374696f6e223a22636c6f7365222c226163746f72223a226167656e745f32373666386138343563333465653538222c2265787065637465645265766973696f6e223a332c22657870697265734174223a313830303030303036303030302c22687562223a2268747470733a2f2f72656c61792e6578616d706c652e636f6d222c226973737565644174223a313830303030303030303030302c227061796c6f6164223a7b7d2c2270726f746f636f6c223a226f61662d726f6f6d2d636f6e74726f6c2d76312d647261667431222c22726571756573744964223a223030303030303030303030303030303030303030303030303030303030303034222c22726f6f6d4964223a22726f6f6d5f6163633263323665393131643661346566663062393930353239356461326431227d",
+      "proofDigest": "139208326d1cad75049ca4df8922f8e394a4b35ac022e4bfd23c553642785b4d",
+      "wire": "{\"action\":\"close\",\"actor\":\"agent_276f8a845c34ee58\",\"expectedRevision\":3,\"expiresAt\":1800000060000,\"hub\":\"https://relay.example.com\",\"issuedAt\":1800000000000,\"payload\":{},\"protocol\":\"oaf-room-control-v1-draft1\",\"requestId\":\"00000000000000000000000000000004\",\"roomId\":\"room_acc2c26e911d6a4eff0b9905295da2d1\",\"signature\":\"cad72cd41fe513095a20ad5b12963d660e48af76de0f709773248f3a09ffc82672777ac0ca2b694a8162b36bac822972034ff72c7eb24d231d75079703c32401\"}",
+      "expectedState": {
+        "protocol": "oaf-room-control-v1-draft1",
+        "hub": "https://relay.example.com",
+        "roomId": "room_acc2c26e911d6a4eff0b9905295da2d1",
+        "revision": 4,
+        "status": "closed",
+        "owner": {
+          "agentId": "agent_b72703785282fb5b",
+          "signingPublicKey": "44dca327a7a626f2fd3a7aab2ebb3c1d565e6c5a6fae2a5e4bb649647bb58f56",
+          "encryptionPublicKey": "d9adff02ee95473c9c194ba8c97b34e8418ee0ba16c06135286ba867ac858371"
+        },
+        "peer": {
+          "agentId": "agent_276f8a845c34ee58",
+          "signingPublicKey": "a876a15ec5eecc7bc15a8212b48ae715f5c5df5f3587eb8b0435af5ceefa9e59",
+          "encryptionPublicKey": "0a47d9726dfec0e5492eaebdca10699c28de171236550d01ae8c9f944b58f32e"
+        },
+        "invitation": null
+      }
+    }
+  ]
+}
