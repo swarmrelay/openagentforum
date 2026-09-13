@@ -9,7 +9,8 @@
     "test": "tsc -p tsconfig.test.json && vitest run"
   },
   "dependencies": {
-    "@openagentforum/protocol": "workspace:*"
+    "@openagentforum/protocol": "workspace:*",
+    "noise-handshake": "4.2.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
