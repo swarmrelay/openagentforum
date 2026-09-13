@@ -673,10 +673,14 @@ export const onRequest: PagesFunction<HubEnv> = async (context) => {
           return jsonResponse({ error: 'Invalid Ed25519 signature' }, 403);
         }
 
+        const fallbackChannel = memoryFallback.channels.get(chName);
         const channelPolicy = env?.DB
           ? await env.DB.prepare('SELECT is_private, e2ee_required FROM channels WHERE name = ?').bind(chName).first<{ is_private: number; e2ee_required: number }>()
-          : { is_private: Number(memoryFallback.channels.get(chName)?.isPrivate ?? false), e2ee_required: Number(memoryFallback.channels.get(chName)?.e2eeRequired ?? false) };
-        const encryptionReason = encryptionError(envelope, Boolean(channelPolicy?.is_private || channelPolicy?.e2ee_required || envelope.type === 'e2ee_blob'));
+          : fallbackChannel ? { is_private: Number(fallbackChannel.isPrivate), e2ee_required: Number(fallbackChannel.e2eeRequired) } : null;
+        // New DM slugs require encryption before any channel or message is stored.
+        // Existing public history is not retroactively made private (#180).
+        const encryptionReason = encryptionError(envelope, Boolean(channelPolicy?.is_private || channelPolicy?.e2ee_required ||
+          (!channelPolicy && chName.startsWith('dm-')) || envelope.type === 'e2ee_blob'));
         if (encryptionReason) return jsonResponse({ error: 'Encrypted envelopes require ciphertext and valid encryption metadata', reason: encryptionReason }, encryptionReason === 'encryption_required' ? 403 : 400);
 
         // (RFC 0001) poll and ballot envelopes: ingest checks on top of the envelope checks
@@ -699,6 +703,7 @@ export const onRequest: PagesFunction<HubEnv> = async (context) => {
         }
 
         let storedSeq = 1;
+        let savedEnvelope: ReturnType<typeof storedEnvelope> | undefined;
         const now = Date.now();
         envelope.channel = chName;
         // envelope.sequence is a SIGNED field and is stored verbatim (#7).
@@ -718,17 +723,17 @@ export const onRequest: PagesFunction<HubEnv> = async (context) => {
         }
 
         if (env?.DB) {
-          // Ensure channel exists
+          // Protect auto-created DMs on every later ingest too (#180).
+          const isDm = chName.startsWith('dm-') ? 1 : 0;
           await env.DB.prepare(`
             INSERT OR IGNORE INTO channels (name, title, topic, is_private, e2ee_required, creator_id, created_at, message_count)
-            VALUES (?, ?, ?, 0, 0, ?, ?, 0)
-          `).bind(chName, chName, 'Swarm channel', envelope.sender, now).run();
+            VALUES (?, ?, ?, ?, ?, ?, ?, 0)
+          `).bind(chName, chName, 'Swarm channel', isDm, isDm, envelope.sender, now).run();
 
           // Relay ingest order: unsigned bookkeeping, unique per channel.
           // MAX+1 can race across isolates; the unique index turns the race into
           // a retriable conflict instead of a silent duplicate.
-          let inserted = false;
-          for (let attempt = 0; attempt < 3 && !inserted; attempt++) {
+          for (let attempt = 0; attempt < 3 && !savedEnvelope; attempt++) {
             const seqRes = await env.DB.prepare('SELECT COALESCE(MAX(stored_seq), 0) + 1 as next_seq FROM messages WHERE channel = ?').bind(chName).first<{ next_seq: number }>();
             storedSeq = seqRes?.next_seq ?? 1;
             try {
@@ -740,7 +745,7 @@ export const onRequest: PagesFunction<HubEnv> = async (context) => {
                 WHERE ? = 1 OR NOT EXISTS (
                   SELECT 1 FROM channels WHERE name = ? AND (is_private = 1 OR e2ee_required = 1)
                 )
-                RETURNING id
+                RETURNING *
               `).bind(
                 envelope.id,
                 chName,
@@ -759,14 +764,14 @@ export const onRequest: PagesFunction<HubEnv> = async (context) => {
                 envelope.nonce ?? null,
                 envelope.encrypted === true ? 1 : 0,
                 chName
-              ).first<{ id: string }>();
+              ).first<EnvelopeRow>();
               if (!saved) return jsonResponse({ error: 'Channel now requires encryption', reason: 'encryption_required' }, 403);
-              inserted = true;
+              savedEnvelope = storedEnvelope(saved);
             } catch (e: any) {
               if (!String(e?.message || e).includes('UNIQUE')) throw e;
             }
           }
-          if (!inserted) {
+          if (!savedEnvelope) {
             return jsonResponse({ error: 'Ingest-order conflict, retry' }, 503);
           }
 
@@ -786,18 +791,34 @@ export const onRequest: PagesFunction<HubEnv> = async (context) => {
             return jsonResponse({ error: 'Envelope id is already bound to a different envelope' }, 409);
           }
           storedSeq = list.length + 1;
-          (envelope as any).storedSeq = storedSeq;
-          list.push(envelope);
+          // Match D1's stored schema; never persist arbitrary request extras.
+          savedEnvelope = storedEnvelope({
+            id: envelope.id, channel: chName, sender: envelope.sender, type: envelope.type,
+            sequence: envelope.sequence, stored_seq: storedSeq, timestamp: envelope.timestamp,
+            payload_json: JSON.stringify(envelope.payload), signature: envelope.signature, checksum: envelope.checksum,
+            encrypted: envelope.encrypted === true ? 1 : 0, reply_to_id: envelope.replyToId ?? null,
+            recipient_keys_json: envelope.recipientKeys === undefined ? null : JSON.stringify(envelope.recipientKeys),
+            ephemeral_public_key: envelope.ephemeralPublicKey ?? null, nonce: envelope.nonce ?? null,
+          });
+          if (!currentPolicy) {
+            const isDm = chName.startsWith('dm-');
+            memoryFallback.channels.set(chName, { name: chName, title: chName, topic: 'Swarm channel',
+              isPrivate: isDm, e2eeRequired: isDm, creatorId: envelope.sender, createdAt: now, messageCount: 0 });
+          }
+          list.push(savedEnvelope);
           memoryFallback.messages.set(chName, list);
+          const channel = memoryFallback.channels.get(chName)!;
+          channel.messageCount = list.length;
+          channel.lastMessageAt = savedEnvelope.timestamp;
         }
 
         if (env?.SWARM_CHANNEL) {
           // notify WebSocket subscribers after the durable write (best effort)
           const stub = env.SWARM_CHANNEL.get(env.SWARM_CHANNEL.idFromName(chName)) as any;
-          context.waitUntil(stub.broadcastMessage({ ...envelope, channel: chName, storedSeq }).catch(() => {}));
+          context.waitUntil(stub.broadcastMessage(savedEnvelope).catch(() => {}));
         }
 
-        return jsonResponse({ success: true, envelope: { ...envelope, storedSeq } });
+        return jsonResponse({ success: true, envelope: savedEnvelope });
       }
     }
 

@@ -1,13 +1,19 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { decryptFromPrivateChannel, decryptPayloadFromSender, encryptForPrivateChannel, encryptPayloadForRecipient, generatePrivateChannelKey, signEnvelope, verifyEnvelope } from '@openagentforum/protocol';
 import { pagesWakeFixture } from './pages-wake-fixture.js';
+import type { HubEnv } from '../../../apps/web/functions/_lib/wake.js';
 
 const fixtures: Awaited<ReturnType<typeof pagesWakeFixture>>[] = [];
 afterEach(() => { for (const f of fixtures.splice(0)) f.close(); });
 async function setup(backend: string) {
   const f = await pagesWakeFixture(); fixtures.push(f);
+  const broadcastMessage = vi.fn(async (_message: unknown) => {});
+  // Capture only the route's fan-out call; this is not a DO runtime test.
+  const bindings: HubEnv = { ...(backend === 'D1' ? f.env : {}), SWARM_CHANNEL: {
+    idFromName: vi.fn(), get: vi.fn(() => ({ broadcastMessage })),
+  } as HubEnv['SWARM_CHANNEL'] };
   const send = (path: string, body?: unknown) => f.dispatch(new Request('https://relay.test' + path,
-    body === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }), backend === 'D1' ? f.env : {});
+    body === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }), bindings);
   for (const agent of [f.owner, f.sender]) expect((await send('/v1/agents/register', { publicKey: agent.signingPublicKey })).status).toBe(200);
   const channel = 'private-' + crypto.randomUUID();
   expect((await send('/v1/channels', { name: channel, title: 'Local encrypted fixture', isPrivate: true, e2eeRequired: true })).status).toBe(200);
@@ -15,10 +21,75 @@ async function setup(backend: string) {
   const encrypted = await encryptForPrivateChannel({ message: 'local encrypted fixture' }, key);
   const envelope = await signEnvelope({ channel, sender: f.owner.agentId, type: 'e2ee_blob', sequence: 7,
     payload: { ciphertext: encrypted.ciphertext }, encrypted: true, nonce: encrypted.nonce }, f.owner.signingPrivateKey);
-  return { ...f, send, channel, key, envelope, path: `/v1/channels/${channel}/messages` };
+  return { ...f, send, broadcastMessage, channel, key, envelope, path: `/v1/channels/${channel}/messages` };
 }
 
 describe.each(['D1', 'memory'])('Pages encrypted records (%s)', backend => {
+  it('rejects plaintext and malformed encryption before auto-creating a DM (#180)', async () => {
+    const f = await setup(backend);
+    const channel = 'dm-new-' + crypto.randomUUID();
+    const path = `/v1/channels/${channel}/messages`;
+    const plaintext = await signEnvelope({ channel, sender: f.owner.agentId, type: 'intel', payload: 'must not store' }, f.owner.signingPrivateKey);
+    const denied = await f.send(path, plaintext);
+    expect(denied.status).toBe(403);
+    expect(await denied.json()).toMatchObject({ reason: 'encryption_required' });
+    const malformed = await signEnvelope({ channel, sender: f.owner.agentId, type: 'e2ee_blob', encrypted: true,
+      payload: f.envelope.payload }, f.owner.signingPrivateKey);
+    expect((await f.send(path, malformed)).status).toBe(400);
+    expect((await f.send(`/v1/channels/${channel}`)).status).toBe(404);
+    expect((await (await f.send(path)).json()).messages).toEqual([]);
+    expect(f.broadcastMessage).not.toHaveBeenCalled();
+  });
+
+  it('keeps auto-created DMs encryption-required after the first encrypted message (#180)', async () => {
+    const f = await setup(backend);
+    const channel = 'dm-sticky-' + crypto.randomUUID();
+    const path = `/v1/channels/${channel}/messages`;
+    const encrypted = await signEnvelope({ channel, sender: f.owner.agentId, type: 'e2ee_blob', encrypted: true,
+      payload: f.envelope.payload, nonce: f.envelope.nonce }, f.owner.signingPrivateKey);
+    expect((await f.send(path, encrypted)).status).toBe(200);
+    expect((await (await f.send(`/v1/channels/${channel}`)).json()).channel)
+      .toMatchObject({ isPrivate: true, e2eeRequired: true, messageCount: 1 });
+    const plaintext = await signEnvelope({ channel, sender: f.sender.agentId, type: 'intel', payload: 'must not store' }, f.sender.signingPrivateKey);
+    expect((await f.send(path, plaintext)).status).toBe(403);
+    expect((await f.send('/v1/channels', { name: channel, title: 'Overwrite', isPrivate: false, e2eeRequired: false })).status).toBe(409);
+    expect((await (await f.send(path)).json()).messages).toHaveLength(1);
+    expect(f.broadcastMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps ordinary auto-created channels public and does not relabel existing public DM history', async () => {
+    const f = await setup(backend);
+    for (const prefix of ['public-new-', 'dm-legacy-']) {
+      const channel = prefix + crypto.randomUUID();
+      if (prefix === 'dm-legacy-') {
+        expect((await f.send('/v1/channels', { name: channel, title: 'Existing public channel' })).status).toBe(200);
+      }
+      const envelope = await signEnvelope({ channel, sender: f.owner.agentId, type: 'intel', payload: 'public fixture' }, f.owner.signingPrivateKey);
+      expect((await f.send(`/v1/channels/${channel}/messages`, envelope)).status).toBe(200);
+      expect((await (await f.send(`/v1/channels/${channel}`)).json()).channel)
+        .toMatchObject({ isPrivate: false, e2eeRequired: false, messageCount: 1 });
+      expect((await (await f.send(`/v1/channels/${channel}/messages`)).json()).messages[0].payload).toBe('public fixture');
+    }
+  });
+
+  it('ACKs and broadcasts only the stored record, excluding request extras (#180)', async () => {
+    const f = await setup(backend);
+    const response = await f.send(f.path, { ...f.envelope, storedSeq: 999, extraRequestField: 'not stored' });
+    expect(response.status).toBe(200);
+    const { envelope: acknowledged } = await response.json();
+    const { messages: [saved] } = await (await f.send(f.path)).json();
+    expect(acknowledged).toEqual(saved);
+    expect(saved.extraRequestField).toBeUndefined();
+    expect(saved.storedSeq).toBe(1);
+    expect(saved.sequence).toBe(7);
+    expect((await verifyEnvelope(saved, f.owner.signingPublicKey)).valid).toBe(true);
+    expect(await decryptFromPrivateChannel(saved.payload.ciphertext, saved.nonce, f.key)).toEqual({ message: 'local encrypted fixture' });
+    expect(f.broadcastMessage.mock.calls).toEqual([[saved]]);
+    expect(await (await f.send(f.path, { ...f.envelope, extraRequestField: 'changed', storedSeq: 2000 })).json())
+      .toEqual({ success: true, alreadyStored: true, envelope: saved });
+    expect(f.broadcastMessage).toHaveBeenCalledTimes(1);
+  });
+
   it('decrypts the fetched vault record, preserves its signature, and rejects a wrong key', async () => {
     const f = await setup(backend);
     expect((await f.send(f.path, f.envelope)).status).toBe(200);
