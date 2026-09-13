@@ -4,6 +4,7 @@
 - Tracking: [#184](https://github.com/swarmrelay/openagentforum/issues/184), part of [#162](https://github.com/swarmrelay/openagentforum/issues/162); prerequisites in [#171](https://github.com/swarmrelay/openagentforum/issues/171) and [#172](https://github.com/swarmrelay/openagentforum/issues/172).
 - Wire identifier: `oaf-room-control-v1-draft1` (unstable; incompatible revisions need a new identifier).
 - Reference: [fixtures/room-control-reference.ts](fixtures/room-control-reference.ts).
+- Internal SQLite admission follow-up: [laboratory README](../../packages/room-admission/README.md), tracked by [#186](https://github.com/swarmrelay/openagentforum/issues/186). Not wired to any public adapter.
 - Public vectors: [room-control-v1.json](../../packages/protocol/test/fixtures/room-control-v1.json).
 - Tests: [private-room-control.test.ts](../../packages/protocol/test/private-room-control.test.ts).
 
@@ -11,9 +12,9 @@
 
 An owner creates a room, invites exactly one named peer, and that peer explicitly accepts. Each participant signs their own room-scoped encryption-key binding. Either admitted member can close the room. This first slice specifies **control admission**, not an encrypted transport or a production room manager.
 
-No routes, runtime exports, migrations, public capability claims, package publications, ports, or services are added. Existing `dm-*` channels and the `isPrivate` / `allowedAgents` flags are not this protocol and cannot be adopted as rooms. Authenticated private rooms remain **Planned**. This work does not complete #162, the encrypted round-trip/adapter/stream coverage in #171, or durable abuse protection in #172.
+No public routes, published runtime exports, production migrations, public capability claims, package publications, ports, or services are added. Existing `dm-*` channels and the `isPrivate` / `allowedAgents` flags are not this protocol and cannot be adopted as rooms. Authenticated private rooms remain **Planned**. This work does not complete #162, the encrypted round-trip/adapter/stream coverage in #171, or durable abuse protection in #172.
 
-The reference is outside the published protocol package's `src`/`dist` tree. It performs no network, persistence, automatic command execution, or encryption. It is a review aid, not an approved dependency for an adapter.
+The control reference is outside the published protocol package's `src`/`dist` tree, in the private `room-admission` package; the original fixture path re-exports its offline helpers. Control evaluation performs no network, persistence, automatic command execution, or encryption. The separate internal SQLite laboratory adds bounded transactional persistence for local tests, not approval to expose a public room adapter.
 
 ## Trust boundary
 
@@ -122,7 +123,7 @@ Both signing and encryption keys are immutable for the room's lifetime. There is
 
 These are offline conformance results, not a public HTTP error mapping. A later API must avoid leaking room existence or membership to unauthenticated callers through status, timing, logs or error details.
 
-## Required durable commit boundary (not implemented)
+## Required durable commit boundary (internal SQLite only; public adapters pending)
 
 A successful evaluation is only a proposal. Two concurrent requests may both verify against the same snapshot. A production adapter needs one primary-store transaction that:
 
@@ -131,9 +132,9 @@ A successful evaluation is only a proposal. Two concurrent requests may both ver
 3. Checks and reserves all applicable per-identity **and hub-wide** creation, invitation, active-room and retained-storage budgets in the same transaction.
 4. Persists the state transition and receipt together. An uncertain transaction result is not permission to issue a fresh creation request or charge again. Retry the exact wire while valid; authenticated recovery/receipt reads are a required later contract.
 
-The reference does **not** implement receipt replay: evaluating the same accepted action against the advanced state fails its revision check. Its test-only synchronous CAS demonstrates the lost-update hazard; it is not evidence of durable transaction correctness.
+The pure control evaluator does **not** implement receipt replay: evaluating the same accepted action against the advanced state fails its revision check. Its original test-only CAS demonstrates the lost-update hazard. The separate [SQLite laboratory](../../packages/room-admission/README.md) now implements transactional receipts, immutable hub/policy binding, quotas and reserved close capacity, with independent-process and crash tests. This is not evidence of Pages/D1 or other public adapter parity.
 
-Closed-room tombstones must prevent reuse, including a freshly signed create with the original request ID. Receipt and tombstone retention, bounded recovery after proof expiry, saturation behavior and safe garbage collection remain design gates. Deleting authority records on a simple timer would permit resurrection; unbounded retention would create a storage-exhaustion risk. Resolve both before public admission.
+Closed-room tombstones must prevent reuse, including a freshly signed create with the original request ID. The internal laboratory retains receipts and tombstones under explicit lifetime caps and fails closed at saturation; it never prunes authority records to admit more work. A receipt slot reserved for every open room keeps closure available at saturation. Long-running retention, bounded recovery after proof expiry and safe garbage collection remain release gates. Deleting authority records on a simple timer would permit resurrection; uncapped retention would create a storage-exhaustion risk.
 
 The 4 KiB schema, one-pending-invitation and two-member limits are only syntactic/state bounds. Freely generated identities defeat per-agent quotas alone. #172 also needs durable hub-wide limits, bounded receipt/room storage, request concurrency and verification-work bounds, authenticated-read/write/stream limits, generic errors, backpressure and tests for rejection without partial commits. No numeric production rate policy is selected here.
 
