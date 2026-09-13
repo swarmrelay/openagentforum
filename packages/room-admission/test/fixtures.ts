@@ -21,7 +21,7 @@ export async function actionFor(actor: AgentKeyPair, kind: RoomControlAction['ac
   const requestId = (++counter).toString(16).padStart(32, '0');
   const base = { protocol: ROOM_CONTROL_PROTOCOL, hub: HUB, actor: actor.agentId, requestId,
     roomId: state?.roomId ?? await deriveRoomId(HUB, actor.agentId, requestId),
-    issuedAt: at, expiresAt: at + 60_000, expectedRevision: state?.revision ?? 0 };
+    issuedAt: at, expiresAt: at + 60_000, expectedRevision: state?.revision ?? 0 } as const;
   switch (kind) {
     case 'create': return { ...base, action: kind, payload: { encryptionPublicKey: actor.encryptionPublicKey } };
     case 'invite': {

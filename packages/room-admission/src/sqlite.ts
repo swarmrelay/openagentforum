@@ -5,6 +5,7 @@ import {
   prepareRoomControl, ROOM_CONTROL_PROTOCOL,
   type PreparedRoomControl, type RoomControlError, type RoomState,
 } from './control.js';
+import { prepareRoomRecovery, type RoomRecoveryQuery } from './recovery.js';
 
 export interface AdmissionPolicy {
   maxRetainedRooms: number;
@@ -36,6 +37,9 @@ export type AdmissionError = RoomControlError | 'request_conflict' | 'room_capac
   | 'create_rate_limited' | 'invite_rate_limited' | 'clock_changed' | 'storage_error' | 'busy';
 export type AdmissionResult = { ok: true; replayed: boolean; receipt: AdmissionReceipt }
   | { ok: false; reason: AdmissionError };
+/** Null means unavailable, NOT proof of absence or permission to retry a fresh mutation. */
+export type RecoveryResult = { ok: true; queryId: string; observedAt: number; receipt: AdmissionReceipt | null }
+  | { ok: false; reason: RoomControlError | 'storage_error' | 'busy' };
 
 const SCHEMA_VERSION = 1;
 const POLICY_KEYS: (keyof AdmissionPolicy)[] = [
@@ -186,6 +190,66 @@ export class RoomAdmissionStore {
 
   #count(sql: string, ...args: SQLInputValue[]): number {
     return (this.#db.prepare(sql).get(...args) as { count: number }).count;
+  }
+
+  /** Bounded primary snapshot read. No receipt, room, quota or clock writes. */
+  async recover(wire: string, signingPublicKey: string): Promise<RecoveryResult> {
+    const fail = (reason: RoomControlError | 'storage_error' | 'busy'): RecoveryResult => ({ ok: false, reason });
+    if (this.#broken) return fail('storage_error');
+    if (this.#inFlight >= this.#policy.maxInFlightPerConnection) return fail('busy');
+    this.#inFlight += 1;
+    let begun = false;
+    try {
+      const prepared = await prepareRoomRecovery(wire, signingPublicKey, {
+        hub: this.#hub, now: this.#time(this.#meta()),
+      });
+      if (!prepared.ok) return prepared;
+      if (this.#broken) return fail('storage_error');
+      // No await inside the read transaction. Metadata establishes the snapshot;
+      // another connection's uncommitted or later writes are not recovery results.
+      this.#db.exec('BEGIN');
+      begun = true;
+      const meta = this.#meta();
+      const observedAt = this.#time(meta);
+      const stale = prepared.freshness(observedAt);
+      if (stale) {
+        this.#db.exec('ROLLBACK');
+        begun = false;
+        return fail(stale);
+      }
+      const receipt = this.#recoverReceipt(prepared.query, signingPublicKey);
+      const expired = prepared.freshness(Math.max(observedAt, this.#time(meta)));
+      if (expired) {
+        this.#db.exec('ROLLBACK');
+        begun = false;
+        return fail(expired);
+      }
+      this.#db.exec('COMMIT');
+      begun = false;
+      return { ok: true, queryId: prepared.query.queryId, observedAt, receipt };
+    } catch {
+      if (begun) { try { this.#db.exec('ROLLBACK'); } catch { /* connection may be uncertain */ } }
+      this.#broken = true;
+      return fail('storage_error');
+    } finally { this.#inFlight -= 1; }
+  }
+
+  #recoverReceipt(query: Readonly<RoomRecoveryQuery>, signingKey: string): AdmissionReceipt | null {
+    const row = this.#db.prepare(`SELECT receipt_json FROM room_lab_receipts
+      WHERE actor = ? AND request_id = ? AND signing_key = ? AND digest = ?`)
+      .get(query.actor, query.requestId, signingKey, query.proofDigest) as { receipt_json: string } | undefined;
+    if (!row) return null;
+    const r = JSON.parse(row.receipt_json) as AdmissionReceipt;
+    if (!r || typeof r !== 'object' || Array.isArray(r) || Object.keys(r).length !== 10
+        || r.protocol !== ROOM_CONTROL_PROTOCOL || r.hub !== this.#hub || r.actor !== query.actor
+        || r.requestId !== query.requestId || r.proofDigest !== query.proofDigest
+        || !/^room_[0-9a-f]{32}$/.test(r.roomId)
+        || !['create', 'invite', 'accept', 'close'].includes(r.action)
+        || !['open', 'closed'].includes(r.status)
+        || !Number.isSafeInteger(r.revision) || r.revision < 1
+        || !Number.isSafeInteger(r.committedAt) || r.committedAt < 0) throw new Error('Invalid receipt');
+    // A wrong room uses the same unavailable result as an unknown request/key/digest.
+    return r.roomId === query.roomId ? r : null;
   }
 
   #memberships(agent: string): number {

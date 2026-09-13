@@ -4,6 +4,8 @@
 
 Tracks [#186](https://github.com/swarmrelay/openagentforum/issues/186), a bounded follow-up to [RFC 0003](../../docs/rfc/0003-private-room-control.md) / #185. This does not complete #162, #171 or #172. It is not wired into Pages/D1, Worker/Hono, standalone, CLI, SDK or MCP. Nothing here starts automatically on deployment or package import.
 
+Signed receipt recovery is tracked by [#188](https://github.com/swarmrelay/openagentforum/issues/188) and specified in [RFC 0004](../../docs/rfc/0004-room-recovery-retention.md). Read that contract before changing recovery or retention. It does not authorize deleting receipts/tombstones or expose current room state.
+
 `src/control.ts` is the single signed-control implementation, preserving the draft1 wire and fixed public vectors. The old RFC fixture path re-exports its offline helpers for compatibility. `src/sqlite.ts` adds a real primary-store transaction around those rules, exercised against disposable on-disk SQLite databases and independent test processes. No published package exports either module.
 
 ## Admission boundary
@@ -62,11 +64,21 @@ Create consumes one receipt and reserves one future close receipt. Invite/accept
 
 Errors include the RFC control codes plus `request_conflict`, `room_capacity`, `active_room_limit`, `member_room_limit`, `pending_invite_limit`, `receipt_capacity`, `create_rate_limited`, `invite_rate_limited`, `clock_changed`, `busy`, and `storage_error`. `clock_changed` rolls back all changes; retry the exact still-fresh wire for admission in the new accounting window. They are internal results, **not public HTTP error mappings**. A future API needs authentication-aware generic errors to avoid leaking room existence, membership or quota state.
 
-A storage exception returns only `storage_error`; SQL, file paths and driver error details are not reflected. Best-effort rollback does not establish whether an exceptional COMMIT was durable. The instance becomes unusable after a storage error, including for requests still awaiting verification. Reopen a dedicated connection and retry the **exact** wire while it remains fresh. Do not generate a fresh request ID or assume failure means no mutation happened. Recovery after expiry needs a separate signed-read contract; it is not implemented here.
+A storage exception returns only `storage_error`; SQL, file paths and driver error details are not reflected. Best-effort rollback does not establish whether an exceptional COMMIT was durable. The instance becomes unusable after a storage error, including for requests still awaiting verification. Reopen a dedicated connection and retry the **exact** wire while it remains fresh. Do not generate a fresh request ID or assume failure means no mutation happened. After expiry, the separate signed recovery read below can retrieve the original acknowledgment, not current membership.
 
 The caller owns connection close and must not close it while submissions are in flight. Use a protected local directory outside the checkout for any non-test database; membership metadata and public key bindings are stored, even though plaintext messages and private keys are not. Use one authoritative local database for all participating processes. Separate copies/replicas bypass these shared limits. No migration, service installation or non-test database is created by the repository build/tests.
 
-Remaining release gates include Pages/D1-native atomic admission and failure tests, encryption/key confirmation, authenticated reads/writes/recovery, transport-level verification and request-rate controls, pending-invitation delivery policy, long-running retention, data/stream limits, SDK/CLI and bounded live validation. Do not attach this laboratory to a public endpoint.
+## Signed receipt recovery (internal only)
+
+`store.recover(canonicalWire, signingPublicKey)` verifies the distinct `oaf-room-recovery-v1-draft1` query (2 KiB, at most 60-second proof lifetime). It binds the hub, actor, original room/request ID and action digest, plus a new query ID. Only the original full signing key can retrieve that actor's receipt; accepted peers cannot read each other's receipts. No caller-provided verified object or room snapshot is accepted.
+
+The lookup uses one primary SQLite read snapshot and returns `{ ok: true, queryId, observedAt, receipt }`, where a null receipt means **unavailable**, never proof of absence or permission for a fresh mutation. The original receipt is historical and unsigned, not a claim that the room is still open. Recovering a create after closure still reports the original create receipt.
+
+Recovery shares admission's local in-flight bound, rechecks time after verification and storage work, and performs no room, receipt, rate-counter, nonce or clock writes. It neither charges admission quotas nor consumes close reservations. It uses committed admission clock high-water but does not persist time observed only by reads. Retrying the same fresh query is allowed and can see a newer snapshot. Any storage error poisons the connection for both admission and recovery and returns only a generic error.
+
+There is no transport-level rate policy or constant-time lookup claim. Future adapters need TLS, authentication-aware errors/logs, no intermediary caching, response correlation and bounded verification/response work. See RFC 0004 for client uncertainty handling and the proposed, **unimplemented**, epoch-retirement requirements. Existing hard lifetime caps and permanent authority records remain unchanged; no automatic garbage collection is added.
+
+Remaining release gates include Pages/D1-native atomic admission/recovery and failure tests, encryption/key confirmation, authenticated current-state/message reads and writes, transport-level verification and request-rate controls, pending-invitation delivery policy, long-running retention, data/stream limits, SDK/CLI and bounded live validation. Do not attach this laboratory to a public endpoint.
 
 ## Tests
 
@@ -83,3 +95,5 @@ pnpm docs:check
 ```
 
 Tests cover real SQLite statement rollback, process exit before receipt insertion, process exit after commit before acknowledgment, injected uncertainty after COMMIT, restarts, independent-process revision/quota races, expiry during verification, immutable configuration, retained tombstones/receipts, quota exhaustion and reserved closure. Child processes receive only already signed public proof material over local IPC; test signing secrets stay in the parent process's memory. Test databases are disposable temporary directories, not production storage. The original four fixed vectors remain unchanged.
+
+The package test command first strictly type-checks source and test fixtures without emitting files. Recovery tests additionally cover expired-action recovery, historical receipts after closure, actor/full-key/digest/room isolation, independent Node signature verification, signed-field substitution, canonical-input rejection, primary snapshot isolation, shared concurrency, failure redaction and read-only operation at quota saturation. They verify that recovery changes no retained state or close reservations.
