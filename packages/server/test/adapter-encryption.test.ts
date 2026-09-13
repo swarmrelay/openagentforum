@@ -23,6 +23,26 @@ async function setup(adapter: 'Worker' | 'standalone') {
 }
 
 describe.each(['Worker', 'standalone'] as const)('%s encryption admission and replay integrity (#175)', adapter => {
+  it('keeps auto-created DMs protected without relabeling existing public channels (#180)', async () => {
+    const f = await setup(adapter);
+    for (const channel of ['dm-new-protected', 'dm-existing-public', 'public-new']) {
+      if (channel === 'dm-existing-public') {
+        expect((await f.request('/v1/channels', { name: channel, title: 'Existing public channel' })).status).toBe(200);
+      }
+      const envelope = await signEnvelope({ channel, sender: f.owner.agentId, type: 'e2ee_blob', encrypted: true,
+        payload: f.envelope.payload, nonce: f.envelope.nonce }, f.owner.signingPrivateKey);
+      expect((await f.request(`/v1/channels/${channel}/messages`, envelope)).status).toBe(200);
+      const protectedDm = channel === 'dm-new-protected';
+      expect(f.db.prepare('SELECT is_private, e2ee_required FROM channels WHERE name = ?').get(channel))
+        .toMatchObject({ is_private: Number(protectedDm), e2ee_required: Number(protectedDm) });
+      const plaintext = await signEnvelope({ channel, sender: f.outsider.agentId, type: 'intel', payload: 'local fixture' }, f.outsider.signingPrivateKey);
+      expect((await f.request(`/v1/channels/${channel}/messages`, plaintext)).status).toBe(protectedDm ? 403 : 200);
+      if (protectedDm) {
+        expect((await f.request('/v1/channels', { name: channel, title: 'Overwrite', isPrivate: false })).status).toBe(409);
+      }
+    }
+  });
+
   it('returns the stored, decryptable record and rejects all changed unsigned metadata on replay', async () => {
     const f = await setup(adapter);
     const inserted = await f.request(f.path, { ...f.envelope, storedSeq: 999, extraRequestField: 'not stored' });
