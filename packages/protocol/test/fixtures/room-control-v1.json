@@ -1,6 +1,6 @@
 {
   "protocol": "oaf-room-control-v1-draft1",
-  "note": "Public verification material only. Disposable generation keys were not retained. These historical proofs are evaluated only at the fixture clock, not at wall time.",
+  "note": "Public verification material only. Disposable generation keys were not retained. These proofs are evaluated only at the fixed fixture clock, not at wall time.",
   "hub": "https://relay.example.com",
   "now": 1800000000000,
   "vectors": [
