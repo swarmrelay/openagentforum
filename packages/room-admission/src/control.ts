@@ -163,15 +163,10 @@ export interface PreparedRoomControl {
   evaluate(state: RoomState | null, now: number): RoomControlResult;
 }
 
-/** Internal preparation only. Storage must accept raw wire, never caller-prepared objects. */
-export async function prepareRoomControl(
-  wire: string,
-  actorPublicKey: string,
-  context: { hub: string; now: number },
-): Promise<PreparedRoomControl | { ok: false; reason: RoomControlError }> {
+function parseControl(wire: string, hub: string): { ok: true; proof: RoomControlProof }
+  | { ok: false; reason: RoomControlError } {
   const fail = (reason: RoomControlError): { ok: false; reason: RoomControlError } => ({ ok: false, reason });
-  const { hub, now } = context;
-  if (!hubOrigin(hub) || !integer(now)) return fail('invalid_context');
+  if (!hubOrigin(hub)) return fail('invalid_context');
   if (typeof wire !== 'string' || wire.length > ROOM_CONTROL_LIMITS.wireBytes
       || encoder.encode(wire).length > ROOM_CONTROL_LIMITS.wireBytes) return fail('invalid_wire');
   let proof: unknown;
@@ -181,8 +176,15 @@ export async function prepareRoomControl(
   // escape aliases and reordered keys instead of relying on parser-specific rules.
   if (canonicalizeJson(proof) !== wire) return fail('noncanonical_wire');
   if (proof.hub !== hub) return fail('wrong_hub');
-  if (now >= proof.expiresAt) return fail('expired_proof');
-  if (proof.issuedAt > now + ROOM_CONTROL_LIMITS.futureSkewMs) return fail('future_proof');
+  return { ok: true, proof };
+}
+
+interface AuthenticatedControl {
+  ok: true; action: RoomControlAction; proofDigest: string;
+}
+async function authenticateControl(proof: RoomControlProof, actorPublicKey: string):
+Promise<AuthenticatedControl | { ok: false; reason: RoomControlError }> {
+  const fail = (reason: RoomControlError): { ok: false; reason: RoomControlError } => ({ ok: false, reason });
   if (!matches(actorPublicKey, HEX_32)) return fail('invalid_public_key');
   const { signature, ...action } = proof;
   const signString = roomControlSignString(action);
@@ -193,6 +195,35 @@ export async function prepareRoomControl(
       encoder.encode(signString))) return fail('invalid_signature');
   } catch { return fail('invalid_signature'); }
   const proofDigest = await sha256Hex(signString);
+  return { ok: true, action, proofDigest };
+}
+
+/**
+ * Historical signature/key binding ONLY. No freshness, membership or admission.
+ * Never use this to authorize a mutation, state read, or message access.
+ */
+export async function authenticateRoomControl(wire: string, actorPublicKey: string, hub: string):
+Promise<AuthenticatedControl | { ok: false; reason: RoomControlError }> {
+  const parsed = parseControl(wire, hub);
+  return parsed.ok ? authenticateControl(parsed.proof, actorPublicKey) : parsed;
+}
+
+/** Internal preparation only. Storage must accept raw wire, never caller-prepared objects. */
+export async function prepareRoomControl(
+  wire: string,
+  actorPublicKey: string,
+  context: { hub: string; now: number },
+): Promise<PreparedRoomControl | { ok: false; reason: RoomControlError }> {
+  const fail = (reason: RoomControlError): { ok: false; reason: RoomControlError } => ({ ok: false, reason });
+  const { hub, now } = context;
+  if (!hubOrigin(hub) || !integer(now)) return fail('invalid_context');
+  const parsed = parseControl(wire, hub);
+  if (!parsed.ok) return parsed;
+  if (now >= parsed.proof.expiresAt) return fail('expired_proof');
+  if (parsed.proof.issuedAt > now + ROOM_CONTROL_LIMITS.futureSkewMs) return fail('future_proof');
+  const authenticated = await authenticateControl(parsed.proof, actorPublicKey);
+  if (!authenticated.ok) return authenticated;
+  const { action, proofDigest } = authenticated;
   const derivedId = action.action === 'create' ? await deriveRoomId(hub, action.actor, action.requestId) : null;
   const recipientMatches = action.action !== 'invite'
     || await deriveAgentId(action.payload.recipientSigningPublicKey) === action.payload.recipient;

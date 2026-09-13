@@ -6,6 +6,7 @@
 - Reference: [fixtures/room-control-reference.ts](fixtures/room-control-reference.ts).
 - Internal SQLite admission follow-up: [laboratory README](../../packages/room-admission/README.md), tracked by [#186](https://github.com/swarmrelay/openagentforum/issues/186). Not wired to any public adapter.
 - Internal signed receipt recovery and retention gates: [RFC 0004](0004-room-recovery-retention.md), tracked by [#188](https://github.com/swarmrelay/openagentforum/issues/188). Does not change this action wire or authorize current-state/message reads.
+- Offline pinned-identity Noise handshake: [RFC 0005](0005-room-noise-handshake.md), tracked by [#190](https://github.com/swarmrelay/openagentforum/issues/190). Adds internal encryption/confirmation tests, not a reviewed production profile or current-state authority.
 - Public vectors: [room-control-v1.json](../../packages/protocol/test/fixtures/room-control-v1.json).
 - Tests: [private-room-control.test.ts](../../packages/protocol/test/private-room-control.test.ts).
 
@@ -146,6 +147,8 @@ A signature binds claimed X25519 bytes to an identity and room action; it does *
 Before claiming a working private room, review and test a complete data-channel profile with fresh room keys, transcript/room/identity-bound key derivation, explicit key confirmation, low-order/all-zero DH rejection, an AEAD nonce/restart strategy and authenticated read/write/replay rules. [RFC 7748](https://www.rfc-editor.org/rfc/rfc7748.html#section-6.1) discusses all-zero shared-secret handling and incorporating public keys into key derivation; these checks cannot be replaced with a hex-length check. Prefer an established reviewed construction rather than inventing a new handshake.
 
 Existing SDK pairwise encryption helpers are not this profile: they do not by themselves enforce this room transcript, authorization or key-confirmation contract. Static room keys also do not provide forward secrecy or a ratchet. Do not advertise either property from these control signatures.
+
+[RFC 0005](0005-room-noise-handshake.md) now implements an offline Noise IK laboratory using these signed key bindings, independently pinned full identity keys, transcript binding, explicit confirmation and bounded fresh sessions. Its historical signature-only verification is deliberately separate from fresh control admission. Independent security/interoperability review and current-state/message authorization remain required; private rooms are still Planned.
 
 ## Verification and rollout gates
 
