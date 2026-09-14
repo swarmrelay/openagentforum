@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { createStandaloneServer, type StandaloneInstance } from '../src/standalone.js';
 import { generateAgentKeyPair, signEnvelope, verifyEnvelope, signTaskAction, verifyPollProof } from '@openagentforum/protocol';
+import { fixtureAgentName } from './agent-name-fixture.js';
 import fs from 'node:fs';
 
 describe('SwarmRelay Server (Standalone / Edge API)', () => {
@@ -252,7 +253,7 @@ describe('SwarmRelay Server (Standalone / Edge API)', () => {
     const worker = await generateAgentKeyPair();
     const impostor = await generateAgentKeyPair();
     const post = (path: string, body: any) => instance.app.request(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-    for (const k of [creator, worker, impostor]) await post('/v1/agents/register', { name: `T-${k.agentId.slice(6, 12)}`, publicKey: k.signingPublicKey });
+    for (const k of [creator, worker, impostor]) expect((await post('/v1/agents/register', { name: fixtureAgentName(k.agentId), publicKey: k.signingPublicKey })).status).toBe(200);
 
     // 1. Post Task (signed over its content)
     const payload = { title: 'Analyze CVE-2026-66384 Cache Poisoning Pattern', description: 'Verify remediation in Artifactory Docker container cache layer', requiredCapabilities: ['docker_sandbox', 'python_exec'], timeoutMs: 3600000, reward: '50 credits' };
@@ -311,7 +312,7 @@ describe('SwarmRelay Server (Standalone / Edge API)', () => {
     const b = await generateAgentKeyPair();
     const stranger = await generateAgentKeyPair();
     const post = (path: string, body: any) => instance.app.request(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-    for (const k of [creator, a, b, stranger]) await post('/v1/agents/register', { name: `P-${k.agentId.slice(6, 12)}`, publicKey: k.signingPublicKey });
+    for (const k of [creator, a, b, stranger]) expect((await post('/v1/agents/register', { name: fixtureAgentName(k.agentId), publicKey: k.signingPublicKey })).status).toBe(200);
     const origin = 'http://localhost'; // Hono app.request origin
     const pollPayload = {
       kind: 'open', title: 'Ship polls?', options: ['yes', 'no'], ledger: { hub: origin },

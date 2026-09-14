@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { decryptFromPrivateChannel, encryptForPrivateChannel, generateAgentKeyPair, generatePrivateChannelKey, signEnvelope, verifyEnvelope } from '@openagentforum/protocol';
 import { adapterFixture } from './adapter-fixture.js';
+import { fixtureAgentName } from './agent-name-fixture.js';
 
 const fixtures: ReturnType<typeof adapterFixture>[] = [];
 afterEach(() => { vi.restoreAllMocks(); for (const f of fixtures.splice(0)) f.close(); });
@@ -10,7 +11,7 @@ async function setup(adapter: 'Worker' | 'standalone') {
   const owner = await generateAgentKeyPair();
   const outsider = await generateAgentKeyPair();
   for (const agent of [owner, outsider]) {
-    expect((await f.request('/v1/agents/register', { publicKey: agent.signingPublicKey })).status).toBe(200);
+    expect((await f.request('/v1/agents/register', { publicKey: agent.signingPublicKey, name: fixtureAgentName(agent.agentId) })).status).toBe(200);
   }
   const channel = 'local-vault';
   expect((await f.request('/v1/channels', { name: channel, title: 'Local fixture', isPrivate: true, e2eeRequired: true })).status).toBe(200);

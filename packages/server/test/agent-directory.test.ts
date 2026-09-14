@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { generateAgentKeyPair, signEnvelope, verifyEnvelope } from '@openagentforum/protocol';
 import { adapterFixture } from './adapter-fixture.js';
 import { pagesWakeFixture } from './pages-wake-fixture.js';
+import { fixtureAgentName } from './agent-name-fixture.js';
 
 const cleanups: (() => void)[] = [];
 afterEach(() => { for (const close of cleanups.splice(0)) close(); });
@@ -22,7 +23,7 @@ describe.each(['Worker', 'standalone', 'Pages D1', 'Pages memory'] as const)('%s
     const keys = await Promise.all(Array.from({ length: 105 }, () => generateAgentKeyPair()));
     keys.sort((a, b) => a.agentId < b.agentId ? -1 : 1);
     for (const key of keys) {
-      expect((await f.request('/v1/agents/register', { publicKey: key.signingPublicKey })).status).toBe(200);
+      expect((await f.request('/v1/agents/register', { publicKey: key.signingPublicKey, name: fixtureAgentName(key.agentId) })).status).toBe(200);
     }
     const author = keys[keys.length - 1];
     const envelope = await signEnvelope({ channel: 'general', sender: author.agentId, type: 'intel', sequence: 19,
@@ -41,7 +42,9 @@ describe.each(['Worker', 'standalone', 'Pages D1', 'Pages memory'] as const)('%s
     expect((await verifyEnvelope(messages.find((m: { id: string }) => m.id === envelope.id), agent.publicKey)).valid).toBe(true);
 
     // A heartbeat must not move an already-enumerated key behind the cursor.
-    expect((await f.request('/v1/agents/register', { publicKey: keys[0].signingPublicKey })).status).toBe(200);
+    const heartbeat = await f.request('/v1/agents/register', { publicKey: keys[0].signingPublicKey, name: fixtureAgentName(keys[0].agentId) });
+    expect(heartbeat.status).toBe(200);
+    expect((await heartbeat.json()).agent.name).toBe(fixtureAgentName(keys[0].agentId));
     const ids: string[] = first.agents.map((a: { agentId: string }) => a.agentId);
     let cursor = first.nextCursor;
     for (let n = 0; cursor !== null && n < 20; n++) {
@@ -63,6 +66,24 @@ describe.each(['Worker', 'standalone', 'Pages D1', 'Pages memory'] as const)('%s
     expect(maximum.hasMore).toBe(true);
     const end = await (await f.request('/v1/agents?cursor=agent_ffffffffffffffff')).json();
     expect(end).toMatchObject({ agents: [], hasMore: false, nextCursor: null });
+  });
+
+  it('still rejects a real name collision, then accepts a distinct explicit name (#210)', async () => {
+    const f = await setup(adapter);
+    const first = await generateAgentKeyPair(), second = await generateAgentKeyPair();
+    const sharedName = fixtureAgentName(first.agentId);
+    expect((await f.request('/v1/agents/register', { publicKey: first.signingPublicKey, name: sharedName })).status).toBe(200);
+    const conflict = await f.request('/v1/agents/register', { publicKey: second.signingPublicKey, name: sharedName.toLowerCase() });
+    expect(conflict.status).toBe(409);
+    expect((await conflict.json()).claimedBy).toBe(first.agentId);
+    expect((await f.request(`/v1/agents/${second.agentId}`)).status).toBe(404);
+
+    const distinctName = fixtureAgentName(second.agentId);
+    const accepted = await f.request('/v1/agents/register', { publicKey: second.signingPublicKey, name: distinctName });
+    expect(accepted.status).toBe(200);
+    expect((await accepted.json()).agent).toMatchObject({ agentId: second.agentId, name: distinctName, publicKey: second.signingPublicKey });
+    expect((await (await f.request(`/v1/agents/${first.agentId}`)).json()).agent)
+      .toMatchObject({ agentId: first.agentId, name: sharedName, publicKey: first.signingPublicKey });
   });
 
   it('rejects malformed limits/cursors instead of silently truncating or removing the bound', async () => {

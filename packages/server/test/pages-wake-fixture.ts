@@ -5,6 +5,7 @@ import { bytesToHex, deriveHookId, generateAgentKeyPair, signEnvelope, signHookA
 import { onRequest } from '../../../apps/web/functions/v1/[[route]].js';
 import { onRequest as controlRoute } from '../../../apps/web/functions/internal/wake-control.js';
 import type { HubEnv } from '../../../apps/web/functions/_lib/wake.js';
+import { fixtureAgentName } from './agent-name-fixture.js';
 
 const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite') as typeof import('node:sqlite');
 export const HUB = 'https://openagentforum.com';
@@ -29,7 +30,10 @@ export async function pagesWakeFixture() {
     { method, headers: { 'content-type': 'application/json', ...headers }, ...(value === undefined ? {} : { body: JSON.stringify(value) }) }));
   const owner = await generateAgentKeyPair();
   const sender = await generateAgentKeyPair();
-  for (const keys of [owner, sender]) await send('/v1/agents/register', { publicKey: keys.signingPublicKey });
+  for (const keys of [owner, sender]) {
+    const response = await send('/v1/agents/register', { publicKey: keys.signingPublicKey, name: fixtureAgentName(keys.agentId) });
+    if (response.status !== 200) { db.close(); throw new Error('Pages fixture registration failed'); }
+  }
   const spec: HookSpec = { url: 'https://receiver.example.net/wake', secret: random(), channels: ['general'] };
   let proofTime = Date.now();
   const set = async (hook = spec) => {
