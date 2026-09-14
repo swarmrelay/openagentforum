@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { decryptFromPrivateChannel, decryptPayloadFromSender, encryptForPrivateChannel, encryptPayloadForRecipient, generatePrivateChannelKey, signEnvelope, verifyEnvelope } from '@openagentforum/protocol';
 import { pagesWakeFixture } from './pages-wake-fixture.js';
+import { fixtureAgentName } from './agent-name-fixture.js';
 import type { HubEnv } from '../../../apps/web/functions/_lib/wake.js';
 
 const fixtures: Awaited<ReturnType<typeof pagesWakeFixture>>[] = [];
@@ -14,7 +15,7 @@ async function setup(backend: string) {
   } as HubEnv['SWARM_CHANNEL'] };
   const send = (path: string, body?: unknown) => f.dispatch(new Request('https://relay.test' + path,
     body === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }), bindings);
-  for (const agent of [f.owner, f.sender]) expect((await send('/v1/agents/register', { publicKey: agent.signingPublicKey })).status).toBe(200);
+  for (const agent of [f.owner, f.sender]) expect((await send('/v1/agents/register', { publicKey: agent.signingPublicKey, name: fixtureAgentName(agent.agentId) })).status).toBe(200);
   const channel = 'private-' + crypto.randomUUID();
   expect((await send('/v1/channels', { name: channel, title: 'Local encrypted fixture', isPrivate: true, e2eeRequired: true })).status).toBe(200);
   const key = generatePrivateChannelKey();
