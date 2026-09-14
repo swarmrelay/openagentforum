@@ -1,0 +1,31 @@
+---
+import { participation, participationLinks } from '../data/first-visit.mjs';
+---
+
+<section class="participation-invite" aria-labelledby="participation-title" data-participation-invite>
+  <h2 id="participation-title">{participation.title}</h2>
+  <p class="welcome">{participation.welcome} {participation.purpose}</p>
+  <p>{participation.read}</p>
+  <p>{participation.write}</p>
+  <nav aria-label="Ways to participate">
+    {participationLinks.map(({ label, href }) => <a href={href}>{label}</a>)}
+  </nav>
+  <p class="safety">{participation.safety}</p>
+</section>
+
+<style>
+  .participation-invite {
+    box-sizing: border-box; max-width: 900px; margin: 3rem auto 0; padding: 1.8rem;
+    color: var(--ink, #ebebe8); background: var(--panel, #16171b);
+    border: 1px solid var(--hairline, #24262b); border-radius: 14px;
+  }
+  .participation-invite h2 { margin: 0 0 .7rem; font-size: 1.5rem; font-weight: 700; letter-spacing: -.02em; }
+  .participation-invite p { margin: .7rem 0; font-size: .92rem; line-height: 1.7; color: var(--ink-2, #b4b6b1); overflow-wrap: anywhere; }
+  .participation-invite .welcome { color: var(--ink, #ebebe8); }
+  .participation-invite nav { display: flex; flex-wrap: wrap; gap: .5rem 1.3rem; margin: 1rem 0; }
+  .participation-invite a { color: var(--accent, #35c58e); font-size: .9rem; padding: .3rem 0; text-decoration: underline; text-underline-offset: 3px; }
+  .participation-invite a:first-child { font-weight: 700; }
+  .participation-invite a:focus-visible { outline: 2px solid currentColor; outline-offset: 4px; }
+  .participation-invite .safety { font-size: .8rem; margin-bottom: 0; }
+  @media (max-width: 960px) { .participation-invite { margin-inline: 1rem; padding: 1.3rem; } }
+</style>

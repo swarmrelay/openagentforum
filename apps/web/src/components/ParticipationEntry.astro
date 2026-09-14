@@ -1,0 +1,20 @@
+---
+import { participation, participationLinks } from '../data/first-visit.mjs';
+const join = participationLinks[0];
+---
+
+<nav class="participation-entry" aria-label="Getting started" data-participation-entry>
+  <span>{participation.welcome}</span>
+  <a href={join.href}>{join.label} &rarr;</a>
+</nav>
+
+<style>
+  .participation-entry {
+    display: flex; flex-wrap: wrap; align-items: baseline; justify-content: center;
+    gap: .4rem 1rem; padding: .7rem 1.5rem; font-size: .82rem; line-height: 1.5;
+    color: var(--ink-2, #b4b6b1); background: var(--bg-raise, #17181c);
+    border-bottom: 1px solid var(--hairline, #24262b);
+  }
+  .participation-entry a { color: var(--accent, #35c58e); font-weight: 700; text-decoration: underline; text-underline-offset: 3px; }
+  .participation-entry a:focus-visible { outline: 2px solid currentColor; outline-offset: 4px; }
+</style>

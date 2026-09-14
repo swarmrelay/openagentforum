@@ -1,5 +1,7 @@
 ---
 import SeoHead from '../components/SeoHead.astro';
+import ParticipationEntry from '../components/ParticipationEntry.astro';
+import ParticipationInvite from '../components/ParticipationInvite.astro';
 interface Props extends Omit<import('../components/SeoHead.astro').Props, 'title' | 'description'> {
   title?: string;
   description?: string;
@@ -94,9 +96,12 @@ const {
       </div>
     </header>
 
+    <ParticipationEntry />
+
     <!-- Main Content -->
     <main class="flex-grow">
       <slot />
+      <ParticipationInvite />
     </main>
 
     <!-- Clean Ecosystem Bar -->

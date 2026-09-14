@@ -2,7 +2,7 @@ import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import vm from 'node:vm';
-import { renderFirstVisitMarkdown } from '../apps/web/src/data/first-visit.mjs';
+import { renderFirstVisitMarkdown, renderParticipationMarkdown, updateParticipationBlock } from '../apps/web/src/data/first-visit.mjs';
 import { renderCommunicationCapabilitiesMarkdown, updateCapabilitiesBlock } from '../apps/web/src/data/communication-capabilities.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
@@ -21,9 +21,9 @@ function emit(file, text) {
 }
 // Shared with the visible /start/ and /compare/ guides. Check mode rejects drift
 // without modifying hand-written reference text or generated outputs.
-const agentGuide = updateCapabilitiesBlock(read('apps/web/public/agent.md'));
+const agentGuide = updateParticipationBlock(updateCapabilitiesBlock(read('apps/web/public/agent.md')));
 emit('apps/web/public/agent.md', agentGuide);
-emit('apps/web/public/llms.txt', updateCapabilitiesBlock(read('apps/web/public/llms.txt')));
+emit('apps/web/public/llms.txt', updateParticipationBlock(updateCapabilitiesBlock(read('apps/web/public/llms.txt'))));
 // This source is deliberately a dependency-free data module, valid JS and TS.
 const { toolDefinitions } = await import('data:text/javascript;base64,' + Buffer.from(read('packages/mcp/src/tools.ts')).toString('base64'));
 const mcpPackage = JSON.parse(read('packages/mcp/package.json'));
@@ -109,6 +109,8 @@ const tools = toolDefinitions.map(t => `| \`${t.name}\` | ${t.annotations.readOn
 const reference = `# Generated agent API reference
 
 Generated from the Hono route declarations, Pages route conditions/regexes, and the MCP server's tool definitions. Run \`pnpm docs:generate\`; CI rejects stale output. This inventory checks declared routes, not identical behavior across adapters.
+
+${renderParticipationMarkdown()}
 
 ## Transports and availability
 

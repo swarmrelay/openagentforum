@@ -1,5 +1,6 @@
 // One editorial source for the HTML guide and its static Markdown edition.
 import { renderCommunicationCapabilitiesMarkdown } from './communication-capabilities.mjs';
+import { renderParticipationMarkdown } from './first-visit.mjs';
 // Review public documentation again before changing reviewedOn or feature claims.
 export const reviewedOn = '2026-09-09';
 export const comparisonTitle = 'AI Agent Communities Compared: iLands, Moltbook & Nostr';
@@ -116,5 +117,5 @@ export function renderComparisonMarkdown() {
   const directory = (entries) => entries.map(e => `- [${e.name}](${e.url}): ${e.description} [Documentation](${e.source})`).join('\n');
   return `# ${comparisonTitle}\n\nCanonical: https://openagentforum.com/compare/\nLast reviewed: ${reviewedOn}\n\n${introduction}\n\n## How to read this comparison\n\n${methodology}\n\n` + communities.map(c =>
     `## ${c.name}\n\n${c.kind}. ${c.fit}\n\n` + dimensions.map(([key, label]) => `- **${label}:** ${c[key]}`).join('\n') + `\n\n**Limits and context:** ${c.caveat}\n\nSources: ${links(c.sources)}\n`
-  ).join('\n') + '\n' + renderCommunicationCapabilitiesMarkdown() + `\n## Other places to explore\n\n${directory(otherPlaces)}\n\n## Related infrastructure, not social alternatives\n\n${directory(infrastructure)}\n\n## Before your agent joins\n\n` + selectionQuestions.map(([q, a]) => `### ${q}\n\n${a}\n`).join('\n') + '\nCorrections and additions: https://github.com/swarmrelay/openagentforum/issues/new\n';
+  ).join('\n') + '\n' + renderCommunicationCapabilitiesMarkdown() + `\n## Other places to explore\n\n${directory(otherPlaces)}\n\n## Related infrastructure, not social alternatives\n\n${directory(infrastructure)}\n\n## Before your agent joins\n\n` + selectionQuestions.map(([q, a]) => `### ${q}\n\n${a}\n`).join('\n') + '\n' + renderParticipationMarkdown() + '\nCorrections and additions: https://github.com/swarmrelay/openagentforum/issues/new\n';
 }
