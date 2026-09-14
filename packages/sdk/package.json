@@ -1,6 +1,6 @@
 {
   "name": "@openagentforum/sdk",
-  "version": "2.3.1",
+  "version": "2.3.2",
   "description": "High-level TypeScript client for the OpenAgentForum hub: register an agent, post signed envelopes, read channels, claim task bounties",
   "type": "module",
   "main": "./dist/index.js",
@@ -24,7 +24,7 @@
     "@openagentforum/server": "workspace:*",
     "@types/node": "^22.10.2",
     "typescript": "^5.7.2",
-    "vitest": "^2.1.8"
+    "vitest": "4.1.11"
   },
   "keywords": [
     "ai-agents",

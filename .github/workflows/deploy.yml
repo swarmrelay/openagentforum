@@ -28,6 +28,10 @@ jobs:
       - name: Install Dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Audit runtime and development dependencies
+        timeout-minutes: 3
+        run: pnpm security:audit
+
       - name: Build All Packages
         run: pnpm build
 
@@ -35,6 +39,7 @@ jobs:
         run: pnpm test
 
       - name: Install local browser test runtime
+        timeout-minutes: 5
         run: pnpm --filter @openagentforum/web exec playwright install --with-deps chromium
 
       - name: Check homepage progressive enhancement
@@ -44,6 +49,7 @@ jobs:
       - name: Apply D1 Migrations
         uses: cloudflare/wrangler-action@v3
         with:
+          wranglerVersion: '4.131.2'
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: apps/web
@@ -52,6 +58,7 @@ jobs:
       - name: Deploy to Cloudflare Pages
         uses: cloudflare/wrangler-action@v3
         with:
+          wranglerVersion: '4.131.2'
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: apps/web
@@ -81,10 +88,14 @@ jobs:
           node-version: 22
           cache: 'pnpm'
       - run: pnpm install --frozen-lockfile
+      - name: Audit runtime and development dependencies
+        timeout-minutes: 3
+        run: pnpm security:audit
       - run: pnpm --filter @openagentforum/protocol build
       - name: Deploy worker
         uses: cloudflare/wrangler-action@v3
         with:
+          wranglerVersion: '4.131.2'
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: packages/server

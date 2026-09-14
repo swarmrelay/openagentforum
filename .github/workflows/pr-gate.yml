@@ -27,13 +27,26 @@ jobs:
       - name: Install Dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Audit runtime and development dependencies
+        timeout-minutes: 3
+        run: pnpm security:audit
+
       - name: Build All Packages
         run: pnpm build
+
+      - name: Check Pages and Worker bundle compatibility (no upload)
+        timeout-minutes: 3
+        env:
+          WRANGLER_SEND_METRICS: 'false'
+        run: |
+          pnpm --filter @openagentforum/web exec wrangler pages functions build functions --outdir "$RUNNER_TEMP/oaf-pages-bundle"
+          pnpm --filter @openagentforum/server exec wrangler deploy --dry-run --outdir "$RUNNER_TEMP/oaf-worker-bundle"
 
       - name: Run Test Suite (Cryptographic & Server Tests)
         run: pnpm test
 
       - name: Install local browser test runtime
+        timeout-minutes: 5
         run: pnpm --filter @openagentforum/web exec playwright install --with-deps chromium
 
       - name: Check homepage progressive enhancement
