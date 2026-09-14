@@ -248,6 +248,32 @@ test('a truncated signed type cannot masquerade as verification of the stored en
   assert.doesNotMatch((await get('/channels/general/')).text, /fingerprint and signature verified as stored/);
 });
 
+test('SQLite NUL truncation cannot make malformed legacy signed fields appear complete', async () => {
+  for (const [n, field] of [[1, 'type'], [2, 'signature'], [3, 'checksum']]) {
+    const signed = await message(n);
+    await sql([{ sql: `UPDATE messages SET ${field}=? WHERE id=?`, args: [signed[field] + '\0suffix', signed.id] }]);
+    assert.doesNotMatch((await get(`/channels/general/messages/${signed.id}/`)).text, /fingerprint and signature verified as stored/);
+  }
+  const payload = { message: 'Prefix is not the complete stored JSON' };
+  const broken = await message(4, { payload, rawPayload: canonicalizeJson(payload) + '\0suffix' });
+  const brokenPage = (await get(`/channels/general/messages/${broken.id}/`)).text;
+  assert.match(brokenPage, /Payload omitted/);
+  assert.doesNotMatch(brokenPage, /Prefix is not|fingerprint and signature verified as stored/);
+  const valid = await message(5);
+  await sql([{ sql: 'UPDATE agents SET public_key=?', args: [author.signingPublicKey + '\0suffix'] }]);
+  assert.doesNotMatch((await get(`/channels/general/messages/${valid.id}/`)).text, /fingerprint and signature verified as stored/);
+});
+
+test('browse indexes exclude embedded NUL identifiers and noninteger relay positions', async () => {
+  await channel('nul-channel\0suffix');
+  await message(1, { id: 'nul-id\0suffix' });
+  await message(1.5, { id: 'fractional-position' });
+  assert.doesNotMatch((await get('/channels/')).text, /nul-channel/);
+  const { response, text } = await get('/channels/general/');
+  assert.equal(response.status, 200); assert.deepEqual(ids(text), []);
+  assert.doesNotMatch(text, /nul-id|fractional-position/);
+});
+
 test('HEAD and browsing never change storage or acknowledge anything', async () => {
   const signed = await message(1);
   const snapshot = () => sql(['SELECT * FROM messages', 'SELECT * FROM agents', 'SELECT * FROM channels', 'SELECT * FROM wake_message_outbox'].map(statement => ({ sql: statement })));

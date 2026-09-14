@@ -10,11 +10,14 @@ export const MESSAGE_ID = /^[a-zA-Z0-9_:-]{1,128}$/;
 // Partial indexes in migration 0006 use precisely these predicates.
 export const PUBLIC_CHANNEL = `is_private = 0 AND e2ee_required = 0 AND allowed_agents_json = '[]'
   AND length(name) BETWEEN 1 AND 128 AND name NOT GLOB '*[^a-z0-9_-]*'
+  AND instr(name, char(0)) = 0
   AND name NOT GLOB 'dm-*' AND name NOT GLOB 'vault-*'`;
 export const PUBLIC_MESSAGE = `encrypted = 0 AND type != 'e2ee_blob'
   AND nonce IS NULL AND ephemeral_public_key IS NULL AND recipient_keys_json IS NULL
   AND stored_seq BETWEEN 1 AND 9007199254740991
-  AND length(id) BETWEEN 1 AND 128 AND id NOT GLOB '*[^a-zA-Z0-9_:-]*'`;
+  AND typeof(stored_seq) = 'integer'
+  AND length(id) BETWEEN 1 AND 128 AND id NOT GLOB '*[^a-zA-Z0-9_:-]*'
+  AND instr(id, char(0)) = 0`;
 
 export type BrowseRoute =
   | { kind: 'directory'; after?: string }
@@ -25,6 +28,7 @@ interface PublicRow {
   id: string; channel: string; sender: string; type: MessageEnvelope['type'];
   sequence: number; stored_seq: number; timestamp: number; payload_json: string;
   signature: string; checksum: string; reply_to_id: string | null; public_key: string | null;
+  signed_text_complete: number | null;
 }
 export interface PublicMessage {
   id: string; channel: string; sender: string; type: string; sequence: number; storedSeq: number;
@@ -40,9 +44,12 @@ const CHANNEL_COLUMNS = 'name, substr(title, 1, 160) AS title, substr(topic, 1, 
 // Cap database projections before buffering/parsing. A truncated signed payload
 // is never verified as if it were the original record.
 const MESSAGE_COLUMNS = `m.id, m.channel, substr(m.sender, 1, 129) AS sender, substr(m.type, 1, 65) AS type,
-  m.sequence, m.stored_seq, m.timestamp, substr(m.payload_json, 1, ${PAYLOAD_LIMIT + 1}) AS payload_json,
+  m.sequence, m.stored_seq, m.timestamp,
+  CASE WHEN instr(m.payload_json, char(0)) = 0 THEN substr(m.payload_json, 1, ${PAYLOAD_LIMIT + 1}) ELSE NULL END AS payload_json,
   substr(m.signature, 1, 129) AS signature, substr(m.checksum, 1, 65) AS checksum,
-  substr(m.reply_to_id, 1, 129) AS reply_to_id, substr(a.public_key, 1, 65) AS public_key`;
+  substr(m.reply_to_id, 1, 129) AS reply_to_id, substr(a.public_key, 1, 65) AS public_key,
+  (instr(m.sender, char(0)) = 0 AND instr(m.type, char(0)) = 0 AND instr(m.signature, char(0)) = 0
+    AND instr(m.checksum, char(0)) = 0 AND instr(a.public_key, char(0)) = 0) AS signed_text_complete`;
 
 export async function readPublicBrowse(db: D1Database, route: BrowseRoute): Promise<BrowseData | null> {
   if (route.kind === 'directory') {
@@ -87,7 +94,7 @@ async function presentMessage(row: PublicRow, textLimit: number): Promise<Public
   try { payload = JSON.parse(row.payload_json); } catch { return omitted; }
   const envelope = { id: row.id, channel: row.channel, sender: row.sender, type: row.type,
     sequence: row.sequence, timestamp: row.timestamp, payload, signature: row.signature, checksum: row.checksum };
-  const verified = Boolean(row.type.length <= 64 && row.public_key && /^[a-fA-F0-9]{64}$/.test(row.public_key)
+  const verified = Boolean(row.signed_text_complete === 1 && row.type.length <= 64 && row.public_key && /^[a-fA-F0-9]{64}$/.test(row.public_key)
     && /^[a-fA-F0-9]{128}$/.test(row.signature) && /^[a-fA-F0-9]{64}$/.test(row.checksum)
     && (await verifyEnvelope(envelope, row.public_key)).valid);
   const object = payload && typeof payload === 'object' && !Array.isArray(payload) ? payload as Record<string, unknown> : null;

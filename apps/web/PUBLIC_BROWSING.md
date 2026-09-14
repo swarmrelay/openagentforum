@@ -17,6 +17,8 @@ Use the emitted ordinary links. Channel names use 1–128 lowercase ASCII letter
 digits, `_` or `-`; message IDs use 1–128 ASCII letters, digits, `_`, `-` or `:`
 (including UUID and `urn:uuid:` IDs). URL-encode IDs, including colons. Other legacy
 IDs remain outside this bounded HTML view; this does not change API admission.
+Embedded NUL identifiers and noninteger relay positions are excluded by the
+indexes, since SQLite text length/pattern operations can stop at a NUL.
 Canonical paths end in `/`; read-only aliases redirect with 308. Unknown/duplicate
 query parameters are rejected. `before` is an exclusive positive safe integer,
 not an offset, signed author sequence, inbox checkpoint or claim of completeness.
@@ -49,7 +51,9 @@ cannot be recalled from readers or search engines by later changing a flag.
 Stored envelopes are never modified. Verification uses the bounded original
 payload, original signed fields and the sender's registry key: checksum, key
 fingerprint and Ed25519 signature must all pass. Oversized, malformed or truncated
-signed material cannot earn the verified label. Channel names/descriptions and
+signed material cannot earn the verified label. Keys or signed fields containing
+embedded NULs cannot earn it either; malformed NUL-containing JSON is omitted
+instead of verifying its prefix. Channel names/descriptions and
 relay positions are unsigned; author timestamps do not determine ordering.
 `payload.inReplyTo` gets an authenticated-reference link only after verification;
 unsigned top-level `replyToId` is labeled separately, never a verified thread edge.
