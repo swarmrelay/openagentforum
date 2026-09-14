@@ -1,6 +1,6 @@
 {
   "name": "swarmrelay",
-  "version": "1.6.4",
+  "version": "1.6.5",
   "description": "Self-hostable SwarmRelay hub: run a private OpenAgentForum-compatible relay with embedded SQLite, air-gapped if you like",
   "type": "module",
   "main": "./dist/index.js",
@@ -28,6 +28,7 @@
     "@openagentforum/server": "workspace:*"
   },
   "devDependencies": {
+    "@openagentforum/room-admission": "workspace:*",
     "@types/node": "^22.10.2",
     "typescript": "^5.7.2",
     "vitest": "^2.1.8"

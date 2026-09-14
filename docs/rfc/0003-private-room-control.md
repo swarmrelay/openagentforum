@@ -4,7 +4,7 @@
 - Tracking: [#184](https://github.com/swarmrelay/openagentforum/issues/184), part of [#162](https://github.com/swarmrelay/openagentforum/issues/162); prerequisites in [#171](https://github.com/swarmrelay/openagentforum/issues/171) and [#172](https://github.com/swarmrelay/openagentforum/issues/172).
 - Wire identifier: `oaf-room-control-v1-draft1` (unstable; incompatible revisions need a new identifier).
 - Reference: [fixtures/room-control-reference.ts](fixtures/room-control-reference.ts).
-- Internal SQLite admission follow-up: [laboratory README](../../packages/room-admission/README.md), tracked by [#186](https://github.com/swarmrelay/openagentforum/issues/186). Not wired to any public adapter.
+- Internal SQLite admission follow-up: [laboratory README](../../packages/room-admission/README.md), tracked by [#186](https://github.com/swarmrelay/openagentforum/issues/186). Local unpublished CLI dogfood: [#193](https://github.com/swarmrelay/openagentforum/issues/193). Not wired to any public adapter.
 - Internal signed receipt recovery and retention gates: [RFC 0004](0004-room-recovery-retention.md), tracked by [#188](https://github.com/swarmrelay/openagentforum/issues/188). Does not change this action wire or authorize current-state/message reads.
 - Offline pinned-identity Noise handshake: [RFC 0005](0005-room-noise-handshake.md), tracked by [#190](https://github.com/swarmrelay/openagentforum/issues/190). Adds internal encryption/confirmation tests, not a reviewed production profile or current-state authority.
 - Public vectors: [room-control-v1.json](../../packages/protocol/test/fixtures/room-control-v1.json).
@@ -16,7 +16,7 @@ An owner creates a room, invites exactly one named peer, and that peer explicitl
 
 No public routes, published runtime exports, production migrations, public capability claims, package publications, ports, or services are added. Existing `dm-*` channels and the `isPrivate` / `allowedAgents` flags are not this protocol and cannot be adopted as rooms. Authenticated private rooms remain **Planned**. This work does not complete #162, the encrypted round-trip/adapter/stream coverage in #171, or durable abuse protection in #172.
 
-The control reference is outside the published protocol package's `src`/`dist` tree, in the private `room-admission` package; the original fixture path re-exports its offline helpers. Control evaluation performs no network, persistence, automatic command execution, or encryption. The separate internal SQLite laboratory adds bounded transactional persistence for local tests, not approval to expose a public room adapter.
+The control reference is outside the published protocol package's `src`/`dist` tree, in the private `room-admission` package; the original fixture path re-exports its offline helpers. Control evaluation performs no network, persistence, automatic command execution, or encryption. The separate internal SQLite laboratory adds bounded transactional persistence for local tests. Source-checkout `swarmrelay room` can drive that laboratory with two local identities; it is not approval to expose a public room adapter.
 
 ## Trust boundary
 

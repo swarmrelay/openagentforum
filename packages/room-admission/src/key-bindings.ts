@@ -1,6 +1,6 @@
 /** Historical identity-to-room-key binding, never proof of current admission. */
 import { canonicalizeJson } from '@openagentforum/protocol';
-import { authenticateRoomControl, deriveRoomId, type RoomMember } from './control.js';
+import { verifyHistoricalRoomControlSignature, deriveRoomId, type RoomMember } from './control.js';
 
 export const ROOM_NOISE_PROFILE = 'oaf-room-noise-ik-v1-draft1';
 export interface RoomKeyBundle { create: string; invite: string; accept: string }
@@ -38,9 +38,9 @@ export async function verifyRoomKeyBindings(bundle: RoomKeyBundle, pins: RoomKey
     throw new Error('Invalid room key binding');
   }
   const [c, i, a] = await Promise.all([
-    authenticateRoomControl(create, ownerSigningPublicKey, hub),
-    authenticateRoomControl(invite, ownerSigningPublicKey, hub),
-    authenticateRoomControl(accept, peerSigningPublicKey, hub),
+    verifyHistoricalRoomControlSignature(create, ownerSigningPublicKey, hub),
+    verifyHistoricalRoomControlSignature(invite, ownerSigningPublicKey, hub),
+    verifyHistoricalRoomControlSignature(accept, peerSigningPublicKey, hub),
   ]);
   if (!c.ok || !i.ok || !a.ok || c.action.action !== 'create' || i.action.action !== 'invite'
       || a.action.action !== 'accept' || [c.action, i.action, a.action].some(action => action.roomId !== roomId)

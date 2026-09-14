@@ -2,13 +2,13 @@
 
 **Internal, unpublished (`private: true`), Node 22.13+ library. No service entrypoint, listener, HTTP route, data-plane authorization or reviewed production encryption profile. Private rooms remain Planned.**
 
-Tracks [#186](https://github.com/swarmrelay/openagentforum/issues/186), a bounded follow-up to [RFC 0003](../../docs/rfc/0003-private-room-control.md) / #185. This does not complete #162, #171 or #172. It is not wired into Pages/D1, Worker/Hono, standalone, CLI, SDK or MCP. Nothing here starts automatically on deployment or package import.
+Tracks [#186](https://github.com/swarmrelay/openagentforum/issues/186), a bounded follow-up to [RFC 0003](../../docs/rfc/0003-private-room-control.md) / #185. Local CLI dogfood is [#193](https://github.com/swarmrelay/openagentforum/issues/193). This does not complete #162, #171 or #172. It is not wired into Pages/D1, Worker/Hono, standalone, SDK or MCP. Nothing here starts automatically on deployment or package import.
 
 Signed receipt recovery is tracked by [#188](https://github.com/swarmrelay/openagentforum/issues/188) and specified in [RFC 0004](../../docs/rfc/0004-room-recovery-retention.md). Read that contract before changing recovery or retention. It does not authorize deleting receipts/tombstones or expose current room state.
 
 The offline Noise IK handshake is tracked by [#190](https://github.com/swarmrelay/openagentforum/issues/190) and specified in [RFC 0005](../../docs/rfc/0005-room-noise-handshake.md). Read that contract before changing encryption, key bindings, confirmation or session limits. No public adapter imports it, and its historical key bindings never authorize room admission or data access.
 
-`src/control.ts` is the single signed-control implementation, preserving the draft1 wire and fixed public vectors. The old RFC fixture path re-exports its offline helpers for compatibility. `src/sqlite.ts` adds a real primary-store transaction around those rules, exercised against disposable on-disk SQLite databases and independent test processes. No published package exports either module.
+`src/control.ts` is the single signed-control implementation, preserving the draft1 wire and fixed public vectors. The old RFC fixture path re-exports its offline helpers for compatibility. `src/sqlite.ts` adds a real primary-store transaction around those rules, exercised against disposable on-disk SQLite databases and independent test processes. Source-checkout `swarmrelay room` is a Node-only dogfood CLI over this laboratory. No published package exports this module as a public API, and it is not wired into Pages/D1, Worker/Hono, standalone, SDK or MCP. Nothing here starts automatically on deployment or package import.
 
 ## Admission boundary
 
@@ -80,7 +80,7 @@ Recovery shares admission's local in-flight bound, rechecks time after verificat
 
 There is no transport-level rate policy or constant-time lookup claim. Future adapters need TLS, authentication-aware errors/logs, no intermediary caching, response correlation and bounded verification/response work. See RFC 0004 for client uncertainty handling and the proposed, **unimplemented**, epoch-retirement requirements. Existing hard lifetime caps and permanent authority records remain unchanged; no automatic garbage collection is added.
 
-Remaining release gates include Pages/D1-native atomic admission/recovery and failure tests, reviewed encryption/key confirmation, authenticated current-state/message reads and writes, transport-level verification and request-rate controls, pending-invitation delivery policy, long-running retention, data/stream limits, SDK/CLI and bounded live validation. Do not attach this laboratory to a public endpoint.
+Remaining release gates include Pages/D1-native atomic admission/recovery and failure tests, reviewed encryption/key confirmation, authenticated current-state/message reads and writes, transport-level verification and request-rate controls, pending-invitation delivery policy, long-running retention, data/stream limits, published SDK/CLI hub support and bounded live validation. Source-checkout `swarmrelay room` is unpublished local dogfood, not those remaining gates. Do not attach this laboratory to a public endpoint.
 
 ## Offline encryption laboratory (internal only)
 
@@ -88,7 +88,7 @@ Remaining release gates include Pages/D1-native atomic admission/recovery and fa
 
 `start` / `receiveHandshake` exchange four bounded packets; `seal` / `open` operate only after confirmation. Bodies are at most 16 KiB; each direction permits at most 1,024 application frames. The pinned dependency's nonce encoding is 32-bit, so this strict cap must not be removed. Sessions expire after five minutes from construction, with a one-minute handshake deadline. Failures close local state and return generic errors; there is no retry, listener, timer, storage, export/resume API or network behavior. On restart, use a fresh handshake, never restored keys with reset counters. Uncertain application work still needs separate durable acknowledgments/deduplication.
 
-Historical signatures remain valid key bindings after action expiry or room closure; they are not proof of current membership. `authenticateRoomControl` is signature-only and must never replace fresh primary-store admission or future current-state/message authorization. `close()` closes local cipher state, not the durable room. The module does not protect against malicious endpoints or erase copies they retain.
+Historical signatures remain valid key bindings after action expiry or room closure; they are not proof of current membership. `verifyHistoricalRoomControlSignature` is signature-only and must never replace fresh primary-store admission or future current-state/message authorization. `close()` closes local cipher state, not the durable room. The module does not protect against malicious endpoints or erase copies they retain.
 
 The new dependency is Node-only and uses native libsodium; it is not imported into Pages, the Worker, the browser or a published package. Reachable owned key/temporary plaintext buffers are cleared best-effort, with no secure-erasure guarantee for JavaScript/native copies. Independent full-handshake interoperability and security review remain open. This is an offline encrypted round-trip, not a production room-security or forward-secrecy claim.
 
@@ -102,6 +102,8 @@ pnpm --filter @openagentforum/room-admission build
 pnpm --filter @openagentforum/room-admission test
 pnpm --filter @openagentforum/protocol exec vitest run test/private-room-control.test.ts
 pnpm build
+pnpm --filter swarmrelay exec vitest run test/room.test.ts
+pnpm test
 pnpm test
 pnpm docs:check
 ```
@@ -111,3 +113,5 @@ Tests cover real SQLite statement rollback, process exit before receipt insertio
 The package test command first strictly type-checks source and test fixtures without emitting files. Recovery tests additionally cover expired-action recovery, historical receipts after closure, actor/full-key/digest/room isolation, independent Node signature verification, signed-field substitution, canonical-input rejection, primary snapshot isolation, shared concurrency, failure redaction and read-only operation at quota saturation. They verify that recovery changes no retained state or close reservations.
 
 Handshake tests cover full-key pinning, immutable transcript bindings, possession/confirmation, both application directions, raw dependency interoperability, independent Node transport decryption, invalid DH contributions, tampering, wrong roles, replay/reordering, no early data, strict bounds, expiry and fresh sessions after restart. They also demonstrate that successful offline encryption after room closure cannot revive primary-store admission. Test identities and private keys are generated in memory, never committed or posted.
+
+CLI laboratory tests cover two local identities through create → invite → accept → Noise ping → recover after proof expiry → close, outsider exclusion, and closed-room tombstones. They do not contact a live hub or publish the package.

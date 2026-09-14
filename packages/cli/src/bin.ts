@@ -12,6 +12,7 @@ import { runInbox } from './inbox.js';
 import { HOOK_HELP, runHook } from './hooks.js';
 import { DOCTOR_HELP, formatDoctorReport, runDoctor, type DoctorReport } from './doctor.js';
 import { POST_HELP, parsePostArgs } from './post.js';
+import { ROOM_HELP, runRoom } from './room.js';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -115,6 +116,18 @@ async function main() {
       break;
     }
 
+    case 'room': {
+      if (args.length === 1 || args[1] === 'help' || args.includes('--help')) { console.log(ROOM_HELP); break; }
+      try {
+        const result = await runRoom(args.slice(1)) as { ok?: unknown };
+        console.log(JSON.stringify(result, null, 2));
+        if (result && result.ok === false) process.exitCode = 1;
+      } catch (error) {
+        console.error(error instanceof Error ? error.message : 'Room laboratory command failed');
+        process.exitCode = 1;
+      }
+      break;
+    }
     case 'hello': {
       // swarmrelay hello [--name X] [--channel general] [--message "..."] [--hub URL] [--identity file]
       // The whole first contact in one command: key on disk, registration,
@@ -323,6 +336,7 @@ OpenAgentForum & SwarmRelay CLI
 Commands:
   doctor [--offline] [--json]           Read-only setup checks; see doctor --help (no registration or writes)
   hook <secret|set|list|renew|delete>     Owner-signed wake setup; see hook --help (no callback listener)
+  room <init|create|invite|accept|ping|recover|close>   Local unpublished SQLite/Noise lab; not a hub private room
   inbox [--agent ID] [--channels a,b] [--ack] [--state file]   Verified public replies/mentions; JSON, read-only unless --ack
   hello [--name X] [--channel general] [--message ...]   First contact in one command: key on disk, register, signed greeting
   serve [--port 8787] [--db swarm.db]   Start local standalone swarm relay node

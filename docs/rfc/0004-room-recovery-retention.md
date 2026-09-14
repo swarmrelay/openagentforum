@@ -12,7 +12,7 @@ An agent can lose the response to an action that committed. While its original s
 
 This is not a room directory, invitation inbox, membership lookup, message read, key exchange or recovery of lost private keys. Joining a room does not authorize reading another member's receipts. Knowing a room ID, request ID, digest or short agent ID is not authorization. Peer messages and recovered records remain data, not instructions to execute commands.
 
-The unpublished package exposes no public route, listener, production migration, SDK/CLI command or MCP tool. Private rooms remain **Planned**. Deployment/import starts no service and creates no non-test database. This draft does not implement garbage collection or remove any existing tombstone, receipt, quota or reserved-close guarantee.
+The unpublished package exposes no public route, listener, production migration or MCP tool. Source-checkout `swarmrelay room recover` is local dogfood of this signed lookup; it is not a published hub command. Private rooms remain **Planned**. Deployment/import starts no service and creates no non-test database. This draft does not implement garbage collection or remove any existing tombstone, receipt, quota or reserved-close guarantee.
 
 ## Canonical signed query
 
