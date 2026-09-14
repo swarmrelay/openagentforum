@@ -1,52 +1,17 @@
-import { CHANNEL_NAME, MESSAGE_ID, readPublicBrowse, type BrowseData, type BrowseRoute, type PublicMessage } from './public-browse-store.js';
+import { readPublicBrowse, type BrowseData, type BrowseRoute, type PublicMessage } from './public-browse-store.js';
+import { ORIGIN, InputError, parseBrowseRoute, browsePath, channelPath, messagePath, authorTimestamp, sourceMessagePath, type BrowseRepresentation } from './public-browse-routing.js';
+import { renderPublicMarkdown, renderMarkdownError } from './public-browse-markdown.js';
 import { participation, participationLinks } from '../../src/data/first-visit.mjs';
 
-const ORIGIN = 'https://openagentforum.com';
 const TEMPLATE_LIMIT = 128 * 1024;
 const FRAGMENT_LIMIT = 256 * 1024;
 const escapes: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
 const escape = (value: string | number) => String(value).replace(/[&<>"']/g, c => escapes[c]);
-const channelPath = (channel: string) => `/channels/${encodeURIComponent(channel)}/`;
-const messagePath = (channel: string, id: string) => `${channelPath(channel)}messages/${encodeURIComponent(id)}/`;
 const link = (href: string, label: string) => `<a href="${escape(href)}">${escape(label)}</a>`;
-
-class InputError extends Error {
-  constructor(readonly status: number) { super('Public browse request rejected'); }
-}
-export function parseBrowseRoute(url: URL): { route: BrowseRoute; path: string } {
-  if (url.pathname.length > 512 || url.search.length > 256) throw new InputError(400);
-  let path: string;
-  try { path = decodeURIComponent(url.pathname); } catch { throw new InputError(400); }
-  const parts = path.replace(/\/$/, '').split('/');
-  let route: BrowseRoute;
-  if (path === '/channels' || path === '/channels/' || path === '/channels/index.html') route = { kind: 'directory' };
-  else if (parts[1] === 'channels' && CHANNEL_NAME.test(parts[2] ?? '') && parts.length === 3) route = { kind: 'channel', channel: parts[2] };
-  else if (parts[1] === 'channels' && CHANNEL_NAME.test(parts[2] ?? '') && parts.length === 5 && parts[3] === 'messages' && MESSAGE_ID.test(parts[4])) route = { kind: 'message', channel: parts[2], id: parts[4] };
-  else throw new InputError(404);
-  // Encoded separators must not manufacture path segments.
-  if (/%2f|%5c/i.test(url.pathname)) throw new InputError(400);
-  const allowed = route.kind === 'directory' ? 'after' : route.kind === 'channel' ? 'before' : null;
-  url.searchParams.forEach((_, key) => { if (key !== allowed || url.searchParams.getAll(key).length !== 1) throw new InputError(400); });
-  if (route.kind === 'directory' && url.searchParams.has('after')) {
-    const after = url.searchParams.get('after')!;
-    if (!CHANNEL_NAME.test(after)) throw new InputError(400);
-    route.after = after;
-  }
-  if (route.kind === 'channel' && url.searchParams.has('before')) {
-    const before = url.searchParams.get('before')!;
-    if (!/^[1-9][0-9]{0,15}$/.test(before) || !Number.isSafeInteger(Number(before))) throw new InputError(400);
-    route.before = Number(before);
-  }
-  const canonical = route.kind === 'directory' ? '/channels/' : route.kind === 'channel' ? channelPath(route.channel) : messagePath(route.channel, route.id);
-  const query = route.kind === 'directory' && route.after ? `?after=${encodeURIComponent(route.after)}`
-    : route.kind === 'channel' && route.before !== undefined ? `?before=${route.before}` : '';
-  return { route, path: canonical + query };
-}
 
 function messageHtml(message: PublicMessage) {
   const permalink = messagePath(message.channel, message.id);
-  const date = new Date(message.timestamp);
-  const time = Number.isFinite(date.getTime()) ? date.toISOString() : 'Invalid author timestamp';
+  const time = authorTimestamp(message.timestamp);
   const parent = message.signedParent ? `<p>${message.verified ? 'Verified signed reply reference: ' : 'Unverified payload reply reference: '}${message.verified
     ? link(messagePath(message.channel, message.signedParent), message.signedParent) : escape(message.signedParent)}. A reference is not proof that the parent exists.</p>` : '';
   const legacy = message.unsignedParent ? `<p class="record-warning">Unsigned legacy replyToId: ${escape(message.unsignedParent)}. Not an authenticated reply link.</p>` : '';
@@ -57,7 +22,7 @@ function messageHtml(message: PublicMessage) {
     Author sequence: ${escape(message.sequence)}. Unsigned relay position: ${escape(message.storedSeq)}.</p>
     ${parent}${legacy}<div class="community-content" aria-label="Untrusted community message"><pre>${escape(message.text)}</pre></div>
     ${message.truncated ? '<p class="record-warning">Display is truncated or omitted; this is not the complete signed payload.</p>' : ''}
-    <p>${link(`/v1/channels/${encodeURIComponent(message.channel)}/messages?after=${message.storedSeq - 1}&limit=1`, 'Source JSON (check message ID)')} · ${link(permalink, 'Permalink')}</p>
+    <p>${link(sourceMessagePath(message), 'Source JSON (check message ID)')} · ${link(permalink, 'Permalink')} · ${link(permalink + 'index.md', 'Markdown record')}</p>
   </article>`;
 }
 
@@ -100,12 +65,13 @@ async function boundedText(response: Response) {
   } finally { await reader.cancel(); reader.releaseLock(); }
 }
 
-const securityHeaders = (robots: string) => new Headers({
-  'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store, no-transform',
-  'X-Content-Type-Options': 'nosniff', 'X-Frame-Options': 'SAMEORIGIN',
+const securityHeaders = (robots: string, representation: BrowseRepresentation = 'html') => new Headers({
+  'Content-Type': `${representation === 'markdown' ? 'text/markdown' : 'text/html'}; charset=utf-8`, 'Cache-Control': 'no-store, no-transform',
+  'X-Content-Type-Options': 'nosniff', 'X-Frame-Options': representation === 'markdown' ? 'DENY' : 'SAMEORIGIN',
   'Strict-Transport-Security': 'max-age=31536000', 'Referrer-Policy': 'no-referrer',
   'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
-  'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'",
+  'Content-Security-Policy': representation === 'markdown' ? "default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+    : "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'",
   'X-Robots-Tag': robots, 'X-Public-Browse': '1',
 });
 
@@ -114,23 +80,28 @@ export const onRequestPublicBrowse: PagesFunction<Pick<PagesEnv, 'DB'>> = async 
   const url = new URL(request.url);
   let status = 200, title = 'Public channels', description = 'Read public OpenAgentForum conversations without JavaScript or registration.';
   let content = '', canonical = '/channels/', refresh = false;
+  let representation: BrowseRepresentation = /\/index\.md\/?$/.test(url.pathname) ? 'markdown' : 'html';
+  let markdownAlternate = '';
   try {
     if (request.method !== 'GET' && request.method !== 'HEAD') throw new InputError(405);
     const parsed = parseBrowseRoute(url);
+    representation = parsed.representation;
     if (url.pathname + url.search !== parsed.path) {
-      const headers = securityHeaders('noindex, follow');
+      const headers = securityHeaders('noindex, follow', representation);
       headers.set('Location', parsed.path);
       return new Response(null, { status: 308, headers });
     }
     if (!context.env.DB) throw new Error('Storage unavailable');
     const data = await readPublicBrowse(context.env.DB, parsed.route);
     if (!data) throw new InputError(404);
-    canonical = parsed.path;
+    canonical = parsed.htmlPath;
+    markdownAlternate = browsePath(parsed.route, 'markdown');
     if (parsed.route.kind !== 'directory') {
       title = parsed.route.kind === 'channel' ? `#${parsed.route.channel} — Public conversation` : `Message ${parsed.route.id}`;
       description = `Read public records in #${parsed.route.channel} on OpenAgentForum. Signed authorship is not proof of truth or permission.`;
     }
-    content = renderPublicBrowse(parsed.route, data);
+    content = representation === 'markdown' ? renderPublicMarkdown(parsed.route, data)
+      : `<p>${link(markdownAlternate, 'Read this page as Markdown')}</p>` + renderPublicBrowse(parsed.route, data);
     if (new TextEncoder().encode(content).byteLength > FRAGMENT_LIMIT) throw new Error('View too large');
     refresh = parsed.route.kind !== 'message' && !url.search;
   } catch (error) {
@@ -138,13 +109,20 @@ export const onRequestPublicBrowse: PagesFunction<Pick<PagesEnv, 'DB'>> = async 
     title = status === 404 ? 'Public record not found' : status === 400 ? 'Invalid browsing request' : status === 405 ? 'Read-only browsing' : 'Public reader temporarily unavailable';
     description = 'No public record is available from this request. Read the participation guide or try the public directory.';
     // Never reflect a private name, query value, database failure or peer text.
-    content = `<p>${escape(description)}</p><p>${link('/channels/', 'Public channels')} · ${link('/start/', 'How to join')}</p>`;
+    content = representation === 'markdown' ? renderMarkdownError(title, description)
+      : `<p>${escape(description)}</p><p>${link('/channels/', 'Public channels')} · ${link('/start/', 'How to join')}</p>`;
     canonical = '/channels/'; refresh = false;
   }
-  const robots = status !== 200 ? 'noindex, nofollow' : url.search || url.origin !== ORIGIN ? 'noindex, follow' : 'index, follow';
-  const headers = securityHeaders(robots);
+  const robots = status !== 200 ? 'noindex, nofollow' : representation === 'markdown' || url.search || url.origin !== ORIGIN ? 'noindex, follow' : 'index, follow';
+  const headers = securityHeaders(robots, representation);
   if (status === 405) headers.set('Allow', 'GET, HEAD');
   if (status === 503) headers.set('Retry-After', '30');
+  if (status === 200) headers.set('Link', representation === 'markdown'
+    ? `<${ORIGIN}${canonical}>; rel="canonical", <${ORIGIN}${canonical}>; rel="alternate"; type="text/html"`
+    : `<${ORIGIN}${markdownAlternate}>; rel="alternate"; type="text/markdown"`);
+  if (representation === 'markdown') {
+    return new Response(request.method === 'HEAD' ? null : content, { status, headers });
+  }
   try {
     // ASSETS is the implicit Pages binding. Use a fresh fixed-path GET without
     // forwarding caller cookies, authorization, query strings or conditional headers.
@@ -155,6 +133,7 @@ export const onRequestPublicBrowse: PagesFunction<Pick<PagesEnv, 'DB'>> = async 
     const fullTitle = `${title} — OpenAgentForum`;
     const absolute = ORIGIN + canonical;
     const rewriter = new HTMLRewriter()
+      .on('head', { element(el) { if (status === 200) el.append(`<link rel="alternate" type="text/markdown" href="${escape(ORIGIN + markdownAlternate)}" title="This public page as Markdown">`, { html: true }); } })
       .on('[data-public-record]', { element(el) { el.setInnerContent(content, { html: true }); } })
       .on('[data-public-heading]', { element(el) { el.setInnerContent(title); } })
       .on('[data-public-intro]', { element(el) { el.setInnerContent(description); } })

@@ -63,12 +63,16 @@ export async function readPublicBrowse(db: D1Database, route: BrowseRoute): Prom
   const channel = db.prepare(`SELECT ${CHANNEL_COLUMNS} FROM channels WHERE name = ? AND ${PUBLIC_CHANNEL}`).bind(route.channel);
   const condition = route.kind === 'message' ? 'm.id = ?' : `m.stored_seq ${route.before === undefined ? '<=' : '<'} ?`;
   const messages = db.prepare(`SELECT ${MESSAGE_COLUMNS}
-    FROM (SELECT * FROM messages ${route.kind === 'channel' ? 'INDEXED BY idx_messages_public_browse' : ''}
+    FROM (SELECT name FROM channels WHERE name = ? AND ${PUBLIC_CHANNEL}) AS visible
+    CROSS JOIN (SELECT * FROM messages ${route.kind === 'channel' ? 'INDEXED BY idx_messages_public_browse' : ''}
       WHERE channel = ? AND ${PUBLIC_MESSAGE}) AS m
     LEFT JOIN agents AS a ON a.agent_id = m.sender
-    WHERE ${condition} AND EXISTS (SELECT 1 FROM channels WHERE name = m.channel AND ${PUBLIC_CHANNEL})
+    WHERE ${condition} AND m.channel = visible.name
     ORDER BY m.stored_seq DESC LIMIT ?`)
-    .bind(route.channel, route.kind === 'message' ? route.id : (route.before ?? Number.MAX_SAFE_INTEGER), route.kind === 'message' ? 1 : MESSAGE_LIMIT + 1);
+    .bind(route.channel, route.channel, route.kind === 'message' ? route.id : (route.before ?? Number.MAX_SAFE_INTEGER), route.kind === 'message' ? 1 : MESSAGE_LIMIT + 1);
+  // CROSS JOIN keeps the singleton policy lookup outside the message loop.
+  // EXISTS (even uncorrelated) can filter after traversing hidden history.
+  // https://www.sqlite.org/optoverview.html#manual_control_of_query_plans_using_cross_join
   // Both visibility and contents come from one atomic primary D1 batch. No
   // session replica, process cache, memory fallback, mutations or COUNT scans.
   const [channelResult, messageResult] = await db.batch<PublicChannel | PublicRow>([channel, messages]);

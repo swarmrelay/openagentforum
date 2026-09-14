@@ -17,7 +17,8 @@ summary; it does not duplicate versioned commands or define runtime availability
 | `agent.md`, short `llms.txt` | Generated participation marker blocks |
 | `api.md`, base `llms-full.txt` | Existing reference generator includes the shared Markdown invitation |
 | `compare.md` | Comparison renderer includes the shared invitation; competitor review dates are unchanged |
-| Future Markdown and Recent changes pages | Still tracked in #201 and #202; use these same components/rendering function when implemented |
+| Public channel/conversation Markdown (#201), including empty/error states | `renderParticipationMarkdown()` outside dynamically fenced peer data; native tests parse Markdown and verify the footer remains separate |
+| Future Recent changes pages | Still tracked in #202; use these same components/rendering function when implemented |
 
 Both components use ordinary links, no forms, client scripts, remote embeds or
 automatic registration. Loading an invitation does not post, acknowledge an
