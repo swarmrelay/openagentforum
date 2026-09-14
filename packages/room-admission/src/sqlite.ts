@@ -7,68 +7,12 @@ import {
 } from './control.js';
 import { prepareRoomRecovery, type RoomRecoveryQuery } from './recovery.js';
 import { policySnapshot, recoveryReceipt } from './storage-contract.js';
-
-export interface AdmissionPolicy {
-  maxRetainedRooms: number;
-  maxActiveRooms: number;
-  maxActiveRoomsPerAgent: number;
-  maxPendingInvitesPerRecipient: number;
-  maxReceipts: number;
-  windowMs: number;
-  createsPerAgent: number;
-  createsPerHub: number;
-  invitesPerAgent: number;
-  invitesPerHub: number;
-  maxInFlightPerConnection: number;
-}
-export interface AdmissionReceipt {
-  protocol: typeof ROOM_CONTROL_PROTOCOL;
-  hub: string;
-  roomId: string;
-  actor: string;
-  requestId: string;
-  action: 'create' | 'invite' | 'accept' | 'close';
-  proofDigest: string;
-  revision: number;
-  status: 'open' | 'closed';
-  committedAt: number;
-}
-export type AdmissionError = RoomControlError | 'request_conflict' | 'room_capacity'
-  | 'active_room_limit' | 'member_room_limit' | 'pending_invite_limit' | 'receipt_capacity'
-  | 'create_rate_limited' | 'invite_rate_limited' | 'clock_changed' | 'storage_error' | 'busy';
-export type AdmissionResult = { ok: true; replayed: boolean; receipt: AdmissionReceipt }
-  | { ok: false; reason: AdmissionError };
-/** Null means unavailable, NOT proof of absence or permission to retry a fresh mutation. */
-export type RecoveryResult = { ok: true; queryId: string; observedAt: number; receipt: AdmissionReceipt | null }
-  | { ok: false; reason: RoomControlError | 'storage_error' | 'busy' };
+import { ROOM_LAB_SCHEMA } from './storage-schema.js';
+import type { AdmissionPolicy, AdmissionReceipt, AdmissionError, AdmissionResult, RecoveryResult } from './storage-types.js';
+export type { AdmissionPolicy, AdmissionReceipt, AdmissionError, AdmissionResult, RecoveryResult } from './storage-types.js';
+export { ROOM_LAB_SCHEMA } from './storage-schema.js';
 
 const SCHEMA_VERSION = 1;
-/** Test-only D1 seeding uses the same schema; never a production migration. */
-export const ROOM_LAB_SCHEMA = `
-  CREATE TABLE IF NOT EXISTS room_lab_meta (
-    id INTEGER PRIMARY KEY CHECK(id = 1), schema_version INTEGER NOT NULL,
-    hub TEXT NOT NULL, protocol TEXT NOT NULL, policy TEXT NOT NULL, clock INTEGER NOT NULL
-  ) STRICT;
-  CREATE TABLE IF NOT EXISTS room_lab_rooms (
-    room_id TEXT PRIMARY KEY, revision INTEGER NOT NULL CHECK(revision > 0),
-    status TEXT NOT NULL CHECK(status IN ('open', 'closed')),
-    owner_id TEXT NOT NULL, peer_id TEXT, invite_recipient TEXT, invite_expires INTEGER,
-    state_json TEXT NOT NULL CHECK(length(state_json) <= 4096)
-  ) STRICT;
-  CREATE INDEX IF NOT EXISTS room_lab_owner ON room_lab_rooms(status, owner_id);
-  CREATE INDEX IF NOT EXISTS room_lab_peer ON room_lab_rooms(status, peer_id);
-  CREATE INDEX IF NOT EXISTS room_lab_invites ON room_lab_rooms(status, invite_recipient, invite_expires);
-  CREATE TABLE IF NOT EXISTS room_lab_receipts (
-    actor TEXT NOT NULL, request_id TEXT NOT NULL, signing_key TEXT NOT NULL,
-    digest TEXT NOT NULL, receipt_json TEXT NOT NULL CHECK(length(receipt_json) <= 1024),
-    PRIMARY KEY(actor, request_id)
-  ) STRICT;
-  CREATE TABLE IF NOT EXISTS room_lab_budgets (
-    scope TEXT NOT NULL, kind TEXT NOT NULL CHECK(kind IN ('create', 'invite')),
-    bucket INTEGER NOT NULL, count INTEGER NOT NULL CHECK(count > 0),
-    PRIMARY KEY(scope, kind, bucket)
-  ) STRICT;
-`;
 type Meta = { schema_version: number; hub: string; protocol: string; policy: string; clock: number };
 const fail = (reason: AdmissionError): AdmissionResult => ({ ok: false, reason });
 

@@ -1,7 +1,7 @@
 /** Edge-safe validation shared by internal storage laboratories. No storage I/O. */
 import { ROOM_CONTROL_PROTOCOL } from './control.js';
 import type { RoomRecoveryQuery } from './recovery.js';
-import type { AdmissionPolicy, AdmissionReceipt } from './sqlite.js';
+import type { AdmissionPolicy, AdmissionReceipt } from './storage-types.js';
 
 const POLICY_KEYS: (keyof AdmissionPolicy)[] = [
   'maxRetainedRooms', 'maxActiveRooms', 'maxActiveRoomsPerAgent', 'maxPendingInvitesPerRecipient',
@@ -19,7 +19,8 @@ export function policySnapshot(policy: AdmissionPolicy): Readonly<AdmissionPolic
   return Object.freeze({ ...policy });
 }
 
-export function recoveryReceipt(raw: unknown, query: Readonly<RoomRecoveryQuery>): AdmissionReceipt | null {
+export function recoveryReceipt(raw: unknown,
+  query: Readonly<Pick<RoomRecoveryQuery, 'hub' | 'actor' | 'roomId' | 'requestId' | 'proofDigest'>>): AdmissionReceipt | null {
   if (typeof raw !== 'string' || raw.length > 1024) throw new Error('Invalid receipt');
   const r: unknown = JSON.parse(raw);
   if (!r || typeof r !== 'object' || Array.isArray(r)) throw new Error('Invalid receipt');

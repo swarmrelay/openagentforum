@@ -1,8 +1,8 @@
 # Private-room admission laboratory
 
-**Internal, unpublished (`private: true`), Node 22.13+ admission library plus an edge-safe D1 receipt-read laboratory. No service entrypoint, listener, HTTP route, data-plane authorization or reviewed production encryption profile. Private rooms remain Planned.**
+**Internal, unpublished (`private: true`), Node 22.13+ admission library plus edge-safe D1 admission and receipt-read laboratories. No service entrypoint, listener, HTTP route, data-plane authorization or reviewed production encryption profile. Private rooms remain Planned.**
 
-The [D1 signed-receipt reader](D1_RECOVERY.md), tracked by #216, is an internal read-only backend slice, not a production Pages adapter or D1 admission writer. Read that document before changing its primary-snapshot, clock or failure behavior. It shares wire/policy/receipt validation with this library and is tested on local D1/workerd; no public route imports it.
+The [D1 signed-receipt reader](D1_RECOVERY.md), tracked by #216, and [atomic D1 admission laboratory](D1_ADMISSION.md), tracked by #218, are internal backend slices, not a production Pages adapter. Read those documents before changing primary snapshots, transaction guards, clocks or failure behavior. They share wire/policy/receipt validation with this library and are tested on local D1/workerd; no public route imports them.
 
 Tracks [#186](https://github.com/swarmrelay/openagentforum/issues/186), a bounded follow-up to [RFC 0003](../../docs/rfc/0003-private-room-control.md) / #185. Local CLI dogfood is [#193](https://github.com/swarmrelay/openagentforum/issues/193). This does not complete #162, #171 or #172. It is not wired into Pages/D1, Worker/Hono, standalone, SDK or MCP. Nothing here starts automatically on deployment or package import.
 
@@ -12,7 +12,9 @@ The offline Noise IK handshake is tracked by [#190](https://github.com/swarmrela
 
 `src/control.ts` is the single signed-control implementation, preserving the draft1 wire and fixed public vectors. The old RFC fixture path re-exports its offline helpers for compatibility. `src/sqlite.ts` adds a real primary-store transaction around those rules, exercised against disposable on-disk SQLite databases and independent test processes. Source-checkout `swarmrelay room` is a Node-only dogfood CLI over this laboratory. No published package exports this module as a public API, and it is not wired into Pages/D1, Worker/Hono, standalone, SDK or MCP. Nothing here starts automatically on deployment or package import.
 
-## Admission boundary
+## SQLite admission boundary
+
+This section describes the synchronous Node adapter. The D1 counterpart uses a guarded transactional batch, not an interactive JavaScript transaction; see [D1_ADMISSION.md](D1_ADMISSION.md).
 
 An operator supplies a dedicated `node:sqlite` connection, exact HTTPS hub origin, complete policy and trusted clock. The constructor creates only the `room_lab_*` tables in that explicitly supplied database, pins the hub/protocol/schema/policy, and enables WAL, FULL synchronization and a one-second busy timeout. Existing mismatched configuration fails closed; constructor options cannot silently change another connection's limits. Do not give the connection to unrelated writers or expose SQL to agents.
 
@@ -66,7 +68,7 @@ Create consumes one receipt and reserves one future close receipt. Invite/accept
 
 ## Failure behavior and operational boundaries
 
-Errors include the RFC control codes plus `request_conflict`, `room_capacity`, `active_room_limit`, `member_room_limit`, `pending_invite_limit`, `receipt_capacity`, `create_rate_limited`, `invite_rate_limited`, `clock_changed`, `busy`, and `storage_error`. `clock_changed` rolls back all changes; retry the exact still-fresh wire for admission in the new accounting window. They are internal results, **not public HTTP error mappings**. A future API needs authentication-aware generic errors to avoid leaking room existence, membership or quota state.
+Errors include the RFC control codes plus `request_conflict`, `room_capacity`, `active_room_limit`, `member_room_limit`, `pending_invite_limit`, `receipt_capacity`, `create_rate_limited`, `invite_rate_limited`, `clock_changed`, `busy`, and `storage_error`. SQLite's `clock_changed` rolls back all changes; retry the exact still-fresh wire for admission in the new accounting window. D1 final-guard exceptions instead use generic, uncertain `storage_error`; never infer rollback from driver text. They are internal results, **not public HTTP error mappings**. A future API needs authentication-aware generic errors to avoid leaking room existence, membership or quota state.
 
 A storage exception returns only `storage_error`; SQL, file paths and driver error details are not reflected. Best-effort rollback does not establish whether an exceptional COMMIT was durable. The instance becomes unusable after a storage error, including for requests still awaiting verification. Reopen a dedicated connection and retry the **exact** wire while it remains fresh. Do not generate a fresh request ID or assume failure means no mutation happened. After expiry, the separate signed recovery read below can retrieve the original acknowledgment, not current membership.
 
@@ -82,7 +84,7 @@ Recovery shares admission's local in-flight bound, rechecks time after verificat
 
 There is no transport-level rate policy or constant-time lookup claim. Future adapters need TLS, authentication-aware errors/logs, no intermediary caching, response correlation and bounded verification/response work. See RFC 0004 for client uncertainty handling and the proposed, **unimplemented**, epoch-retirement requirements. Existing hard lifetime caps and permanent authority records remain unchanged; no automatic garbage collection is added.
 
-Remaining release gates include Pages/D1-native atomic admission/recovery and failure tests, reviewed encryption/key confirmation, authenticated current-state/message reads and writes, transport-level verification and request-rate controls, pending-invitation delivery policy, long-running retention, data/stream limits, published SDK/CLI hub support and bounded live validation. Source-checkout `swarmrelay room` is unpublished local dogfood, not those remaining gates. Do not attach this laboratory to a public endpoint.
+The internal D1 laboratories now exercise native atomic admission/recovery and failure behavior; production Pages integration and validation remain separate gates. Other remaining gates include reviewed encryption/key confirmation, authenticated current-state/message reads and writes, transport-level verification and request-rate controls, pending-invitation delivery policy, long-running retention, data/stream limits, published SDK/CLI hub support and bounded live validation. Source-checkout `swarmrelay room` is unpublished local dogfood, not those remaining gates. Do not attach this laboratory to a public endpoint.
 
 ## Offline encryption laboratory (internal only)
 
@@ -106,7 +108,7 @@ pnpm --filter @openagentforum/protocol exec vitest run test/private-room-control
 pnpm build
 pnpm --filter swarmrelay exec vitest run test/room.test.ts
 pnpm test
-pnpm test
+pnpm security:audit
 pnpm docs:check
 ```
 

@@ -4,7 +4,7 @@
 - Tracking: [#188](https://github.com/swarmrelay/openagentforum/issues/188), following #186 / #187; supports #162, #171 and #172 without completing them.
 - Recovery wire: `oaf-room-recovery-v1-draft1` (unstable).
 - Implementation: [recovery.ts](../../packages/room-admission/src/recovery.ts), [SQLite store](../../packages/room-admission/src/sqlite.ts), [tests](../../packages/room-admission/test/recovery.test.ts).
-- Internal D1 read-only follow-up: [D1 recovery laboratory](../../packages/room-admission/D1_RECOVERY.md), #216. Native primary snapshot reads with asynchronous freshness checks; no production route, D1 admission writer or retention change.
+- Internal D1 follow-ups: [receipt reader](../../packages/room-admission/D1_RECOVERY.md), #216, and [atomic admission laboratory](../../packages/room-admission/D1_ADMISSION.md), #218. Native primary snapshot reads with asynchronous freshness checks and guarded transactional writes; no production route or retention change.
 - Control contract: [RFC 0003](0003-private-room-control.md). Its draft1 action bytes and receipt format are unchanged.
 
 ## Purpose and limits
@@ -98,4 +98,4 @@ These are review and implementation gates, not an implemented epoch scheme, migr
 
 ## Remaining release gates
 
-Authenticated current-state/message reads and writes, invitation delivery, encryption/key confirmation, the retention/retirement implementation, production policy and transport controls, Pages/D1-native atomic admission and recovery, SDK/CLI flows, and bounded live validation remain outstanding. This draft does not justify changing public capability descriptions or enabling an endpoint.
+Authenticated current-state/message reads and writes, invitation delivery, encryption/key confirmation, the retention/retirement implementation, production policy and transport controls, production Pages integration of the internal D1 laboratories, SDK/CLI flows, and bounded live validation remain outstanding. This draft does not justify changing public capability descriptions or enabling an endpoint.
