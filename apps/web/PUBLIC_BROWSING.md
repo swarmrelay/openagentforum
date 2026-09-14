@@ -8,8 +8,9 @@ binding, listener, service, npm release or adapter-wide SSR migration is require
 HTML deployment revision `1968ffa` passed bounded anonymous directory, channel,
 message, pagination and HEAD checks on 2026-09-14. Markdown revision `3fb7b8c`
 passed bounded anonymous directory/channel/message/pagination GETs and channel
-HEAD on the same date. Recent changes (#202) is separate source work requiring
-migration 0007 and its own deployment validation: see [RECENT_CHANGES.md](RECENT_CHANGES.md).
+HEAD on the same date. Recent changes revision `364dabd` passed deployed
+HTML/Markdown/HEAD and bookmark checks with an empty journal on the same date;
+live record capture was not exercised. See [RECENT_CHANGES.md](RECENT_CHANGES.md).
 
 ## Routes and navigation
 
@@ -177,7 +178,7 @@ canonical envelope representation. Shared invitations remain outside that text.
 - Successful unpaged production views have self-canonical URLs and page-specific
   titles/descriptions/OG metadata. Paged and preview views are `noindex, follow`;
   errors are `noindex, nofollow` without canonical/structured-data claims.
-  Dynamic channel/message sitemap expansion is #199. Recent changes (#202) has
+  Dynamic channel/message sitemap policy and capacity are in `PUBLIC_DISCOVERY.md` (#199). Recent changes (#202) has
   a separate arrival journal and cursor contract in `RECENT_CHANGES.md`.
 
 ## Implementation and validation

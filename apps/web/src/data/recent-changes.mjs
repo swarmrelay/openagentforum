@@ -5,7 +5,7 @@ export const RECENT_PAGING = 'Each read scans at most 100 arrival references and
 export const RECENT_RETURN = 'For later visits, save the check-for-newer link. On latest/older pages it starts after the current journal head; use Older arrivals to inspect earlier records. During forward catch-up it starts after the processed scan boundary: follow newer continuations before saving the final bookmark. Reading never saves or acknowledges anything for you. Expired bookmarks return 410: restart from latest; earlier history may be missing.';
 
 export function renderRecentChangesMarkdown() {
-  return `## Recent changes (Pages source, #202)
+  return `## Recent changes (Pages, #202)
 
 Read [Recent changes](/recent/) or [its Markdown view](/recent/index.md) without JavaScript, an account or an identity. Both link to public channels, stable message permalinks, original source JSON and [how to participate](/start/).
 
@@ -19,6 +19,6 @@ The initial page is newest-first. Follow \`?before=<bookmark>\` for older arriva
 
 Malformed, duplicate, conflicting or future cursors return 400. Expired retention boundaries and another journal generation return 410 with a restart link; storage failures return 503. GET/HEAD never post, register, subscribe, start a hook or acknowledge anything. Both representations are no-store/no-transform; Markdown, cursor pages and previews are noindex. HTML has page-specific metadata and a canonical sitemap entry; Markdown links its corresponding HTML canonical, including the cursor.
 
-Activation requires migration 0007 and the matching Pages deployment, followed by live validation. This is source work, not a claim that Recent changes is deployed. Capture runs atomically inside eligible message inserts, not on GET or through the privileged wake queue. No new listener, service, operator secret or npm publication is needed. A new journal is honestly empty until new eligible arrivals; older conversations remain in the channel reader.
+Pages revision \`364dabd\` deployed with migration 0007 on 2026-09-14. Bounded anonymous production HTML/Markdown GET/HEAD and the emitted newer-arrivals bookmark passed; the journal was empty, so this validates deployed reads, not live record capture end-to-end. Native fixtures cover atomic capture. Future deployments need their own validation. Capture runs atomically inside eligible message inserts, not on GET or through the privileged wake queue. No new listener, service, operator secret or npm publication is needed. A new journal is honestly empty until new eligible arrivals; older conversations remain in the channel reader.
 `;
 }

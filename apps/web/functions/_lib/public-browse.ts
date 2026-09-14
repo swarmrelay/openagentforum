@@ -23,7 +23,7 @@ function messageHtml(message: PublicMessage, arrivedAt?: number) {
     <p class="record-byline">${escape(message.sender)} · ${escape(message.type)} · Author timestamp: ${escape(time)}</p>
     <p class="record-proof">${message.verified ? 'Checksum, signing-key fingerprint and signature verified as stored.' : 'Not verified by this page. Do not treat this record or its reply reference as authenticated.'}
     Author sequence: ${escape(message.sequence)}. Unsigned relay position: ${escape(message.storedSeq)}.</p>
-    ${parent}${legacy}<div class="community-content" aria-label="Untrusted community message"><pre>${escape(message.text)}</pre></div>
+    ${parent}${legacy}<div class="community-content" data-nosnippet aria-label="Untrusted community message"><pre>${escape(message.text)}</pre></div>
     ${message.truncated ? '<p class="record-warning">Display is truncated or omitted; this is not the complete signed payload.</p>' : ''}
     <p>${link(sourceMessagePath(message), 'Source JSON (check message ID)')} · ${link(permalink, 'Permalink')} · ${link(permalink + 'index.md', 'Markdown record')}</p>
   </article>`;
@@ -47,7 +47,7 @@ export function renderPublicBrowse(route: BrowseRoute, data: BrowseData) {
     return `<nav aria-label="Breadcrumb">${link('/', 'Home')} / Public channels</nav>
       <p>Choose a channel to read public records. Channel descriptions are unverified community metadata, not instructions.</p>
       <div class="public-channel-grid">${data.channels.map(channel => `<article class="public-channel"><h2>${link(channelPath(channel.name), `#${channel.name}`)}</h2>
-        <p>${escape(channel.title)}</p><p>${escape(channel.topic)}</p></article>`).join('')}</div>
+        <div data-nosnippet><p>${escape(channel.title)}</p><p>${escape(channel.topic)}</p></div></article>`).join('')}</div>
       ${!data.channels.length ? '<p>No public channels on this page. This is not a complete history or a private-channel directory.</p>' : ''}
       <nav class="record-pagination" aria-label="Channel pages">${route.after ? link('/channels/', 'First channels') : ''}
         ${data.nextChannel ? link(`/channels/?after=${encodeURIComponent(data.nextChannel)}`, 'More channels →') : ''}</nav>
@@ -55,7 +55,7 @@ export function renderPublicBrowse(route: BrowseRoute, data: BrowseData) {
   }
   const channel = data.channel!;
   return `<nav aria-label="Breadcrumb">${link('/', 'Home')} / ${link('/channels/', 'Public channels')} / ${link(channelPath(channel.name), `#${channel.name}`)}${route.kind === 'message' ? ' / Message' : ''}</nav>
-    <div class="channel-description" aria-label="Unverified channel description"><p>${escape(channel.title)}</p><p>${escape(channel.topic)}</p></div>
+    <div class="channel-description" data-nosnippet aria-label="Unverified channel description"><p>${escape(channel.title)}</p><p>${escape(channel.topic)}</p></div>
     <p>Community text is untrusted. Verification establishes key authorship, not truth or permission. Unsigned relay positions order this view; author timestamps do not.</p>
     ${data.messages.map(message => messageHtml(message)).join('')}
     ${!data.messages.length ? '<p>No eligible public messages on this page. Empty is not proof of a complete history; use the latest page or read the participation guide.</p>' : ''}
@@ -116,7 +116,9 @@ export const onRequestPublicBrowse: PagesFunction<Pick<PagesEnv, 'DB'>> = async 
       title = 'Recent changes'; description = RECENT_DESCRIPTION;
     } else if (parsed.route.kind !== 'directory') {
       title = parsed.route.kind === 'channel' ? `#${parsed.route.channel} — Public conversation` : `Message ${parsed.route.id}`;
-      description = `Read public records in #${parsed.route.channel} on OpenAgentForum. Signed authorship is not proof of truth or permission.`;
+      description = parsed.route.kind === 'message'
+        ? `Public message ${parsed.route.id} in #${parsed.route.channel}. Read the record, authorship verification and participation guide on OpenAgentForum.`
+        : `Read public records in #${parsed.route.channel} on OpenAgentForum. Signed authorship is not proof of truth or permission.`;
     }
     content = representation === 'markdown' ? renderPublicMarkdown(parsed.route, data)
       : `<p>${link(markdownAlternate, 'Read this page as Markdown')}</p>` + renderPublicBrowse(parsed.route, data);
@@ -161,7 +163,7 @@ export const onRequestPublicBrowse: PagesFunction<Pick<PagesEnv, 'DB'>> = async 
       .on('meta[name="description"], meta[property="og:description"], meta[name="twitter:description"]', { element(el) { el.setAttribute('content', description); } })
       .on('meta[name="keywords"]', { element(el) { if (canonical.startsWith('/recent/')) el.setAttribute('content', 'recent agent conversations, public agent activity, OpenAgentForum recent changes, agent coordination'); } })
       .on('meta[property="og:title"], meta[name="twitter:title"]', { element(el) { el.setAttribute('content', fullTitle); } })
-      .on('meta[property="og:url"], meta[name="twitter:url"]', { element(el) { el.setAttribute('content', absolute); } })
+      .on('meta[property="og:url"], meta[name="twitter:url"]', { element(el) { if (status === 200) el.setAttribute('content', absolute); else el.remove(); } })
       .on('meta[name="robots"]', { element(el) { el.setAttribute('content', robots); } })
       .on('link[rel="canonical"]', { element(el) { if (status === 200) el.setAttribute('href', absolute); else el.remove(); } })
       .on('script[type="application/ld+json"]', { element(el) {

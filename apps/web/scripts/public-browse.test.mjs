@@ -10,6 +10,7 @@ import workerd from 'workerd';
 import { parse } from 'parse5';
 import { micromark } from 'micromark';
 import { generateAgentKeyPair, signEnvelope, canonicalizeJson } from '@openagentforum/protocol';
+import { inspectPage } from './check-seo.mjs';
 
 let mf, worker, scratch, author, runtimeOptions;
 let outbound = 0;
@@ -45,7 +46,7 @@ async function get(path, options = {}) {
   const response = await worker.fetch(origin + path, { ...options, signal: AbortSignal.timeout(10_000) });
   const text = await response.text();
   assert.equal(outbound, 0, 'public reader must never make outbound requests');
-  assert.ok(Buffer.byteLength(text) < 512 * 1024);
+  assert.ok(Buffer.byteLength(text) < (path.startsWith('/sitemap-public') ? 4 * 1024 * 1024 : 512 * 1024));
   return { response, text };
 }
 
@@ -794,6 +795,189 @@ test('Recent changes remains read-only with honest storage failures and shared u
   assert.deepEqual(await snapshot(), before);
   await sql([{ sql: 'ALTER TABLE public_recent_state RENAME TO unavailable_recent_state' }]);
   try { assert.equal((await get('/recent/')).response.status, 503); } finally { await sql([{ sql: 'ALTER TABLE unavailable_recent_state RENAME TO public_recent_state' }]); }
+});
+
+const sitemapLocations = xml => [...xml.matchAll(/<loc>([^<]+)<\/loc>/g)].map(match => match[1].replace(/&amp;/g, '&'));
+const sitemapIndexPath = '/sitemap-public-index.xml';
+const channelSitemapPath = '/sitemap-public.xml';
+const messageSitemapPath = '/sitemap-public.xml?channel=general';
+
+test('public sitemap index discovers all canonical channels and historical message permalinks', async () => {
+  await channel('empty'); await channel('private', { private: 1 });
+  const signed = await message(1, { id: 'urn:uuid:public_seo' });
+  await bulkArrivals(30, 2);
+  // Sitemaps include historical messages outside the latest 20-message reader.
+  const index = await get(sitemapIndexPath);
+  assert.equal(index.response.status, 200);
+  assert.deepEqual(sitemapLocations(index.text), [origin + channelSitemapPath, origin + channelSitemapPath + '?channel=empty', origin + messageSitemapPath]);
+  const channels = await get(channelSitemapPath);
+  assert.deepEqual(sitemapLocations(channels.text), [origin + '/channels/', origin + '/channels/empty/', origin + '/channels/general/']);
+  const messages = await get(messageSitemapPath);
+  const urls = sitemapLocations(messages.text).filter(url => url.includes('/messages/'));
+  assert.equal(urls.length, 31); assert.equal(new Set(urls).size, 31);
+  assert.ok(urls.includes(origin + `/channels/general/messages/${encodeURIComponent(signed.id)}/`));
+  assert.doesNotMatch(messages.text, /lastmod|priority|changefreq|timestamp|Bulk fixture|public_key|sender|index\.md|before=/);
+  assert.match(messages.text, /^<\?xml version="1.0" encoding="UTF-8"\?>\n<urlset xmlns="http:\/\/www.sitemaps.org\/schemas\/sitemap\/0.9">/);
+  for (const url of [urls[0], urls.at(-1), ...sitemapLocations(channels.text)]) {
+    const path = new URL(url).pathname;
+    const page = await get(path); assert.equal(page.response.status, 200);
+    assert.deepEqual(inspectPage(page.text, path.slice(1) + 'index.html').errors, []);
+    for (const href of ['/channels/', '/recent/', '/blog/', '/start/']) assert.ok(links(page.text).includes(href), href);
+  }
+  const empty = await get(channelSitemapPath + '?channel=empty');
+  assert.equal(empty.response.status, 200); assert.deepEqual(sitemapLocations(empty.text), [origin + '/channels/empty/']);
+});
+
+test('sitemap privacy matches the reader and is rechecked after hiding, encryption and deletion', async () => {
+  for (const [name, policy] of [['private', { private: 1 }], ['encrypted', { encrypted: 1 }], ['members', { members: '["fixture"]' }], ['ambiguous', { members: null }], ['dm-legacy', {}], ['vault-legacy', {}]]) {
+    await channel(name, policy); await message(1, { channel: name });
+    const hidden = await get(channelSitemapPath + '?channel=' + name);
+    assert.equal(hidden.response.status, 404); assert.doesNotMatch(hidden.text, new RegExp(name));
+    assert.ok(!sitemapLocations((await get(sitemapIndexPath)).text).some(url => url.includes('channel=' + name)));
+  }
+  await message(1);
+  for (const [i, options] of [{ encrypted: 1 }, { type: 'e2ee_blob' }, { nonce: 'nonce' }, { ephemeral: 'key' }, { recipients: '[]' }].entries()) await message(i + 2, options);
+  assert.deepEqual(sitemapLocations((await get(messageSitemapPath)).text), [origin + '/channels/general/', origin + '/channels/general/messages/general-1/']);
+  await sql([{ sql: "UPDATE channels SET is_private=1 WHERE name='general'" }]);
+  assert.equal((await get(messageSitemapPath)).response.status, 404);
+  assert.deepEqual(sitemapLocations((await get(channelSitemapPath)).text), [origin + '/channels/']);
+  await sql([{ sql: "UPDATE channels SET is_private=0 WHERE name='general'" }, { sql: "UPDATE messages SET nonce='hidden' WHERE id='general-1'" }]);
+  assert.deepEqual(sitemapLocations((await get(messageSitemapPath)).text), [origin + '/channels/general/']);
+  await sql([{ sql: "UPDATE messages SET nonce=NULL WHERE id='general-1'" }, { sql: "DELETE FROM messages WHERE id='general-1'" }]);
+  assert.deepEqual(sitemapLocations((await get(messageSitemapPath)).text), [origin + '/channels/general/']);
+});
+
+test('sitemaps are read-only, bounded anonymous GET/HEAD with matching headers and no assets', async () => {
+  await message(1);
+  const snapshot = async () => (await sql(['messages', 'channels', 'agents', 'public_message_arrivals', 'public_recent_state', 'wake_message_outbox'].map(table => ({ sql: `SELECT * FROM ${table}` })))).map(r => r.results);
+  const initial = await snapshot();
+  for (const path of [sitemapIndexPath, channelSitemapPath, messageSitemapPath]) {
+    const result = await get(path, { headers: { cookie: 'fixture=untrusted', authorization: 'Bearer fixture-not-a-credential', 'if-none-match': '*' } });
+    assert.equal(result.response.status, 200);
+    assert.equal(result.response.headers.get('x-fixture-assets'), '0');
+    assert.equal(result.response.headers.get('content-type'), 'application/xml; charset=utf-8');
+    assert.equal(result.response.headers.get('cache-control'), 'no-store, no-transform');
+    assert.equal(result.response.headers.get('x-content-type-options'), 'nosniff');
+    assert.equal(result.response.headers.get('set-cookie'), null); assert.equal(result.response.headers.get('etag'), null);
+    const head = await get(path, { method: 'HEAD' });
+    assert.equal(head.response.status, 200); assert.equal(head.text, '');
+    for (const header of ['content-type', 'cache-control', 'x-robots-tag', 'content-security-policy']) assert.equal(head.response.headers.get(header), result.response.headers.get(header));
+    for (const method of ['POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']) {
+      const denied = await get(path, { method });
+      assert.equal(denied.response.status, 405); assert.equal(denied.response.headers.get('allow'), 'GET, HEAD');
+      assert.equal(denied.response.headers.get('x-fixture-queries'), '0');
+    }
+  }
+  assert.deepEqual(await snapshot(), initial);
+});
+
+test('sitemap invalid queries and previews never read storage or reflect caller data', async () => {
+  for (const path of [sitemapIndexPath + '?channel=general', channelSitemapPath + '?channel=', channelSitemapPath + '?token=PRIVATE_QUERY', channelSitemapPath + '?channel=general&channel=general', channelSitemapPath + '?channel=../../secret', channelSitemapPath + '?channel=' + 'a'.repeat(257), channelSitemapPath + '?before=1']) {
+    const result = await get(path); assert.equal(result.response.status, 400, path);
+    assert.equal(result.response.headers.get('x-fixture-queries'), '0');
+    assert.doesNotMatch(result.text, /PRIVATE_QUERY|secret|general/);
+  }
+  const preview = await worker.fetch('https://preview.invalid' + sitemapIndexPath);
+  assert.equal(preview.status, 404); assert.equal(preview.headers.get('x-fixture-queries'), '0');
+  assert.equal(preview.headers.get('x-robots-tag'), 'noindex, nofollow');
+  assert.doesNotMatch(await preview.text(), /https:/);
+  const redirect = await get(channelSitemapPath + '?channel=%67eneral', { redirect: 'manual' });
+  assert.equal(redirect.response.status, 308); assert.equal(redirect.response.headers.get('location'), messageSitemapPath);
+  assert.equal(redirect.response.headers.get('x-fixture-queries'), '0');
+});
+
+test('sitemap storage failures and missing indexes fail closed without stale or partial URLs', async () => {
+  for (const path of [sitemapIndexPath, channelSitemapPath, messageSitemapPath]) {
+    for (const mode of ['missing', 'failure']) {
+      const result = await get(path, { headers: { 'x-fixture-db': mode } });
+      assert.equal(result.response.status, 503); assert.equal(result.response.headers.get('retry-after'), '300');
+      assert.equal(result.response.headers.get('x-robots-tag'), 'noindex, nofollow');
+      assert.doesNotMatch(result.text, /PRIVATE_STORAGE_ERROR|<loc>|general/);
+      const head = await get(path, { method: 'HEAD', headers: { 'x-fixture-db': mode } });
+      assert.equal(head.response.status, 503); assert.equal(head.text, '');
+    }
+  }
+  const [{ results: [definition] }] = await sql([{ sql: "SELECT sql FROM sqlite_master WHERE name='idx_messages_public_browse'" }]);
+  await sql([{ sql: 'DROP INDEX idx_messages_public_browse' }]);
+  try { assert.equal((await get(messageSitemapPath)).response.status, 503); }
+  finally { await sql([{ sql: definition.sql }]); }
+});
+
+test('sitemap channel catalog includes its exact cap and rejects overflow rather than truncating', async () => {
+  await sql([{ sql: `WITH RECURSIVE n(v) AS (SELECT 1 UNION ALL SELECT v+1 FROM n WHERE v<999)
+    INSERT INTO channels (name,title,topic,creator_id,created_at) SELECT 'catalog-'||v,'','', 'fixture',1 FROM n` }]);
+  const index = await get(sitemapIndexPath); assert.equal(index.response.status, 200);
+  assert.equal(sitemapLocations(index.text).length, 1001);
+  const catalog = await get(channelSitemapPath); assert.equal(sitemapLocations(catalog.text).length, 1001);
+  assert.ok(Number(catalog.response.headers.get('x-fixture-batch-rows-read')) <= 1002);
+  await channel('catalog-overflow');
+  for (const path of [sitemapIndexPath, channelSitemapPath]) {
+    const result = await get(path); assert.equal(result.response.status, 503); assert.doesNotMatch(result.text, /<loc>|catalog-/);
+  }
+});
+
+test('sitemap message shards stay bounded with complete history at the cap, overflow and hidden history', async t => {
+  await bulkArrivals(5000);
+  const full = await get(messageSitemapPath, { headers: { 'x-fixture-plans': '1' } });
+  assert.equal(full.response.status, 200); assert.equal(sitemapLocations(full.text).length, 5001);
+  assert.ok(Number(full.response.headers.get('x-fixture-batch-rows-read')) <= 10005);
+  assert.match(full.response.headers.get('x-fixture-plans'), /idx_messages_public_browse/);
+  await bulkArrivals(1, 5001);
+  const overflow = await get(messageSitemapPath); assert.equal(overflow.response.status, 503);
+  assert.doesNotMatch(overflow.text, /<loc>|general-/);
+  assert.ok(Number(overflow.response.headers.get('x-fixture-batch-rows-read')) <= 10007);
+  await sql([{ sql: "UPDATE channels SET is_private=1 WHERE name='general'" }]);
+  const hidden = await get(messageSitemapPath); assert.equal(hidden.response.status, 404);
+  assert.ok(Number(hidden.response.headers.get('x-fixture-batch-rows-read')) <= 2);
+  t.diagnostic(`Sitemap: ${full.response.headers.get('x-fixture-batch-rows-read')} rows read for 5000 public messages; ${hidden.response.headers.get('x-fixture-batch-rows-read')} for 5001 hidden messages`);
+  await sql([{ sql: "UPDATE channels SET is_private=0 WHERE name='general'" }, { sql: 'UPDATE messages SET encrypted=1' }]);
+  const encrypted = await get(messageSitemapPath); assert.deepEqual(sitemapLocations(encrypted.text), [origin + '/channels/general/']);
+  assert.ok(Number(encrypted.response.headers.get('x-fixture-batch-rows-read')) <= 3);
+});
+
+test('maximum-length channel and encoded message IDs stay below the XML byte bound at capacity', async t => {
+  const name = 'a'.repeat(128), prefix = ':'.repeat(120);
+  await channel(name);
+  await sql([{ sql: `WITH RECURSIVE n(v) AS (SELECT 1 UNION ALL SELECT v+1 FROM n WHERE v<5000)
+    INSERT INTO messages (id,channel,sender,type,sequence,stored_seq,timestamp,payload_json,signature,checksum,encrypted)
+    SELECT ?||printf('%08d',v),?,?,'intel',v,v,1,'PRIVATE_PAYLOAD_NOT_PROJECTED','00','00',0 FROM n`, args: [prefix, name, author.agentId] }]);
+  const result = await get(channelSitemapPath + '?channel=' + name);
+  assert.equal(result.response.status, 200);
+  const locations = sitemapLocations(result.text); assert.equal(locations.length, 5001);
+  assert.equal(new Set(locations).size, 5001);
+  assert.ok(locations.every(url => new URL(url).origin === origin && !new URL(url).search && !new URL(url).hash));
+  assert.doesNotMatch(result.text, /PRIVATE_PAYLOAD_NOT_PROJECTED/);
+  t.diagnostic(`Maximum identifier XML: ${Buffer.byteLength(result.text)} bytes for 5000 messages plus channel`);
+});
+
+test('dynamic metadata uses validated identifiers, not untrusted excerpts or invented article claims', async () => {
+  const attack = 'UNTRUSTED_SEO </title><meta name="robots" content="index"><script>evil()</script>';
+  await sql([{ sql: 'UPDATE channels SET title=?, topic=? WHERE name=?', args: [attack, attack, 'general'] }]);
+  await message(1, { id: 'urn:uuid:seo', payload: { message: attack } });
+  const descriptions = [];
+  for (const path of ['/channels/', '/channels/general/', '/channels/general/messages/urn%3Auuid%3Aseo/', '/recent/']) {
+    const page = await get(path); assert.equal(page.response.status, 200);
+    const all = elements(page.text); const head = all.find(n => n.tagName === 'head');
+    assert.doesNotMatch(nodeText(head), /UNTRUSTED_SEO|evil\(\)/);
+    assert.ok(!nodes(head).some(n => n.attrs?.some(a => /UNTRUSTED_SEO|evil\(\)/.test(a.value))));
+    assert.deepEqual(inspectPage(page.text, path.slice(1) + 'index.html').errors, []);
+    descriptions.push(attr(all.find(n => attr(n, 'name') === 'description'), 'content'));
+    assert.ok(all.some(n => n.tagName === 'div' && n.attrs?.some(a => a.name === 'data-nosnippet')));
+  }
+  assert.equal(new Set(descriptions).size, descriptions.length);
+});
+
+test('dynamic errors have no canonical, share URL or structured-data claim; cursor pages self-canonicalize', async () => {
+  for (const [path, status, headers] of [['/channels/missing/', 404], ['/recent/?bad=PRIVATE_QUERY', 400], ['/recent/?after=v1.' + '0'.repeat(32) + '.0', 410], ['/recent/', 503, { 'x-fixture-db': 'missing' }]]) {
+    const page = await get(path, { headers }); assert.equal(page.response.status, status);
+    const all = elements(page.text);
+    assert.ok(!all.some(n => attr(n, 'rel') === 'canonical' || ['og:url', 'twitter:url'].includes(attr(n, 'property') ?? attr(n, 'name')) || attr(n, 'type') === 'application/ld+json'));
+    assert.equal(page.response.headers.get('x-robots-tag'), 'noindex, nofollow');
+  }
+  for (const path of ['/channels/?after=general', '/channels/general/?before=1']) {
+    const page = await get(path); assert.equal(page.response.headers.get('x-robots-tag'), 'noindex, follow');
+    assert.ok(elements(page.text).some(n => attr(n, 'rel') === 'canonical' && attr(n, 'href') === origin + path));
+  }
 });
 
 if (process.env.OAF_BROWSE_PLAYWRIGHT) {

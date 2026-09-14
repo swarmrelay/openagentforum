@@ -1,20 +1,20 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { canonicalPath, pageKeywords, site } from '../src/data/seo.mjs';
-import { inspectPage, validateSite, validateFirstVisit } from './check-seo.mjs';
+import { inspectPage, validateSite, validateFirstVisit, validatePublicDiscovery } from './check-seo.mjs';
 import { communities, comparisonDescription, comparisonNames, comparisonTitle, renderComparisonMarkdown, reviewedOn } from '../src/data/comparison.mjs';
 import { firstVisitSteps, firstVisitTroubleshooting, firstVisitEvidence, renderFirstVisitMarkdown } from '../src/data/first-visit.mjs';
 
 function page({ path = '/', title = 'A useful page', description = 'A useful description', noindex = false } = {}) {
   const url = `${site}${path}`;
   const tags = { description, keywords: 'agent communication', robots: noindex ? 'noindex, follow' : 'index, follow', 'og:url': url, 'twitter:url': url, 'og:title': title, 'twitter:title': title, 'og:description': description, 'twitter:description': description, 'og:image': `${site}/og-image.png`, 'twitter:image': `${site}/og-image.png`, 'og:image:alt': 'Agent forum', 'twitter:image:alt': 'Agent forum', 'og:type': 'website', 'og:locale': 'en_US', 'og:site_name': 'OpenAgentForum', 'twitter:card': 'summary_large_image' };
-  return `<!doctype html><html><head><title>${title}</title>${Object.entries(tags).map(([name, content]) => `<meta name="${name}" content="${content}">`).join('')}${noindex ? '' : `<link rel="canonical" href="${url}">`}<link rel="sitemap" href="/sitemap-index.xml"><script type="application/ld+json">${JSON.stringify({ '@type': 'WebPage', url })}</script></head><body><h1>${title}</h1></body></html>`;
+  return `<!doctype html><html><head><title>${title}</title>${Object.entries(tags).map(([name, content]) => `<meta name="${name}" content="${content}">`).join('')}${noindex ? '' : `<link rel="canonical" href="${url}">`}<link rel="sitemap" href="/sitemap-index.xml"><link rel="sitemap" href="/sitemap-public-index.xml"><script type="application/ld+json">${JSON.stringify({ '@type': 'WebPage', url })}</script></head><body><h1>${title}</h1></body></html>`;
 }
 function fixture() {
   const index = `<sitemapindex><sitemap><loc>${site}/sitemap-0.xml</loc></sitemap></sitemapindex>`;
   return new Map([
     ['index.html', page()], ['404.html', page({ path: '/404.html', title: 'Not found', noindex: true })],
-    ['sitemap-index.xml', index], ['sitemap.xml', index], ['robots.txt', `Sitemap: ${site}/sitemap-index.xml`],
+    ['sitemap-index.xml', index], ['sitemap.xml', index], ['robots.txt', `Sitemap: ${site}/sitemap-index.xml\nSitemap: ${site}/sitemap-public-index.xml`],
     ['sitemap-0.xml', `<urlset><url><loc>${site}/</loc></url></urlset>`], ['og-image.png', ''],
   ]);
 }
@@ -23,6 +23,20 @@ test('normalizes canonical paths, dropping queries and fragments but preserving 
   for (const [input, expected] of [['/', '/'], ['/compare', '/compare/'], ['/compare/?from=nav#nostr', '/compare/'], ['/compare.md', '/compare.md'], [`${site}/blog/test`, '/blog/test/']]) assert.equal(canonicalPath(input), expected);
 });
 test('accepts a fully covered site with a noindex error page', () => assert.deepEqual(validateSite(fixture()).errors, []));
+test('public discovery checks reject missing live sitemap discovery and navigation or frozen cursor URLs', () => {
+  const files = fixture();
+  files.set('robots.txt', `Sitemap: ${site}/sitemap-index.xml`);
+  files.set('index.html', page().replace('<link rel="sitemap" href="/sitemap-public-index.xml">', ''));
+  assert.match(validateSite(files).errors.join('\n'), /live public sitemap index/);
+  assert.match(validateSite(files).errors.join('\n'), /public conversation sitemap discovery link/);
+  const nav = ['/channels/', '/recent/', '/blog/', '/start/'].map(href => `<a href="${href}">${href}</a>`).join('');
+  for (const file of ['index.html', 'channels/index.html', 'recent/index.html', 'blog/index.html', 'start/index.html']) files.set(file, nav);
+  assert.deepEqual(validatePublicDiscovery(files), []);
+  files.set('recent/index.html', '');
+  files.set('sitemap-0.xml', `<urlset><url><loc>${site}/recent/?after=1</loc></url></urlset>`);
+  assert.match(validatePublicDiscovery(files).join('\n'), /ordinary discovery link/);
+  assert.match(validatePublicDiscovery(files).join('\n'), /cursor URL/);
+});
 test('rejects missing sitemap pages and noncanonical or alternate entries', () => {
   const files = fixture();
   files.set('sitemap-0.xml', `<urlset><url><loc>${site}/compare.md</loc></url><url><loc>${site}/404.html</loc></url></urlset>`);
