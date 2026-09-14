@@ -6,6 +6,7 @@ import {
   type PreparedRoomControl, type RoomControlError, type RoomState,
 } from './control.js';
 import { prepareRoomRecovery, type RoomRecoveryQuery } from './recovery.js';
+import { policySnapshot, recoveryReceipt } from './storage-contract.js';
 
 export interface AdmissionPolicy {
   maxRetainedRooms: number;
@@ -42,12 +43,8 @@ export type RecoveryResult = { ok: true; queryId: string; observedAt: number; re
   | { ok: false; reason: RoomControlError | 'storage_error' | 'busy' };
 
 const SCHEMA_VERSION = 1;
-const POLICY_KEYS: (keyof AdmissionPolicy)[] = [
-  'maxRetainedRooms', 'maxActiveRooms', 'maxActiveRoomsPerAgent', 'maxPendingInvitesPerRecipient',
-  'maxReceipts', 'windowMs', 'createsPerAgent', 'createsPerHub', 'invitesPerAgent', 'invitesPerHub',
-  'maxInFlightPerConnection',
-];
-const SCHEMA = `
+/** Test-only D1 seeding uses the same schema; never a production migration. */
+export const ROOM_LAB_SCHEMA = `
   CREATE TABLE IF NOT EXISTS room_lab_meta (
     id INTEGER PRIMARY KEY CHECK(id = 1), schema_version INTEGER NOT NULL,
     hub TEXT NOT NULL, protocol TEXT NOT NULL, policy TEXT NOT NULL, clock INTEGER NOT NULL
@@ -74,17 +71,6 @@ const SCHEMA = `
 `;
 type Meta = { schema_version: number; hub: string; protocol: string; policy: string; clock: number };
 const fail = (reason: AdmissionError): AdmissionResult => ({ ok: false, reason });
-
-function policySnapshot(policy: AdmissionPolicy): Readonly<AdmissionPolicy> {
-  if (!policy || Object.keys(policy).length !== POLICY_KEYS.length || POLICY_KEYS.some(key =>
-    !Object.hasOwn(policy, key) || !Number.isSafeInteger(policy[key]) || policy[key] < 1
-    || policy[key] > (key === 'windowMs' ? 86_400_000 : 1_000_000))) {
-    throw new Error('Invalid admission policy');
-  }
-  if (policy.maxReceipts < 2 || policy.maxActiveRooms > policy.maxRetainedRooms
-      || policy.maxInFlightPerConnection > 64) throw new Error('Invalid admission policy');
-  return Object.freeze({ ...policy });
-}
 
 /**
  * Own a dedicated connection for this instance. Caller opens/closes the database
@@ -114,7 +100,7 @@ export class RoomAdmissionStore {
       db.exec('PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL; PRAGMA busy_timeout = 1000;');
       db.exec('BEGIN IMMEDIATE');
       begun = true;
-      db.exec(SCHEMA);
+      db.exec(ROOM_LAB_SCHEMA);
       db.prepare(`INSERT OR IGNORE INTO room_lab_meta VALUES (1, ?, ?, ?, ?, 0)`)
         .run(SCHEMA_VERSION, this.#hub, ROOM_CONTROL_PROTOCOL, this.#policyJson);
       this.#meta();
@@ -239,17 +225,7 @@ export class RoomAdmissionStore {
       WHERE actor = ? AND request_id = ? AND signing_key = ? AND digest = ?`)
       .get(query.actor, query.requestId, signingKey, query.proofDigest) as { receipt_json: string } | undefined;
     if (!row) return null;
-    const r = JSON.parse(row.receipt_json) as AdmissionReceipt;
-    if (!r || typeof r !== 'object' || Array.isArray(r) || Object.keys(r).length !== 10
-        || r.protocol !== ROOM_CONTROL_PROTOCOL || r.hub !== this.#hub || r.actor !== query.actor
-        || r.requestId !== query.requestId || r.proofDigest !== query.proofDigest
-        || !/^room_[0-9a-f]{32}$/.test(r.roomId)
-        || !['create', 'invite', 'accept', 'close'].includes(r.action)
-        || !['open', 'closed'].includes(r.status)
-        || !Number.isSafeInteger(r.revision) || r.revision < 1
-        || !Number.isSafeInteger(r.committedAt) || r.committedAt < 0) throw new Error('Invalid receipt');
-    // A wrong room uses the same unavailable result as an unknown request/key/digest.
-    return r.roomId === query.roomId ? r : null;
+    return recoveryReceipt(row.receipt_json, query);
   }
 
   #memberships(agent: string): number {

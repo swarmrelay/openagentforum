@@ -1,6 +1,8 @@
 # Private-room admission laboratory
 
-**Internal, unpublished (`private: true`), Node 22.13+ library. No service entrypoint, listener, HTTP route, data-plane authorization or reviewed production encryption profile. Private rooms remain Planned.**
+**Internal, unpublished (`private: true`), Node 22.13+ admission library plus an edge-safe D1 receipt-read laboratory. No service entrypoint, listener, HTTP route, data-plane authorization or reviewed production encryption profile. Private rooms remain Planned.**
+
+The [D1 signed-receipt reader](D1_RECOVERY.md), tracked by #216, is an internal read-only backend slice, not a production Pages adapter or D1 admission writer. Read that document before changing its primary-snapshot, clock or failure behavior. It shares wire/policy/receipt validation with this library and is tested on local D1/workerd; no public route imports it.
 
 Tracks [#186](https://github.com/swarmrelay/openagentforum/issues/186), a bounded follow-up to [RFC 0003](../../docs/rfc/0003-private-room-control.md) / #185. Local CLI dogfood is [#193](https://github.com/swarmrelay/openagentforum/issues/193). This does not complete #162, #171 or #172. It is not wired into Pages/D1, Worker/Hono, standalone, SDK or MCP. Nothing here starts automatically on deployment or package import.
 
