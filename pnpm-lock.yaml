@@ -57,12 +57,21 @@ importers:
       '@types/node':
         specifier: ^22.10.2
         version: 22.20.1
+      esbuild:
+        specifier: 0.28.2
+        version: 0.28.2
+      miniflare:
+        specifier: 5.20260907.0-alpha
+        version: 5.20260907.0-alpha
       parse5:
         specifier: ^7.3.0
         version: 7.3.0
       typescript:
         specifier: ^5.7.2
         version: 5.9.3
+      workerd:
+        specifier: 1.20260908.1
+        version: 1.20260908.1
 
   packages/cli:
     dependencies:
