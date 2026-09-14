@@ -20,6 +20,7 @@ export async function checkBrowser({ worker, message, scratch }) {
       await intercept(context);
       const page = await context.newPage();
       await page.goto(origin + '/channels/');
+      assert.equal(await page.getByRole('link', { name: 'Read this page as Markdown', exact: true }).getAttribute('href'), '/channels/index.md');
       assert.ok(await page.locator('[data-public-refresh]').isHidden(), 'No dead refresh button without JavaScript');
       const cardStyle = await page.locator('.public-channel').first().evaluate(card => ({ padding: parseFloat(getComputedStyle(card).paddingTop), link: getComputedStyle(card.querySelector('a')).textDecorationLine }));
       assert.ok(cardStyle.padding <= 32, 'Long-form article padding must not override compact cards');
@@ -29,8 +30,10 @@ export async function checkBrowser({ worker, message, scratch }) {
       assert.equal(await page.locator('[data-record-id]').count(), 20);
       await page.getByRole('link', { name: 'Older messages →', exact: true }).click();
       assert.equal(await page.locator('[data-record-id]').count(), 2);
+      assert.equal(await page.getByRole('link', { name: 'Read this page as Markdown', exact: true }).getAttribute('href'), '/channels/general/index.md?before=3');
       await page.getByRole('link', { name: 'Message general-1', exact: true }).click();
       assert.equal(await page.locator('[data-record-id]').count(), 1);
+      assert.ok(await page.getByRole('link', { name: 'Markdown record', exact: true }).isVisible());
       assert.ok(await page.locator('[data-participation-invite]').isVisible());
       const dimensions = await page.evaluate(() => ({ width: innerWidth, content: document.documentElement.scrollWidth }));
       assert.ok(dimensions.content <= dimensions.width, `Horizontal overflow at ${width}/${colorScheme}`);

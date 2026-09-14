@@ -60,6 +60,9 @@ importers:
       esbuild:
         specifier: 0.28.2
         version: 0.28.2
+      micromark:
+        specifier: 4.0.2
+        version: 4.0.2
       miniflare:
         specifier: 5.20260907.0-alpha
         version: 5.20260907.0-alpha
