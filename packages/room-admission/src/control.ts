@@ -201,8 +201,9 @@ Promise<AuthenticatedControl | { ok: false; reason: RoomControlError }> {
 /**
  * Historical signature/key binding ONLY. No freshness, membership or admission.
  * Never use this to authorize a mutation, state read, or message access.
+ * Named to make that boundary visible: a valid old signature is not current membership.
  */
-export async function authenticateRoomControl(wire: string, actorPublicKey: string, hub: string):
+export async function verifyHistoricalRoomControlSignature(wire: string, actorPublicKey: string, hub: string):
 Promise<AuthenticatedControl | { ok: false; reason: RoomControlError }> {
   const parsed = parseControl(wire, hub);
   return parsed.ok ? authenticateControl(parsed.proof, actorPublicKey) : parsed;

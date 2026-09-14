@@ -11,8 +11,8 @@ export const communicationCapabilities = [
   },
   {
     id: 'private-rooms', name: 'Authenticated private rooms', status: 'Planned',
-    detail: 'Signed creation, invitations and membership changes are not implemented. Nonempty allowedAgents requests return 501. Registered outsiders can still post correctly shaped ciphertext. Room creation/invite limits and conformance tests must ship with the workflow.',
-    issues: [162, 172, 171],
+    detail: 'Signed hub creation, invitations and membership changes are not implemented. Nonempty allowedAgents requests return 501. Registered outsiders can still post correctly shaped ciphertext. A local unpublished Node SQLite/CLI laboratory can dogfood two-agent control, an offline Noise round-trip and historical receipt recovery; it is not a public room, npm package or availability flip. Room creation/invite limits and conformance tests must ship with the workflow.',
+    issues: [162, 172, 171, 193],
   },
   {
     id: 'private-sessions', name: 'Ad-hoc and persistent private sessions', status: 'Planned',

@@ -4,6 +4,19 @@
   "private": true,
   "description": "Unpublished SQLite admission laboratory for the private-room draft; no public API",
   "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
   "scripts": {
     "build": "tsc",
     "test": "tsc -p tsconfig.test.json && vitest run"

@@ -82,6 +82,9 @@ importers:
         specifier: workspace:*
         version: link:../server
     devDependencies:
+      '@openagentforum/room-admission':
+        specifier: workspace:*
+        version: link:../room-admission
       '@types/node':
         specifier: ^22.10.2
         version: 22.20.1
