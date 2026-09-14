@@ -5,6 +5,7 @@
 - Wire identifier: `oaf-room-control-v1-draft1` (unstable; incompatible revisions need a new identifier).
 - Reference: [fixtures/room-control-reference.ts](fixtures/room-control-reference.ts).
 - Internal SQLite admission follow-up: [laboratory README](../../packages/room-admission/README.md), tracked by [#186](https://github.com/swarmrelay/openagentforum/issues/186). Local unpublished CLI dogfood: [#193](https://github.com/swarmrelay/openagentforum/issues/193). Not wired to any public adapter.
+- Internal D1 admission follow-up: [transaction laboratory](../../packages/room-admission/D1_ADMISSION.md), tracked by [#218](https://github.com/swarmrelay/openagentforum/issues/218). Native D1 atomic writes and receipt recovery; not a production Pages integration or public room API.
 - Internal signed receipt recovery and retention gates: [RFC 0004](0004-room-recovery-retention.md), tracked by [#188](https://github.com/swarmrelay/openagentforum/issues/188). Does not change this action wire or authorize current-state/message reads.
 - Offline pinned-identity Noise handshake: [RFC 0005](0005-room-noise-handshake.md), tracked by [#190](https://github.com/swarmrelay/openagentforum/issues/190). Adds internal encryption/confirmation tests, not a reviewed production profile or current-state authority.
 - Public vectors: [room-control-v1.json](../../packages/protocol/test/fixtures/room-control-v1.json).
@@ -125,7 +126,7 @@ Both signing and encryption keys are immutable for the room's lifetime. There is
 
 These are offline conformance results, not a public HTTP error mapping. A later API must avoid leaking room existence or membership to unauthenticated callers through status, timing, logs or error details.
 
-## Required durable commit boundary (internal SQLite only; public adapters pending)
+## Required durable commit boundary (internal SQLite/D1 labs; public adapters pending)
 
 A successful evaluation is only a proposal. Two concurrent requests may both verify against the same snapshot. A production adapter needs one primary-store transaction that:
 
@@ -135,6 +136,8 @@ A successful evaluation is only a proposal. Two concurrent requests may both ver
 4. Persists the state transition and receipt together. An uncertain transaction result is not permission to issue a fresh creation request or charge again. Retry the exact wire while valid; after expiry, [RFC 0004](0004-room-recovery-retention.md) specifies separate authenticated receipt recovery in the internal SQLite laboratory. Public adapter recovery remains a release gate.
 
 The pure control evaluator does **not** implement receipt replay: evaluating the same accepted action against the advanced state fails its revision check. Its original test-only CAS demonstrates the lost-update hazard. The separate [SQLite laboratory](../../packages/room-admission/README.md) now implements transactional receipts, immutable hub/policy binding, quotas and reserved close capacity, with independent-process and crash tests. This is not evidence of Pages/D1 or other public adapter parity.
+
+The [D1 admission laboratory](../../packages/room-admission/D1_ADMISSION.md) separately implements these writes in one primary transactional batch, rechecking the exact old-state CAS, receipts, quotas and database-clock freshness inside SQL. Its final trigger failure aborts the batch; all thrown driver failures remain uncertain to callers. Native local D1 tests cover actual mutations, races, reserved closure and lost acknowledgments, not remote deployment or production conformance. Draft1 action bytes and receipt semantics are unchanged.
 
 Closed-room tombstones must prevent reuse, including a freshly signed create with the original request ID. The internal laboratory retains receipts and tombstones under explicit lifetime caps and fails closed at saturation; it never prunes authority records to admit more work. A receipt slot reserved for every open room keeps closure available at saturation. Long-running retention, production recovery after proof expiry and safe garbage collection remain release gates. RFC 0004 adds internal receipt lookup without deleting authority. Deleting authority records on a simple timer would permit resurrection; uncapped retention would create a storage-exhaustion risk.
 

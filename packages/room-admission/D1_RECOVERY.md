@@ -2,7 +2,9 @@
 
 Tracks [#216](https://github.com/swarmrelay/openagentforum/issues/216), one backend
 slice under #162. Internal and unpublished. **No public API, production migration,
-admission writer, membership oracle or capability flip. Private rooms remain Planned.**
+membership oracle or capability flip. Private rooms remain Planned.** This reader
+does not write admission; the separate [D1 admission laboratory](D1_ADMISSION.md)
+now supplies internal atomic mutations and shares its local operation scope.
 Read [the laboratory README](README.md) and [RFC 0004](../../docs/rfc/0004-room-recovery-retention.md)
 first. Neither importing this module nor a web deployment initializes a database.
 
@@ -53,8 +55,9 @@ infer permission to repeat an uncertain side effect with a fresh action ID.
 
 The caller owns the instance lifetime. Do not keep request state or a reader in
 Worker globals. The in-flight bound is local to that instance, **not** durable
-cross-request, per-agent or hub-wide abuse protection. There is currently no D1
-admission writer with which to share those slots. Transport authentication,
+cross-request, per-agent or hub-wide abuse protection. `D1RoomAdmissionStore`
+shares its slots and poisoning state with its receipt reader; a standalone reader
+has its own scope. Transport authentication,
 strict UTF-8 and byte limits, request/time/rate controls, private error/log/cache
 handling and shared admission/recovery verification admission remain release
 gates before any public integration. The metadata read itself needs those bounds.
@@ -86,9 +89,10 @@ Outbound fetches are denied; ephemeral listeners bind only to loopback. Test
 identities are generated in memory and only public proof material reaches the
 fixture Worker. The seed/error routes are test-only and must never be deployed.
 
-This does **not** test remote replica routing or establish D1 admission parity:
-the schema/receipts are fixture-seeded, not created by a D1 mutation adapter.
-Native atomic create/invite/accept/close, shared budgets and reserved close capacity,
-current-state/message authorization, reviewed encryption, retention, published
-clients and bounded live validation are still required. A production writer must
-not implement membership/quota checks as stale reads followed by an unguarded batch.
+These reader-only tests do **not** test remote replica routing or establish D1
+admission parity: their schema/receipts are fixture-seeded. The separate
+[admission suite](D1_ADMISSION.md) now creates actual native D1 receipts and tests
+atomic create/invite/accept/close, shared budgets and reserved closure. Production
+integration, current-state/message authorization, reviewed encryption, retention,
+published clients and bounded live validation remain required. A production writer
+must not implement membership/quota checks as stale reads followed by an unguarded batch.

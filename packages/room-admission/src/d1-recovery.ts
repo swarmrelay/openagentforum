@@ -4,7 +4,8 @@ import { canonicalizeJson } from '@openagentforum/protocol';
 import { ROOM_CONTROL_PROTOCOL } from './control.js';
 import { prepareRoomRecovery } from './recovery.js';
 import { policySnapshot, recoveryReceipt } from './storage-contract.js';
-import type { AdmissionPolicy, RecoveryResult } from './sqlite.js';
+import type { AdmissionPolicy, RecoveryResult } from './storage-types.js';
+import { D1RoomOperationScope } from './d1-scope.js';
 
 // Each statement is the FIRST and ONLY query of its own first-primary session.
 // Do not reuse a session: subsequent reads may be routed to replicas.
@@ -21,11 +22,10 @@ export class D1RoomReceiptReader {
   readonly #policy: Readonly<AdmissionPolicy>;
   readonly #policyJson: string;
   readonly #now: () => number;
-  #inFlight = 0;
-  #broken = false;
+  readonly #scope: D1RoomOperationScope;
 
   constructor(db: Pick<D1Database, 'withSession'>,
-    options: { hub: string; policy: AdmissionPolicy; now: () => number }) {
+    options: { hub: string; policy: AdmissionPolicy; now: () => number; scope?: D1RoomOperationScope }) {
     const url = new URL(options.hub);
     if (url.protocol !== 'https:' || url.origin !== options.hub || options.hub.length > 256
         || typeof options.now !== 'function') throw new Error('Invalid recovery configuration');
@@ -34,6 +34,8 @@ export class D1RoomReceiptReader {
     this.#policy = policySnapshot(options.policy);
     this.#policyJson = canonicalizeJson(this.#policy);
     this.#now = options.now;
+    this.#scope = options.scope ?? new D1RoomOperationScope(this.#policy.maxInFlightPerConnection);
+    if (this.#scope.limit !== this.#policy.maxInFlightPerConnection) throw new Error('Mismatched operation limit');
   }
 
   #clock(): number {
@@ -53,17 +55,16 @@ export class D1RoomReceiptReader {
 
   /** No caller-provided verified object, snapshot, bookmark or signing shortcut. */
   async recover(wire: string, signingPublicKey: string): Promise<RecoveryResult> {
-    if (this.#broken) return { ok: false, reason: 'storage_error' };
-    if (this.#inFlight >= this.#policy.maxInFlightPerConnection) return { ok: false, reason: 'busy' };
-    this.#inFlight++;
+    const denied = this.#scope.enter();
+    if (denied) return { ok: false, reason: denied };
     try {
       // Match SQLite's committed high-water behavior before signature freshness checks.
       // This bounded metadata read does not look up a receipt or enumerate room state.
       const initial = this.#metadata(await this.#db.withSession('first-primary').prepare(META).first());
-      if (this.#broken) return { ok: false, reason: 'storage_error' };
+      if (this.#scope.broken) return { ok: false, reason: 'storage_error' };
       const startedAt = Math.max(this.#clock(), initial.clock);
       const prepared = await prepareRoomRecovery(wire, signingPublicKey, { hub: this.#hub, now: startedAt });
-      if (this.#broken) return { ok: false, reason: 'storage_error' };
+      if (this.#scope.broken) return { ok: false, reason: 'storage_error' };
       if (!prepared.ok) return prepared;
       const beforeRead = Math.max(startedAt, this.#clock());
       const stale = prepared.freshness(beforeRead);
@@ -73,7 +74,7 @@ export class D1RoomReceiptReader {
       // of awaited SELECTs (even on the primary) would not establish this boundary.
       const snapshot = this.#metadata(await this.#db.withSession('first-primary').prepare(SNAPSHOT)
         .bind(q.actor, q.requestId, signingPublicKey, q.proofDigest).first());
-      if (this.#broken) return { ok: false, reason: 'storage_error' };
+      if (this.#scope.broken) return { ok: false, reason: 'storage_error' };
       if (snapshot.clock < initial.clock || !Object.hasOwn(snapshot, 'receipt_json')) {
         throw new Error('Invalid snapshot');
       }
@@ -86,8 +87,8 @@ export class D1RoomReceiptReader {
       return { ok: true, queryId: q.queryId, observedAt, receipt };
     } catch {
       // Never return driver messages, retry automatically or turn uncertainty into absence.
-      this.#broken = true;
+      this.#scope.poison();
       return { ok: false, reason: 'storage_error' };
-    } finally { this.#inFlight--; }
+    } finally { this.#scope.leave(); }
   }
 }
