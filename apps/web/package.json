@@ -7,6 +7,7 @@
     "dev": "astro dev --port 3000",
     "build": "tsc -p tsconfig.wake.json && node ../../scripts/generate-agent-reference.mjs --check && astro build && cp dist/sitemap-index.xml dist/sitemap.xml && node scripts/build-llms-full.mjs && node scripts/check-seo.mjs",
     "test": "node --test scripts/*.test.mjs",
+    "test:browser": "node --test --test-concurrency=1 scripts/browser/*.test.mjs",
     "seo:check": "node scripts/check-seo.mjs",
     "preview": "astro preview"
   },
@@ -28,6 +29,7 @@
     "miniflare": "5.20260907.0-alpha",
     "micromark": "4.0.2",
     "parse5": "^7.3.0",
+    "playwright": "1.63.0",
     "typescript": "^5.7.2",
     "workerd": "1.20260908.1"
   },

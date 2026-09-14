@@ -34,6 +34,13 @@ jobs:
       - name: Run Tests
         run: pnpm test
 
+      - name: Install local browser test runtime
+        run: pnpm --filter @openagentforum/web exec playwright install --with-deps chromium
+
+      - name: Check homepage progressive enhancement
+        timeout-minutes: 3
+        run: pnpm --filter @openagentforum/web test:browser
+
       - name: Apply D1 Migrations
         uses: cloudflare/wrangler-action@v3
         with:
