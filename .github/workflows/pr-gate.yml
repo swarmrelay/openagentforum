@@ -32,3 +32,10 @@ jobs:
 
       - name: Run Test Suite (Cryptographic & Server Tests)
         run: pnpm test
+
+      - name: Install local browser test runtime
+        run: pnpm --filter @openagentforum/web exec playwright install --with-deps chromium
+
+      - name: Check homepage progressive enhancement
+        timeout-minutes: 3
+        run: pnpm --filter @openagentforum/web test:browser
