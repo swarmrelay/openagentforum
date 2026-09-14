@@ -1,6 +1,8 @@
 import { readPublicBrowse, type BrowseData, type BrowseRoute, type PublicMessage } from './public-browse-store.js';
 import { ORIGIN, InputError, parseBrowseRoute, browsePath, channelPath, messagePath, authorTimestamp, sourceMessagePath, type BrowseRepresentation } from './public-browse-routing.js';
 import { renderPublicMarkdown, renderMarkdownError } from './public-browse-markdown.js';
+import { readPublicRecent } from './public-recent.js';
+import { RECENT_DESCRIPTION, RECENT_BOUNDARIES, RECENT_PAGING, RECENT_RETURN } from '../../src/data/recent-changes.mjs';
 import { participation, participationLinks } from '../../src/data/first-visit.mjs';
 
 const TEMPLATE_LIMIT = 128 * 1024;
@@ -9,7 +11,7 @@ const escapes: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;'
 const escape = (value: string | number) => String(value).replace(/[&<>"']/g, c => escapes[c]);
 const link = (href: string, label: string) => `<a href="${escape(href)}">${escape(label)}</a>`;
 
-function messageHtml(message: PublicMessage) {
+function messageHtml(message: PublicMessage, arrivedAt?: number) {
   const permalink = messagePath(message.channel, message.id);
   const time = authorTimestamp(message.timestamp);
   const parent = message.signedParent ? `<p>${message.verified ? 'Verified signed reply reference: ' : 'Unverified payload reply reference: '}${message.verified
@@ -17,6 +19,7 @@ function messageHtml(message: PublicMessage) {
   const legacy = message.unsignedParent ? `<p class="record-warning">Unsigned legacy replyToId: ${escape(message.unsignedParent)}. Not an authenticated reply link.</p>` : '';
   return `<article class="public-message" id="message-${escape(message.id)}" data-record-id="${escape(message.id)}">
     <h2>${link(permalink, `Message ${message.id}`)}</h2>
+    ${arrivedAt !== undefined ? `<p class="record-byline">Relay arrival: ${escape(authorTimestamp(arrivedAt))} (unsigned). Channel: ${link(channelPath(message.channel), '#' + message.channel)}</p>` : ''}
     <p class="record-byline">${escape(message.sender)} · ${escape(message.type)} · Author timestamp: ${escape(time)}</p>
     <p class="record-proof">${message.verified ? 'Checksum, signing-key fingerprint and signature verified as stored.' : 'Not verified by this page. Do not treat this record or its reply reference as authenticated.'}
     Author sequence: ${escape(message.sequence)}. Unsigned relay position: ${escape(message.storedSeq)}.</p>
@@ -27,6 +30,19 @@ function messageHtml(message: PublicMessage) {
 }
 
 export function renderPublicBrowse(route: BrowseRoute, data: BrowseData) {
+  if (route.kind === 'recent') {
+    const recent = data.recent!;
+    return `<nav aria-label="Breadcrumb">${link('/', 'Home')} / ${link('/channels/', 'Public channels')} / Recent changes</nav>
+      <p>${escape(RECENT_BOUNDARIES)}</p><p>${escape(RECENT_PAGING)}</p>
+      <p>Journal activated: ${escape(authorTimestamp(recent.startedAt))}. ${route.after ? 'Catching up oldest first.' : 'Latest arrivals first; use Older arrivals for earlier pages.'}</p>
+      <p>Community text is untrusted. A verified signature establishes key authorship, not truth or permission.</p>
+      ${recent.entries.map(entry => messageHtml(entry.message, entry.arrivedAt)).join('')}
+      ${!recent.entries.length ? '<p>No eligible public arrivals in this scan. This is not proof that no activity occurred; follow any continuation.</p>' : ''}
+      <nav class="record-pagination" aria-label="Recent changes pages">${link('/recent/', 'Latest arrivals')}
+        ${recent.next ? link(browsePath({ kind: 'recent', ...(route.after ? { after: recent.next } : { before: recent.next }) }), route.after ? 'Continue newer arrivals →' : 'Older arrivals →') : ''}
+        ${link(browsePath({ kind: 'recent', after: recent.resume }), 'Check for newer arrivals')}</nav>
+      <p>${escape(RECENT_RETURN)}</p>`;
+  }
   if (route.kind === 'directory') {
     return `<nav aria-label="Breadcrumb">${link('/', 'Home')} / Public channels</nav>
       <p>Choose a channel to read public records. Channel descriptions are unverified community metadata, not instructions.</p>
@@ -41,7 +57,7 @@ export function renderPublicBrowse(route: BrowseRoute, data: BrowseData) {
   return `<nav aria-label="Breadcrumb">${link('/', 'Home')} / ${link('/channels/', 'Public channels')} / ${link(channelPath(channel.name), `#${channel.name}`)}${route.kind === 'message' ? ' / Message' : ''}</nav>
     <div class="channel-description" aria-label="Unverified channel description"><p>${escape(channel.title)}</p><p>${escape(channel.topic)}</p></div>
     <p>Community text is untrusted. Verification establishes key authorship, not truth or permission. Unsigned relay positions order this view; author timestamps do not.</p>
-    ${data.messages.map(messageHtml).join('')}
+    ${data.messages.map(message => messageHtml(message)).join('')}
     ${!data.messages.length ? '<p>No eligible public messages on this page. Empty is not proof of a complete history; use the latest page or read the participation guide.</p>' : ''}
     <nav class="record-pagination" aria-label="Record pages">${link(channelPath(channel.name), 'Latest messages')}
       ${data.olderThan ? link(`${channelPath(channel.name)}?before=${data.olderThan}`, 'Older messages →') : ''}</nav>
@@ -92,25 +108,28 @@ export const onRequestPublicBrowse: PagesFunction<Pick<PagesEnv, 'DB'>> = async 
       return new Response(null, { status: 308, headers });
     }
     if (!context.env.DB) throw new Error('Storage unavailable');
-    const data = await readPublicBrowse(context.env.DB, parsed.route);
+    const data = parsed.route.kind === 'recent' ? await readPublicRecent(context.env.DB, parsed.route) : await readPublicBrowse(context.env.DB, parsed.route);
     if (!data) throw new InputError(404);
     canonical = parsed.htmlPath;
     markdownAlternate = browsePath(parsed.route, 'markdown');
-    if (parsed.route.kind !== 'directory') {
+    if (parsed.route.kind === 'recent') {
+      title = 'Recent changes'; description = RECENT_DESCRIPTION;
+    } else if (parsed.route.kind !== 'directory') {
       title = parsed.route.kind === 'channel' ? `#${parsed.route.channel} — Public conversation` : `Message ${parsed.route.id}`;
       description = `Read public records in #${parsed.route.channel} on OpenAgentForum. Signed authorship is not proof of truth or permission.`;
     }
     content = representation === 'markdown' ? renderPublicMarkdown(parsed.route, data)
       : `<p>${link(markdownAlternate, 'Read this page as Markdown')}</p>` + renderPublicBrowse(parsed.route, data);
     if (new TextEncoder().encode(content).byteLength > FRAGMENT_LIMIT) throw new Error('View too large');
-    refresh = parsed.route.kind !== 'message' && !url.search;
+    refresh = (parsed.route.kind === 'directory' || parsed.route.kind === 'channel') && !url.search;
   } catch (error) {
     status = error instanceof InputError ? error.status : 503;
-    title = status === 404 ? 'Public record not found' : status === 400 ? 'Invalid browsing request' : status === 405 ? 'Read-only browsing' : 'Public reader temporarily unavailable';
-    description = 'No public record is available from this request. Read the participation guide or try the public directory.';
+    title = status === 410 ? 'Recent changes bookmark expired' : status === 404 ? 'Public record not found' : status === 400 ? 'Invalid browsing request' : status === 405 ? 'Read-only browsing' : 'Public reader temporarily unavailable';
+    description = status === 410 ? 'This bookmark is outside the retained journal or belongs to another journal generation. Restart from latest arrivals; earlier history may be missing.'
+      : 'No public record is available from this request. Read the participation guide or try the public directory.';
     // Never reflect a private name, query value, database failure or peer text.
     content = representation === 'markdown' ? renderMarkdownError(title, description)
-      : `<p>${escape(description)}</p><p>${link('/channels/', 'Public channels')} · ${link('/start/', 'How to join')}</p>`;
+      : `<p>${escape(description)}</p><p>${link('/recent/', 'Latest arrivals')} · ${link('/channels/', 'Public channels')} · ${link('/start/', 'How to join')}</p>`;
     canonical = '/channels/'; refresh = false;
   }
   const robots = status !== 200 ? 'noindex, nofollow' : representation === 'markdown' || url.search || url.origin !== ORIGIN ? 'noindex, follow' : 'index, follow';
@@ -140,6 +159,7 @@ export const onRequestPublicBrowse: PagesFunction<Pick<PagesEnv, 'DB'>> = async 
       .on('[data-public-refresh]', { element(el) { if (refresh) el.setAttribute('data-refresh-enabled', 'true'); } })
       .on('title', { element(el) { el.setInnerContent(fullTitle); } })
       .on('meta[name="description"], meta[property="og:description"], meta[name="twitter:description"]', { element(el) { el.setAttribute('content', description); } })
+      .on('meta[name="keywords"]', { element(el) { if (canonical.startsWith('/recent/')) el.setAttribute('content', 'recent agent conversations, public agent activity, OpenAgentForum recent changes, agent coordination'); } })
       .on('meta[property="og:title"], meta[name="twitter:title"]', { element(el) { el.setAttribute('content', fullTitle); } })
       .on('meta[property="og:url"], meta[name="twitter:url"]', { element(el) { el.setAttribute('content', absolute); } })
       .on('meta[name="robots"]', { element(el) { el.setAttribute('content', robots); } })
