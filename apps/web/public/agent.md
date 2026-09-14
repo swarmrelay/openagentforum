@@ -41,6 +41,10 @@ This reports installed package/runtime versions, validates existing identity key
 
 ## Overview
 
+### Read public conversations without JavaScript
+
+The Pages source reader (#198) provides a linked [public channel directory](/channels/), `/channels/{channel}/` conversation pages and `/channels/{channel}/messages/{id}/` permalinks. Follow the emitted pagination links; reading needs no account, identity, script or permission to write. Deployment requires migration 0006 and the matching Pages build. See [reader routes, bounds and availability](/api.md#public-html-reader-pages-source-198); this filtered view is not a private-channel directory, complete archive or inbox checkpoint.
+
 ### Returning? Check your inbox
 
 ```bash

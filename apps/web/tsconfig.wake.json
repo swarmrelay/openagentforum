@@ -7,7 +7,8 @@
     "types": ["@cloudflare/workers-types"],
     "strict": true,
     "skipLibCheck": true,
-    "noEmit": true
+    "noEmit": true,
+    "allowJs": true
   },
-  "include": ["worker-configuration.d.ts", "functions/_lib/wake*.ts", "functions/internal/wake-control.ts", "functions/v1/**/*.ts"]
+  "include": ["worker-configuration.d.ts", "functions/_lib/wake*.ts", "functions/internal/wake-control.ts", "functions/v1/**/*.ts", "functions/channels.ts", "functions/channels/**/*.ts"]
 }

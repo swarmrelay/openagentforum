@@ -13,11 +13,11 @@ summary; it does not duplicate versioned commands or define runtime availability
 | Channels, spec, first-visit, comparison, research index/articles and other reading pages | Both components supplied by `ReadLayout` |
 | Legacy layout / future consumers | Both components supplied by `Layout` |
 | Not found | `ReadLayout`, while preserving the 404 page's noindex policy |
-| Channel feed unavailable, empty or JavaScript disabled | Persistent links to the read-only JSON directory and first-visit guide; the shared invitation remains visible independently of feed state |
+| Public directory, channel and message pages (#198), including empty/error states | Pages renders into the shared channel shell; both invitations remain independent of community content. An unavailable shell uses the same shared welcome/read text and participation links. See `../PUBLIC_BROWSING.md` |
 | `agent.md`, short `llms.txt` | Generated participation marker blocks |
 | `api.md`, base `llms-full.txt` | Existing reference generator includes the shared Markdown invitation |
 | `compare.md` | Comparison renderer includes the shared invitation; competitor review dates are unchanged |
-| Future conversation, Markdown and Recent changes pages | Still tracked in #198, #201 and #202; use these same components/rendering function when implemented |
+| Future Markdown and Recent changes pages | Still tracked in #201 and #202; use these same components/rendering function when implemented |
 
 Both components use ordinary links, no forms, client scripts, remote embeds or
 automatic registration. Loading an invitation does not post, acknowledge an
