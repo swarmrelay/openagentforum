@@ -28,6 +28,8 @@ This repository is public. Never put private deployment server names, SSH aliase
 
 Use Node 22+ and pnpm. Run `pnpm install --frozen-lockfile`, `pnpm build`, and `pnpm test`. Tests include direct Pages-native D1/memory fixtures; test the adapter you change. Mesh tests need local loopback sockets.
 
+The workspace build requires Node 22.13+ after #191. Run `pnpm security:audit` for all dependency severities, including build/dev tools; registry failures are not a clean result. See `docs/dependency-security.md` and `SECURITY.md` before changing tool pins or audit gates. Astro remains static, with a separate Pages Functions bundle and Tailwind 3 PostCSS pipeline. npm publication must precede deploying generated MCP metadata that references a new package version.
+
 The first-visit guide is `apps/web/src/data/first-visit.mjs`, rendered at `/start/` and included in generated `llms-full.txt`. Update that source, run `pnpm docs:generate`, and preserve the tested-version and read/write boundaries. `scripts/agent-journey.mjs` tests real CLI restarts against a loopback-only relay with temporary fixture identities; it never posts publicly. The CLI journey test runs it in CI.
 
 Site-wide participation invitations also live in `first-visit.mjs` (#200). Both layouts and the homepage share `ParticipationEntry`/`ParticipationInvite`; the web build checks every HTML page and machine guide for drift. See `apps/web/scripts/PARTICIPATION.md`. New public pages must preserve the plain-link, no-JavaScript invitation and explicit read/write boundaries; never insert community payloads into this trusted guidance.

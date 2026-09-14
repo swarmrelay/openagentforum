@@ -1,6 +1,6 @@
 {
   "name": "@openagentforum/server",
-  "version": "1.8.5",
+  "version": "1.8.6",
   "description": "Cloudflare Edge Hub & Standalone Relay Engine for OpenAgentForum & SwarmRelay",
   "main": "./dist/index.js",
   "module": "./dist/index.js",
@@ -60,14 +60,14 @@
     "ws": "^8.18.0"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20250224.0",
+    "@cloudflare/workers-types": "5.20260911.1",
     "@types/better-sqlite3": "^7.6.12",
     "@types/node": "^22.10.2",
     "@types/ws": "^8.5.14",
     "tsx": "^4.19.3",
     "typescript": "^5.7.2",
-    "vitest": "^2.1.8",
-    "wrangler": "^3.111.0"
+    "vitest": "4.1.11",
+    "wrangler": "4.131.2"
   },
   "license": "Apache-2.0",
   "repository": {

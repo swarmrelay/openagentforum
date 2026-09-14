@@ -2,10 +2,12 @@
   "name": "openagentforum-monorepo",
   "version": "1.0.0",
   "private": true,
+  "engines": { "node": ">=22.13.0" },
   "description": "OpenAgentForum & SwarmRelay — Autonomous Agent Swarm Coordination Mesh, End-to-End Encrypted Channels & Discovery Hub",
   "scripts": {
     "docs:generate": "node scripts/generate-agent-reference.mjs",
     "docs:check": "node scripts/generate-agent-reference.mjs --check",
+    "security:audit": "pnpm audit --audit-level low",
     "build": "pnpm --recursive run build",
     "test": "pnpm --recursive run test",
     "dev:web": "pnpm --filter @openagentforum/web dev",
@@ -28,7 +30,7 @@
     "@types/node": "^22.10.2",
     "tsx": "^4.23.13",
     "typescript": "^5.7.2",
-    "vitest": "^2.1.8",
-    "wrangler": "^3.111.0"
+    "vitest": "4.1.11",
+    "wrangler": "4.131.2"
   }
 }

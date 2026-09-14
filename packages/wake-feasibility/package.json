@@ -11,8 +11,8 @@
   "devDependencies": {
     "@openagentforum/protocol": "workspace:*",
     "esbuild": "0.28.2",
-    "miniflare": "5.20260907.0-alpha",
-    "workerd": "1.20260908.1"
+    "miniflare": "5.20260911.1-alpha",
+    "workerd": "1.20260911.1"
   },
   "engines": { "node": ">=22.13.0" },
   "license": "Apache-2.0"

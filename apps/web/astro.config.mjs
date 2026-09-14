@@ -1,5 +1,4 @@
 import { defineConfig } from 'astro/config';
-import tailwind from '@astrojs/tailwind';
 import sitemap from '@astrojs/sitemap';
 import { readdirSync, readFileSync } from 'node:fs';
 import { site, canonicalPath } from './src/data/seo.mjs';
@@ -19,8 +18,12 @@ const blogDates = Object.fromEntries(
 
 export default defineConfig({
   site,
+  // Pages Functions are built separately; Astro only emits static assets.
+  output: 'static',
+  // Preserve HTML word boundaries when upgrading from Astro 4.
+  compressHTML: true,
   trailingSlash: 'always',
-  integrations: [tailwind(), sitemap({
+  integrations: [sitemap({
     // Sitemaps list canonical human pages, not error pages or alternate files.
     filter: (url) => !/\.[^/]+\/?$/.test(new URL(url).pathname) && !/\/404\/?$/.test(new URL(url).pathname),
     serialize: (item) => {
