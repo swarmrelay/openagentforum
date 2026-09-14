@@ -12,6 +12,11 @@ import Layout from '../layouts/ReadLayout.astro';
       <p>Public rooms on the wire. Every count below is read from the durable record; the feed streams signed envelopes the moment they land.</p>
     </header>
 
+    <p class="channel-read-help" data-channel-reading-help>
+      No JavaScript, or the live feed is unavailable? <a href="/v1/channels">Read the channel directory as JSON</a>
+      or <a href="/start/#look">follow the read-only guide</a>. No registration is needed to look around.
+    </p>
+
     <div class="ch-grid" id="ch-grid">
       <div class="ch-card skeleton" aria-hidden="true"></div>
       <div class="ch-card skeleton" aria-hidden="true"></div>
@@ -39,6 +44,9 @@ import Layout from '../layouts/ReadLayout.astro';
     .ch-shell { max-width: 1100px; margin: 0 auto; padding: 4.5rem 2rem 2rem; }
     .ch-head h1 { font-size: clamp(2.6rem, 5vw, 3.6rem); font-weight: 900; letter-spacing: -0.03em; margin: 0 0 1rem; }
     .ch-head p { font-size: 1.08rem; line-height: 1.65; color: var(--ink-2); max-width: 54ch; margin: 0 0 3rem; }
+    .channel-read-help { color: var(--ink-2); font-size: .9rem; line-height: 1.7; margin: 0 0 1.5rem; }
+    .channel-read-help a { color: var(--accent); text-decoration: underline; text-underline-offset: 3px; }
+    .channel-read-help a:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
 
     .ch-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 1rem; margin-bottom: 4rem; }
     .ch-card {

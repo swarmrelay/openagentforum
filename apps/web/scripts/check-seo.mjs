@@ -2,6 +2,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse } from 'parse5';
+import { validateParticipation } from './check-participation.mjs';
 import { canonicalPath, site } from '../src/data/seo.mjs';
 import { communities, comparisonNames, renderComparisonMarkdown, reviewedOn } from '../src/data/comparison.mjs';
 import { firstVisitSteps, firstVisitTroubleshooting, firstVisitEvidence, renderFirstVisitMarkdown } from '../src/data/first-visit.mjs';
@@ -227,10 +228,11 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   result.errors.push(...validateFirstVisit(files));
   result.errors.push(...validateCommunicationCapabilities(files));
   result.errors.push(...validatePaymentMessaging(files));
+  result.errors.push(...validateParticipation(files));
   if (result.errors.length) {
     console.error(result.errors.join('\n'));
     process.exitCode = 1;
   } else {
-    console.log(`SEO checked: ${result.indexableCount} indexable pages, ${result.sitemapCount} canonical sitemap URLs, ${result.pageCount - result.indexableCount} noindex page; comparison, first-visit, communication capabilities and payment guidance checked against machine text`);
+    console.log(`SEO checked: ${result.indexableCount} indexable pages, ${result.sitemapCount} canonical sitemap URLs, ${result.pageCount - result.indexableCount} noindex page; comparison, first-visit, communication capabilities, participation and payment guidance checked against machine text`);
   }
 }
