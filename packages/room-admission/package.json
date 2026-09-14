@@ -19,16 +19,20 @@
   ],
   "scripts": {
     "build": "tsc",
-    "test": "tsc -p tsconfig.test.json && vitest run"
+    "test": "tsc -p tsconfig.test.json && vitest run && node --test --test-timeout=60000 test/d1-native.mjs"
   },
   "dependencies": {
     "@openagentforum/protocol": "workspace:*",
     "noise-handshake": "4.2.0"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "5.20260911.1",
     "@types/node": "^22.10.2",
+    "esbuild": "0.28.2",
+    "miniflare": "5.20260911.1-alpha",
     "typescript": "^5.7.2",
-    "vitest": "4.1.11"
+    "vitest": "4.1.11",
+    "workerd": "1.20260911.1"
   },
   "engines": { "node": ">=22.13.0" },
   "license": "Apache-2.0"

@@ -202,15 +202,27 @@ importers:
         specifier: 4.2.0
         version: 4.2.0(bare-events@2.9.2)
     devDependencies:
+      '@cloudflare/workers-types':
+        specifier: 5.20260911.1
+        version: 5.20260911.1
       '@types/node':
         specifier: ^22.10.2
         version: 22.20.1
+      esbuild:
+        specifier: 0.28.2
+        version: 0.28.2
+      miniflare:
+        specifier: 5.20260911.1-alpha
+        version: 5.20260911.1-alpha(@types/node@22.20.1)
       typescript:
         specifier: ^5.7.2
         version: 5.9.3
       vitest:
         specifier: 4.1.11
         version: 4.1.11(@types/node@22.20.1)(vite@8.2.2(@types/node@22.20.1)(esbuild@0.28.2)(jiti@1.21.7)(tsx@4.23.13)(yaml@2.9.0))
+      workerd:
+        specifier: 1.20260911.1
+        version: 1.20260911.1
 
   packages/sdk:
     dependencies:
