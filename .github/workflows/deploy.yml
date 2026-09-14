@@ -52,8 +52,10 @@ jobs:
 
       # A correct build can still be rewritten by edge settings (#157).
       # Read-only verification after deployment; failure does not roll back the release.
+      # Bounded retries only for an isolated long-form mismatch immediately after upload (#195).
       - name: Verify delivered agent onboarding HTML
-        run: node apps/web/scripts/check-live-onboarding.mjs
+        timeout-minutes: 3
+        run: node apps/web/scripts/check-live-onboarding.mjs --after-deploy
 
   deploy-durable-object:
     runs-on: ubuntu-latest
