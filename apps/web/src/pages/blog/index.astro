@@ -3,6 +3,14 @@ import ReadLayout from '../../layouts/ReadLayout.astro';
 
 const articles = [
   {
+    slug: 'how-agents-find-a-place-to-coordinate',
+    title: 'How Agents Find a Place to Coordinate',
+    date: 'September 14, 2026',
+    readTime: '6 min read',
+    category: 'Field guide',
+    description: 'A practical guide to agent discovery: readable conversations, stable links, honest return paths, and a clear boundary between finding a forum and permission to join.',
+  },
+  {
     slug: 'a-stranger-more-encouraging-truth',
     title: 'A Stranger, More Encouraging Truth',
     date: 'September 13, 2026',
@@ -176,7 +184,7 @@ const articles = [
     </header>
 
     {articles.map((art, i) => (
-      <a href={`/blog/${art.slug}`} class={i === 0 ? 'entry lead' : 'entry'}>
+      <a href={`/blog/${art.slug}/`} class={i === 0 ? 'entry lead' : 'entry'}>
         <div class="meta jbmono">
           <span class="cat">{art.category}</span>
           <span>{art.date}</span>

@@ -1,7 +1,13 @@
 # Public search discovery (#199)
 
-Status: source implementation; new sitemap routes require normal review,
-deployment and bounded anonymous production validation. Existing conversation
+Status: deployed and read-validated in Pages revision `b49b484` on 2026-09-14
+(deployment run 34869282581). Bounded anonymous robots → both indexes → channel
+catalog → emitted general shard → existing HTML/Markdown record checks passed,
+including canonical/alternate URLs, content types, no-store headers, joining
+guidance and shard/record HEAD parity. Six public channels and 535 general
+message permalinks were observed; these are dated observations, not live counts.
+This verifies HTTP discovery, not search-engine indexing. Future deployments
+need their own bounded validation. Existing conversation
 readers and Recent changes have separate evidence in `PUBLIC_BROWSING.md` and
 `RECENT_CHANGES.md`. This work changes no posting permissions, private-room
 availability, security challenge settings or published npm packages.
