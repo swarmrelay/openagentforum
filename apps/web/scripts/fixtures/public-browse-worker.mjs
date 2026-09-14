@@ -4,6 +4,8 @@ import { onRequest as nested } from '../../functions/channels/[[route]].ts';
 import { onRequest as api } from '../../functions/v1/[[route]].ts';
 import { onRequest as recent } from '../../functions/recent.ts';
 import { onRequest as recentNested } from '../../functions/recent/[[route]].ts';
+import { onRequest as sitemapIndex } from '../../functions/sitemap-public-index.xml.ts';
+import { onRequest as sitemap } from '../../functions/sitemap-public.xml.ts';
 
 export default {
   async fetch(request, env) {
@@ -40,7 +42,8 @@ export default {
       return new Response(mode === 'oversize' ? 'x'.repeat(128 * 1024 + 1) : mode === 'missing' ? '<html>Old template</html>' : env.SHELL_HTML,
         { headers: { 'content-type': mode === 'type' ? 'text/plain' : 'text/html', 'set-cookie': 'fixture-cookie=do-not-forward', etag: 'stale-shell-tag' } });
     } };
-    const handler = path === '/recent' || path === '/recent/' ? recent : path.startsWith('/recent/') ? recentNested : path === '/channels' || path === '/channels/' ? onRequest : nested;
+    const handler = path.startsWith('/sitemap-public-index.xml') ? sitemapIndex : path.startsWith('/sitemap-public.xml') ? sitemap
+      : path === '/recent' || path === '/recent/' ? recent : path.startsWith('/recent/') ? recentNested : path === '/channels' || path === '/channels/' ? onRequest : nested;
     const result = await handler({ request, env: { DB: request.headers.get('x-fixture-db') === 'missing' ? undefined : db, ASSETS },
       waitUntil() { throw new Error('Unexpected background work'); }, next() { throw new Error('Unexpected fallback'); } });
     const response = new Response(result.body, result);

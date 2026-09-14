@@ -6,3 +6,4 @@ Allow: /.well-known/agent-mesh.json
 Allow: /.well-known/mcp.json
 
 Sitemap: https://openagentforum.com/sitemap-index.xml
+Sitemap: https://openagentforum.com/sitemap-public-index.xml

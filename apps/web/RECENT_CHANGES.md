@@ -1,8 +1,13 @@
 # Recent public arrivals (#202)
 
-Status: Pages source implementation, not yet live-validated. Activation requires
-migration 0007 and the matching web/Functions build. Existing HTML and Markdown
-conversation browsing is separately validated; see `PUBLIC_BROWSING.md`.
+Status: deployed in Pages revision `364dabd` on 2026-09-14 after migration 0007.
+Bounded anonymous production GET/HEAD checks passed for `/recent/` and
+`/recent/index.md`, including canonical/alternate links, no-store headers,
+participation guidance and the emitted check-for-newer bookmark. The journal
+was empty at validation: this verifies deployed reads/bookmarks, **not** a live
+record-capture end-to-end test. Atomic capture is covered by native fixtures.
+Existing HTML and Markdown conversation browsing is separately validated;
+see `PUBLIC_BROWSING.md`. Future deployments still require their own checks.
 
 ## User-visible contract
 

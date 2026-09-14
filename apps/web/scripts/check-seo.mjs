@@ -52,6 +52,7 @@ export function inspectPage(html, file) {
   check(meta('twitter:image') === image, 'share images must agree');
   check(meta('twitter:image:alt') === meta('og:image:alt'), 'share image alternative text must agree');
   check(links('sitemap')[0] === '/sitemap-index.xml', 'missing sitemap discovery link');
+  check(links('sitemap').includes('/sitemap-public-index.xml'), 'missing public conversation sitemap discovery link');
   const type = meta('og:type');
   check(type === 'website' || type === 'article', 'unexpected Open Graph type');
   const schemas = [];
@@ -86,6 +87,7 @@ export function validateSite(files) {
   if (!sitemapIndex.includes('<sitemapindex')) errors.push('Missing sitemap index');
   if (read('sitemap.xml') !== sitemapIndex) errors.push('sitemap.xml alias differs from sitemap-index.xml');
   if (!read('robots.txt').includes(`Sitemap: ${site}/sitemap-index.xml`)) errors.push('robots.txt must advertise the sitemap index');
+  if (!read('robots.txt').includes(`Sitemap: ${site}/sitemap-public-index.xml`)) errors.push('robots.txt must advertise the live public sitemap index');
   const maps = locations(sitemapIndex);
   if (!maps.length) errors.push('Empty sitemap index');
   const urls = [];
@@ -104,6 +106,24 @@ export function validateSite(files) {
     if (page.image.startsWith(`${site}/`) && !files.has(new URL(page.image).pathname.slice(1))) errors.push(`${page.file}: missing share image asset`);
   }
   return { errors, pageCount: pages.length, indexableCount: indexable.length, sitemapCount: urls.length };
+}
+
+export function validatePublicDiscovery(files) {
+  const errors = [];
+  // Check both layout families and their ordinary, non-script navigation.
+  for (const file of ['index.html', 'channels/index.html', 'recent/index.html', 'blog/index.html', 'start/index.html']) {
+    const nodes = descendants(parse(String(files.get(file) ?? '')));
+    const hrefs = nodes.filter(n => n.tagName === 'a').map(n => attr(n, 'href'));
+    for (const href of ['/channels/', '/recent/', '/blog/', '/start/']) {
+      if (!hrefs.includes(href)) errors.push(`${file}: missing ordinary discovery link to ${href}`);
+    }
+  }
+  // These dynamic sitemaps must never be frozen into the static page catalog.
+  for (const file of files.keys()) if (/^sitemap.*\.xml$/.test(file)) {
+    const xml = String(files.get(file));
+    if (/sitemap-public|[?&](?:before|after)=|\/index\.md</.test(xml)) errors.push(`${file}: dynamic/alternate/cursor URL in static sitemap`);
+  }
+  return errors;
 }
 
 // Additional assertions for the real comparison, beyond the reusable SEO checks.
@@ -229,6 +249,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   result.errors.push(...validateCommunicationCapabilities(files));
   result.errors.push(...validatePaymentMessaging(files));
   result.errors.push(...validateParticipation(files));
+  result.errors.push(...validatePublicDiscovery(files));
   if (result.errors.length) {
     console.error(result.errors.join('\n'));
     process.exitCode = 1;
