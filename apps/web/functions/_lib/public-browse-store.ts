@@ -22,9 +22,11 @@ export const PUBLIC_MESSAGE = `encrypted = 0 AND type != 'e2ee_blob'
 export type BrowseRoute =
   | { kind: 'directory'; after?: string }
   | { kind: 'channel'; channel: string; before?: number }
-  | { kind: 'message'; channel: string; id: string };
+  | { kind: 'message'; channel: string; id: string }
+  | { kind: 'recent'; after?: RecentCursor; before?: RecentCursor };
+export interface RecentCursor { epoch: string; position: number }
 export interface PublicChannel { name: string; title: string; topic: string }
-interface PublicRow {
+export interface PublicRow {
   id: string; channel: string; sender: string; type: MessageEnvelope['type'];
   sequence: number; stored_seq: number; timestamp: number; payload_json: string;
   signature: string; checksum: string; reply_to_id: string | null; public_key: string | null;
@@ -38,12 +40,16 @@ export interface PublicMessage {
 export interface BrowseData {
   channels: PublicChannel[]; channel?: PublicChannel; messages: PublicMessage[];
   nextChannel?: string; olderThan?: number;
+  recent?: {
+    entries: { message: PublicMessage; arrivedAt: number }[];
+    next?: RecentCursor; resume: RecentCursor; startedAt: number;
+  };
 }
 
 const CHANNEL_COLUMNS = 'name, substr(title, 1, 160) AS title, substr(topic, 1, 1000) AS topic';
 // Cap database projections before buffering/parsing. A truncated signed payload
 // is never verified as if it were the original record.
-const MESSAGE_COLUMNS = `m.id, m.channel, substr(m.sender, 1, 129) AS sender, substr(m.type, 1, 65) AS type,
+export const MESSAGE_COLUMNS = `m.id, m.channel, substr(m.sender, 1, 129) AS sender, substr(m.type, 1, 65) AS type,
   m.sequence, m.stored_seq, m.timestamp,
   CASE WHEN instr(m.payload_json, char(0)) = 0 THEN substr(m.payload_json, 1, ${PAYLOAD_LIMIT + 1}) ELSE NULL END AS payload_json,
   substr(m.signature, 1, 129) AS signature, substr(m.checksum, 1, 65) AS checksum,
@@ -51,7 +57,7 @@ const MESSAGE_COLUMNS = `m.id, m.channel, substr(m.sender, 1, 129) AS sender, su
   (instr(m.sender, char(0)) = 0 AND instr(m.type, char(0)) = 0 AND instr(m.signature, char(0)) = 0
     AND instr(m.checksum, char(0)) = 0 AND instr(a.public_key, char(0)) = 0) AS signed_text_complete`;
 
-export async function readPublicBrowse(db: D1Database, route: BrowseRoute): Promise<BrowseData | null> {
+export async function readPublicBrowse(db: D1Database, route: Exclude<BrowseRoute, { kind: 'recent' }>): Promise<BrowseData | null> {
   if (route.kind === 'directory') {
     const result = await db.prepare(`SELECT ${CHANNEL_COLUMNS} FROM channels INDEXED BY idx_channels_public_browse
       WHERE ${PUBLIC_CHANNEL} AND name > ? ORDER BY name ASC LIMIT ?`)
@@ -89,7 +95,7 @@ export async function readPublicBrowse(db: D1Database, route: BrowseRoute): Prom
   };
 }
 
-async function presentMessage(row: PublicRow, textLimit: number): Promise<PublicMessage> {
+export async function presentMessage(row: PublicRow, textLimit: number): Promise<PublicMessage> {
   const base = { id: row.id, channel: row.channel, sender: row.sender, type: row.type,
     sequence: row.sequence, storedSeq: row.stored_seq, timestamp: row.timestamp };
   const omitted = { ...base, text: 'Payload omitted from this bounded view. Fetch the source record and verify it independently.', truncated: true, verified: false };

@@ -6,9 +6,10 @@ or an Astro-only preview is not evidence that production has updated. No new
 binding, listener, service, npm release or adapter-wide SSR migration is required.
 
 HTML deployment revision `1968ffa` passed bounded anonymous directory, channel,
-message, pagination and HEAD checks on 2026-09-14. Markdown is added in source
-under #201 and requires a matching Pages deployment and its own live validation;
-HTML validation alone does not establish Markdown availability.
+message, pagination and HEAD checks on 2026-09-14. Markdown revision `3fb7b8c`
+passed bounded anonymous directory/channel/message/pagination GETs and channel
+HEAD on the same date. Recent changes (#202) is separate source work requiring
+migration 0007 and its own deployment validation: see [RECENT_CHANGES.md](RECENT_CHANGES.md).
 
 ## Routes and navigation
 
@@ -176,12 +177,13 @@ canonical envelope representation. Shared invitations remain outside that text.
 - Successful unpaged production views have self-canonical URLs and page-specific
   titles/descriptions/OG metadata. Paged and preview views are `noindex, follow`;
   errors are `noindex, nofollow` without canonical/structured-data claims.
-  Dynamic sitemap expansion is #199; Recent changes is #202.
+  Dynamic channel/message sitemap expansion is #199. Recent changes (#202) has
+  a separate arrival journal and cursor contract in `RECENT_CHANGES.md`.
 
 ## Implementation and validation
 
 `functions/channels.ts` and `functions/channels/[[route]].ts` mount one reader.
-`src/pages/channels.astro` builds the shared shell and optional refresh script;
+`src/pages/channels.astro` builds `components/PublicBrowsePage.astro`, the shared shell and optional refresh script;
 the Pages reader obtains that shell through the implicit `ASSETS` binding and
 uses `HTMLRewriter` to replace only marked regions and SEO metadata. Direct
 Astro previews explicitly explain that no D1 record is attached. Shell styles

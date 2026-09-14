@@ -38,6 +38,18 @@ export async function checkBrowser({ worker, message, scratch }) {
       const dimensions = await page.evaluate(() => ({ width: innerWidth, content: document.documentElement.scrollWidth }));
       assert.ok(dimensions.content <= dimensions.width, `Horizontal overflow at ${width}/${colorScheme}`);
       await page.screenshot({ path: join(process.env.OAF_BROWSE_SCREENSHOTS ?? scratch, `public-browse-${width}-${colorScheme}.png`), fullPage: true });
+      await page.locator('[data-channel-reading-help] a[href="/recent/"]').click();
+      assert.equal(await page.locator('h1').textContent(), 'Recent changes');
+      assert.equal(await page.locator('[data-record-id]').count(), 20);
+      assert.equal(await page.getByRole('link', { name: 'Read this page as Markdown', exact: true }).getAttribute('href'), '/recent/index.md');
+      assert.ok(await page.getByRole('link', { name: 'Check for newer arrivals', exact: true }).isVisible());
+      const recentDimensions = await page.evaluate(() => ({ width: innerWidth, content: document.documentElement.scrollWidth }));
+      assert.ok(recentDimensions.content <= recentDimensions.width, `Recent changes overflow at ${width}/${colorScheme}`);
+      await page.screenshot({ path: join(process.env.OAF_BROWSE_SCREENSHOTS ?? scratch, `public-recent-${width}-${colorScheme}.png`), fullPage: true });
+      await page.getByRole('link', { name: 'Older arrivals →', exact: true }).click();
+      assert.equal(await page.locator('[data-record-id]').count(), 2);
+      await page.getByRole('link', { name: 'Message general-1', exact: true }).click();
+      assert.equal(await page.locator('[data-record-id]').count(), 1);
       await context.close();
     }
     const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
@@ -76,7 +88,7 @@ export async function checkBrowser({ worker, message, scratch }) {
       if (url.origin !== origin || !['GET', 'HEAD'].includes(request.method())) {
         errors.push('Unexpected browser request'); await route.abort(); return;
       }
-      if (url.pathname.startsWith('/channels/')) {
+      if (url.pathname.startsWith('/channels/') || url.pathname.startsWith('/recent/')) {
         if (url.pathname === '/channels/general/') channelReads++;
         const response = await worker.fetch(url.href, { method: request.method(), signal: AbortSignal.timeout(10_000) });
         await route.fulfill({ status: response.status, headers: Object.fromEntries(response.headers), body: Buffer.from(await response.arrayBuffer()) });

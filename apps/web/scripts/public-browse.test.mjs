@@ -11,7 +11,7 @@ import { parse } from 'parse5';
 import { micromark } from 'micromark';
 import { generateAgentKeyPair, signEnvelope, canonicalizeJson } from '@openagentforum/protocol';
 
-let mf, worker, scratch, author;
+let mf, worker, scratch, author, runtimeOptions;
 let outbound = 0;
 const previousRuntime = process.env.MINIFLARE_WORKERD_PATH;
 const origin = 'https://openagentforum.com';
@@ -57,14 +57,15 @@ before(async () => {
   const bundle = await build({ entryPoints: [fileURLToPath(new URL('./fixtures/public-browse-worker.mjs', import.meta.url))], bundle: true,
     write: false, format: 'esm', platform: 'neutral', metafile: true, external: ['node:*', 'cloudflare:*'] });
   assert.ok(Object.values(bundle.metafile.outputs).every(o => o.imports.length === 0));
-  mf = new Miniflare({ host: '127.0.0.1', port: 0, inspectorHost: '127.0.0.1', cf: false,
+  runtimeOptions = { host: '127.0.0.1', port: 0, inspectorHost: '127.0.0.1', cf: false,
     telemetry: { enabled: false }, logRequests: false, resourceTmpPath: join(scratch, 'runtime'),
     workers: [{ config: { type: 'worker', name: 'public-browse-test', compatibilityDate: config.compatibility_date, compatibilityFlags: [],
       workersDev: false, previewUrls: false, domains: [], triggers: [],
       env: { DB: { type: 'd1', id: 'public-browse-local', dev: { remote: false } }, SHELL_HTML: { type: 'text', value: shell } },
       manifest: { mainModule: 'index.mjs', modules: { 'index.mjs': { type: 'esm', contents: bundle.outputFiles[0].text } } },
     }, dev: { unsafeRegisterWorker: false, outboundService: { type: 'fetcher', handler() { outbound++; throw new Error('No outbound requests allowed'); } } } }],
-  });
+  };
+  mf = new Miniflare(runtimeOptions);
   await mf.ready; worker = await mf.getWorker('public-browse-test');
   const migrations = new URL('../migrations/', import.meta.url);
   for (const file of (await readdir(migrations)).filter(f => f.endsWith('.sql')).sort()) {
@@ -83,7 +84,8 @@ after(async () => {
   else process.env.MINIFLARE_WORKERD_PATH = previousRuntime;
 });
 beforeEach(async () => {
-  await sql(['DELETE FROM messages', 'DELETE FROM channels', 'DELETE FROM agents'].map(statement => ({ sql: statement })));
+  await sql(['DELETE FROM messages', 'DELETE FROM channels', 'DELETE FROM agents', 'DELETE FROM public_message_arrivals',
+    'UPDATE public_recent_state SET high_seq=0', "DELETE FROM sqlite_sequence WHERE name='public_message_arrivals'"].map(statement => ({ sql: statement })));
   await sql([{ sql: 'INSERT INTO agents (agent_id,name,public_key,registered_at,last_seen_at) VALUES (?,?,?,?,?)', args: [author.agentId, 'Fixture author', author.signingPublicKey, 1, 1] }]);
   await channel();
 });
@@ -564,6 +566,234 @@ test('hidden channel reads do not scan its eligible message history', async t =>
     assert.equal(path.endsWith('.md') ? markdownIds(text).length : ids(text).length, 20);
     assert.ok(Number(response.headers.get('x-fixture-batch-rows-read')) <= 100, 'Public reads stop at bounded lookahead');
   }
+});
+
+const recentState = async () => (await sql([{ sql: 'SELECT * FROM public_recent_state WHERE id=1' }]))[0].results[0];
+const recentToken = (state, position = state.high_seq) => `v1.${state.epoch}.${position}`;
+const recentLink = (text, label, markdown = false) => {
+  const node = elements(markdown ? markdownHtml(text) : text).find(n => n.tagName === 'a' && nodeText(n) === label);
+  if (!node) return undefined;
+  const url = new URL(attr(node, 'href'), origin);
+  assert.equal(url.origin, origin); assert.match(url.pathname, /^\/recent\/(index\.md)?$/);
+  return url.pathname + url.search;
+};
+const bulkArrivals = async (count, start = 1, name = 'general') => sql([{ sql: `WITH RECURSIVE n(v) AS (SELECT CAST(? AS INTEGER) UNION ALL SELECT v+1 FROM n WHERE v<?)
+  INSERT INTO messages (id,channel,sender,type,sequence,stored_seq,timestamp,payload_json,signature,checksum,encrypted)
+  SELECT ?||'-bulk-'||v,?,?,'intel',v,v,1,'{"message":"Bulk fixture"}','00','00',0 FROM n`, args: [start, start + count - 1, name, name, author.agentId] }]);
+
+test('Recent changes renders native HTML and Markdown with stored signatures and source links', async () => {
+  const signed = await message(1, { id: 'urn:uuid:recent_one', payload: { message: 'An arrival' }, timestamp: 1 });
+  for (const path of representations('/recent/')) {
+    const { response, text } = await get(path);
+    assert.equal(response.status, 200); assert.equal(response.headers.get('x-fixture-queries'), '2');
+    const markdown = path.endsWith('.md');
+    assert.deepEqual(markdown ? markdownIds(text) : ids(text), [signed.id]);
+    assert.match(text, /Relay arrival: 20[0-9]{2}-/); assert.match(text, /Author timestamp: 1970-/);
+    assert.match(text, /signature verified as stored/); assert.match(text, /10,000/);
+    const urls = links(markdown ? markdownHtml(text) : text);
+    assert.ok(urls.some(href => href.endsWith('/channels/general/messages/urn%3Auuid%3Arecent_one/')));
+    assert.ok(urls.some(href => href.endsWith('/v1/channels/general/messages?after=0&limit=1')));
+    assert.ok(urls.some(href => href.endsWith('/start/')));
+    if (!markdown) { assert.match(text, /data-participation-invite/); assert.doesNotMatch(text, /data-refresh-enabled/); }
+  }
+});
+
+test('arrival order is global, stable on equal ingestion times, and ignores late author clocks and channel positions', async () => {
+  await channel('second');
+  const first = await message(50, { timestamp: 9_000_000 });
+  const second = await message(1, { channel: 'second', timestamp: 1 });
+  const third = await message(51, { timestamp: 2 });
+  await sql([{ sql: 'UPDATE public_message_arrivals SET arrived_at=1234567890' }]);
+  assert.deepEqual(ids((await get('/recent/')).text), [third.id, second.id, first.id]);
+  const state = await recentState();
+  assert.deepEqual(markdownIds((await get('/recent/index.md?after=' + recentToken(state, 0))).text), [first.id, second.id, third.id]);
+});
+
+test('older arrival pages do not shift after concurrent arrivals; forward checkpoints do not skip the middle', async () => {
+  await bulkArrivals(45);
+  const first = await get('/recent/');
+  assert.deepEqual(ids(first.text), Array.from({ length: 20 }, (_, n) => `general-bulk-${45 - n}`));
+  const older = recentLink(first.text, 'Older arrivals →');
+  const bookmark = recentLink(first.text, 'Check for newer arrivals');
+  await bulkArrivals(25, 46);
+  assert.deepEqual(ids((await get(older)).text), Array.from({ length: 20 }, (_, n) => `general-bulk-${25 - n}`));
+  const forward = await get(bookmark);
+  assert.deepEqual(ids(forward.text), Array.from({ length: 20 }, (_, n) => `general-bulk-${46 + n}`));
+  const next = recentLink(forward.text, 'Continue newer arrivals →');
+  assert.equal(new URL(next, origin).searchParams.get('after').split('.').at(-1), '65');
+  const last = await get(next);
+  assert.deepEqual(ids(last.text), Array.from({ length: 5 }, (_, n) => `general-bulk-${66 + n}`));
+  assert.equal(recentLink(last.text, 'Continue newer arrivals →'), undefined);
+  assert.deepEqual(ids((await get(recentLink(last.text, 'Check for newer arrivals'))).text), []);
+});
+
+test('private, ambiguous and encrypted inserts never enter or advance the public journal', async () => {
+  for (const [name, policy] of [['secret', { private: 1 }], ['cipher', { encrypted: 1 }], ['members', { members: '["PRIVATE_MEMBER"]' }], ['ambiguous', { members: null }], ['dm-old', {}], ['vault-old', {}]]) {
+    await channel(name, { ...policy, title: 'PRIVATE_TITLE', topic: 'PRIVATE_TOPIC' });
+    await message(1, { channel: name, payload: { message: 'PRIVATE_BODY' } });
+  }
+  for (const [n, options] of [[1, { encrypted: 1 }], [2, { nonce: 'PRIVATE_NONCE' }], [3, { ephemeral: 'PRIVATE_KEY' }], [4, { recipients: '{"PRIVATE_MEMBER":1}' }], [5, { type: 'e2ee_blob' }]]) await message(n, { ...options, payload: { message: 'PRIVATE_BODY' } });
+  assert.equal((await recentState()).high_seq, 0);
+  assert.deepEqual((await sql([{ sql: 'SELECT * FROM public_message_arrivals' }]))[0].results, []);
+  for (const path of representations('/recent/')) { const result = await get(path); assert.equal(result.response.status, 200); assert.doesNotMatch(result.text, /PRIVATE_|\/channels\/(secret|cipher|dm-old|vault-old)/); }
+  await message(6); assert.equal((await recentState()).high_seq, 1);
+  await sql([{ sql: 'UPDATE channels SET is_private=0,e2ee_required=0,allowed_agents_json=?', args: ['[]'] }, { sql: 'UPDATE messages SET encrypted=0,nonce=NULL,ephemeral_public_key=NULL,recipient_keys_json=NULL' }]);
+  assert.equal((await recentState()).high_seq, 1, 'Policy/metadata updates never manufacture arrivals or backfill');
+});
+
+test('current policy, encryption, deletion and mismatched references hide previously public arrivals', async () => {
+  await message(1, { payload: { message: 'PRIVATE_AFTER_CHANGE' } });
+  for (const change of ['is_private=1', 'e2ee_required=1', 'allowed_agents_json=NULL']) {
+    await sql([{ sql: `UPDATE channels SET ${change}` }]);
+    for (const path of representations('/recent/')) assert.doesNotMatch((await get(path)).text, /PRIVATE_AFTER_CHANGE|Message general-1/);
+    await sql([{ sql: "UPDATE channels SET is_private=0,e2ee_required=0,allowed_agents_json='[]'" }]);
+  }
+  await sql([{ sql: 'UPDATE messages SET nonce=?', args: ['PRIVATE_NONCE'] }]);
+  assert.deepEqual(ids((await get('/recent/')).text), []);
+  await sql([{ sql: 'UPDATE messages SET nonce=NULL,stored_seq=2' }]);
+  assert.deepEqual(ids((await get('/recent/')).text), []);
+  await sql([{ sql: 'DELETE FROM messages' }]);
+  assert.deepEqual(ids((await get('/recent/')).text), []);
+});
+
+test('100-candidate scan advances through hidden rows without leaking them or doing unbounded history work', async t => {
+  await channel('now-hidden');
+  await message(1);
+  await bulkArrivals(250, 1, 'now-hidden');
+  await sql([{ sql: "UPDATE channels SET is_private=1 WHERE name='now-hidden'" }]);
+  for (const path of representations('/recent/')) {
+    const markdown = path.endsWith('.md');
+    const first = await get(path, { headers: { 'x-fixture-plans': '1' } });
+    assert.equal(first.response.status, 200); assert.doesNotMatch(first.text, /now-hidden|Bulk fixture/);
+    assert.deepEqual(markdown ? markdownIds(first.text) : ids(first.text), []);
+    const reads = Number(first.response.headers.get('x-fixture-batch-rows-read'));
+    assert.ok(reads < 1500, `Only bounded candidates may be visited: ${reads}`); t.diagnostic(`Recent hidden scan: ${reads} rows read`);
+    const plans = JSON.parse(first.response.headers.get('x-fixture-plans')).flat().join('\n');
+    assert.match(plans, /SEARCH public_message_arrivals USING INTEGER PRIMARY KEY/);
+    assert.doesNotMatch(plans, /SCAN messages|SCAN channels|SCAN public_message_arrivals/);
+    const second = await get(recentLink(first.text, 'Older arrivals →', markdown));
+    const third = await get(recentLink(second.text, 'Older arrivals →', markdown));
+    assert.deepEqual(markdown ? markdownIds(third.text) : ids(third.text), ['general-1']);
+    assert.equal(recentLink(third.text, 'Older arrivals →', markdown), undefined);
+  }
+  const state = await recentState();
+  const forward = await get('/recent/?after=' + recentToken(state, 1));
+  assert.deepEqual(ids(forward.text), []);
+  assert.ok(recentLink(forward.text, 'Continue newer arrivals →'));
+});
+
+test('retention evicts references only and stale bookmarks explicitly return 410', async () => {
+  const initial = await get('/recent/');
+  const bookmark = recentLink(initial.text, 'Check for newer arrivals');
+  await bulkArrivals(10005);
+  const state = await recentState(); assert.equal(state.high_seq, 10005);
+  const counts = (await sql([{ sql: 'SELECT COUNT(*) AS n, MIN(arrival_seq) AS oldest FROM public_message_arrivals' }, { sql: 'SELECT COUNT(*) AS n FROM messages' }])).map(r => r.results[0]);
+  assert.deepEqual(counts, [{ n: 10000, oldest: 6 }, { n: 10005 }]);
+  for (const path of [bookmark, bookmark.replace('/recent/', '/recent/index.md'), '/recent/?before=' + recentToken(state, 6)]) {
+    const result = await get(path); assert.equal(result.response.status, 410);
+    assert.match(result.text, /earlier history may be missing/); assert.equal(result.response.headers.get('link'), null);
+  }
+  assert.equal((await get('/recent/?after=' + recentToken(state, 5))).response.status, 200);
+  const changedEpoch = 'f'.repeat(32) === state.epoch ? 'e'.repeat(32) : 'f'.repeat(32);
+  assert.equal((await get('/recent/?after=v1.' + changedEpoch + '.10005')).response.status, 410);
+});
+
+test('journal inserts are atomic, duplicate API replays do not make extra arrivals, and migration never backfills', async () => {
+  // Local inert owner only: prove the new trigger coexists with 0005 without
+  // invoking delivery, possessing credentials or sharing its cursor/retention.
+  await sql([{ sql: "INSERT INTO wake_hook_state (agent_id,revision,ciphertext,due_at) VALUES ('fixture-wake-owner',1,'inert-fixture',1)" }]);
+  const signed = await signEnvelope({ id: 'api-recent', channel: 'general', sender: author.agentId, type: 'intel', sequence: 1, payload: { message: 'Local write journey' } }, author.signingPrivateKey);
+  const post = () => worker.fetch('https://fixture.invalid/v1/channels/general/messages', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(signed) });
+  assert.equal((await post()).status, 200); assert.equal((await post()).status, 200);
+  assert.equal((await recentState()).high_seq, 1);
+  assert.equal((await sql([{ sql: 'SELECT COUNT(*) AS n FROM wake_message_outbox' }]))[0].results[0].n, 1);
+  await assert.rejects(worker.fetch('https://fixture.invalid/sql', { method: 'POST', body: JSON.stringify([
+    { sql: "INSERT INTO messages (id,channel,sender,type,sequence,stored_seq,timestamp,payload_json,signature,checksum) SELECT 'rolled-back',channel,sender,type,2,2,timestamp,payload_json,signature,checksum FROM messages LIMIT 1" },
+    // Valid SQL that fails during execution, after the first insert and both
+    // triggers ran, rather than a missing table that fails during preparation.
+    { sql: "INSERT INTO public_recent_state (id,epoch,started_at) VALUES (2,'invalid',1)" }
+  ]) }), /CHECK constraint failed/);
+  assert.equal((await recentState()).high_seq, 1);
+  assert.deepEqual((await sql([{ sql: "SELECT id FROM messages WHERE id='rolled-back'" }]))[0].results, []);
+  assert.equal((await sql([{ sql: 'SELECT COUNT(*) AS n FROM wake_message_outbox' }]))[0].results[0].n, 1);
+  await sql([{ sql: 'DELETE FROM wake_message_outbox' }, { sql: "DELETE FROM wake_hook_state WHERE agent_id='fixture-wake-owner'" }]);
+  assert.equal((await recentState()).high_seq, 1, 'Draining wake references must not drain the public journal');
+  assert.deepEqual(ids((await get('/recent/')).text), ['api-recent']);
+  // Local fixture only: recreate discovery after an existing stored message.
+  await sql(['DROP TRIGGER public_message_arrival', 'DROP TABLE public_message_arrivals', 'DROP TABLE public_recent_state'].map(statement => ({ sql: statement })));
+  const schema = (await readFile(new URL('../migrations/0007_public_recent.sql', import.meta.url), 'utf8')).replace(/^\s*--.*$/gm, '');
+  const split = schema.indexOf('CREATE TRIGGER ');
+  await sql(schema.slice(0, split).split(';').filter(s => s.trim()).map(statement => ({ sql: statement })));
+  await sql([{ sql: schema.slice(split) }]);
+  assert.equal((await recentState()).high_seq, 0);
+  assert.deepEqual(ids((await get('/recent/')).text), []);
+});
+
+test('Recent changes rejects malformed or ambiguous cursors and preserves alternate/HEAD headers', async () => {
+  await message(1); const state = await recentState(); const token = recentToken(state);
+  for (const query of ['after=1', 'after=', 'before=0', 'after=v1.bad.1', 'after=' + token + '&before=' + token, 'after=' + token + '&after=' + token, 'before=v1.' + state.epoch + '.01', 'after=v1.' + state.epoch + '.9007199254740992', 'limit=9999', 'token=PRIVATE_QUERY']) {
+    for (const base of ['/recent/', '/recent/index.md']) {
+      const result = await get(base + '?' + query); assert.equal(result.response.status, 400, query); assert.doesNotMatch(result.text, /PRIVATE_QUERY/);
+    }
+  }
+  assert.equal((await get('/recent/?after=' + recentToken(state, 99))).response.status, 400);
+  for (const path of representations('/recent/?after=' + token)) {
+    const head = await get(path, { method: 'HEAD' }), result = await get(path);
+    assert.equal(head.response.status, 200); assert.equal(head.text, '');
+    for (const name of ['content-type', 'link', 'cache-control', 'x-robots-tag']) assert.equal(head.response.headers.get(name), result.response.headers.get(name));
+    assert.match(result.response.headers.get('link'), /recent\//);
+    assert.equal(result.response.headers.get('x-robots-tag'), 'noindex, follow');
+  }
+  for (const [path, target] of [['/recent', '/recent/'], ['/recent/index.md/', '/recent/index.md']]) {
+    const result = await get(path, { redirect: 'manual' }); assert.equal(result.response.status, 308); assert.equal(result.response.headers.get('location'), target);
+  }
+});
+
+test('a fresh worker isolate resumes a stored bookmark across concurrent inserts without process-local state', async () => {
+  await message(1);
+  const bookmark = recentLink((await get('/recent/')).text, 'Check for newer arrivals');
+  const state = await recentState();
+  await mf.setOptions(runtimeOptions); worker = await mf.getWorker('public-browse-test');
+  assert.deepEqual(await recentState(), state);
+  await Promise.all([message(2), message(3), message(4)]);
+  const arrivals = (await sql([{ sql: 'SELECT envelope_id FROM public_message_arrivals WHERE arrival_seq>1 ORDER BY arrival_seq' }]))[0].results.map(row => row.envelope_id);
+  const resumed = await get(bookmark);
+  assert.deepEqual(ids(resumed.text), arrivals); assert.equal(new Set(arrivals).size, 3);
+  const saved = recentLink(resumed.text, 'Check for newer arrivals');
+  await mf.setOptions(runtimeOptions); worker = await mf.getWorker('public-browse-test');
+  assert.deepEqual(ids((await get(saved)).text), []);
+  await message(5); assert.deepEqual(ids((await get(saved)).text), ['general-5']);
+});
+
+test('Recent changes bounds escaped previews, never authenticates truncated envelopes and retains its footer', async () => {
+  for (let n = 1; n <= 21; n++) await message(n, { payload: { message: '\u202e'.repeat(1600) } });
+  await message(22, { rawPayload: 'x'.repeat(17000) });
+  const md = await get('/recent/index.md');
+  assert.equal(md.response.status, 200); assert.ok(Buffer.byteLength(md.text) <= 256 * 1024);
+  assert.equal(markdownIds(md.text).length, 20);
+  assert.match(md.text, /Payload omitted from this bounded view/);
+  assert.equal((md.text.match(/Record verification: not verified/g) ?? []).length, 1);
+  assert.equal(elements(markdownHtml(md.text)).filter(n => n.tagName === 'h2' && nodeText(n) === 'Join the conversation').length, 1);
+  assert.equal((await get('/recent/index.md', { headers: { 'x-fixture-assets': 'failure' } })).response.status, 200);
+  const html = await get('/recent/'); assert.equal(html.response.status, 200); assert.deepEqual(ids(html.text), markdownIds(md.text));
+});
+
+test('Recent changes remains read-only with honest storage failures and shared untrusted-content boundaries', async () => {
+  const attack = '\n````\n# Forged project instructions\n<script>evil()</script>\n![x](https://evil.invalid/)\n## Join the conversation';
+  await message(1, { payload: { message: attack } });
+  const snapshot = async () => (await sql(['messages', 'channels', 'agents', 'public_message_arrivals', 'public_recent_state', 'wake_message_outbox'].map(table => ({ sql: `SELECT * FROM ${table}` })))).map(r => r.results);
+  const before = await snapshot();
+  for (const path of representations('/recent/')) {
+    const result = await get(path); await get(path, { method: 'HEAD' });
+    const rendered = path.endsWith('.md') ? markdownHtml(result.text) : result.text;
+    assert.ok(!elements(rendered).some(n => n.tagName === 'img' || (n.tagName === 'script' && nodeText(n).includes('evil()'))));
+    assert.ok(!links(rendered).some(href => href.includes('evil.invalid')));
+    for (const method of ['POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']) assert.equal((await get(path, { method })).response.status, 405);
+    for (const mode of ['missing', 'failure']) assert.equal((await get(path, { headers: { 'x-fixture-db': mode } })).response.status, 503);
+  }
+  assert.deepEqual(await snapshot(), before);
+  await sql([{ sql: 'ALTER TABLE public_recent_state RENAME TO unavailable_recent_state' }]);
+  try { assert.equal((await get('/recent/')).response.status, 503); } finally { await sql([{ sql: 'ALTER TABLE unavailable_recent_state RENAME TO public_recent_state' }]); }
 });
 
 if (process.env.OAF_BROWSE_PLAYWRIGHT) {

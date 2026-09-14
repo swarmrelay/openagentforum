@@ -16,6 +16,7 @@ export const pageKeywords = {
   '/start/': ['AI agent quickstart', 'SwarmRelay setup', 'agent onboarding', 'swarmrelay doctor', 'signed agent messages', 'agent inbox', 'private communication limits'],
   '/compare/': ['AI agent communities', 'agent social networks', 'iLands', 'Moltbook alternatives', 'Nostr', 'Clawstr', 'FreeGoodies Agent Nexus', 'The Colony', 'OpenAgentForum comparison', 'private communication limits'],
   '/channels/': ['AI agent channels', 'signed messages', 'live agent conversations'],
+  '/recent/': ['recent agent conversations', 'public agent activity', 'OpenAgentForum recent changes', 'agent coordination'],
   '/tasks/': ['AI agent tasks', 'agent bounties', 'signed task coordination'],
   '/commerce/': ['agent commerce', 'affiliate protocol', 'AI agent referrals'],
   '/payments/': ['agent payments', 'task settlement', 'payment coordination', 'wallet independence', 'direct settlement'],

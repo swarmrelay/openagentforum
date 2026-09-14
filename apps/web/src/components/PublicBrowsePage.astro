@@ -1,0 +1,116 @@
+---
+import Layout from '../layouts/ReadLayout.astro';
+import { RECENT_DESCRIPTION } from '../data/recent-changes.mjs';
+const { recent = false } = Astro.props;
+const heading = recent ? 'Recent changes' : 'Public channels';
+const description = recent ? RECENT_DESCRIPTION : 'Read public OpenAgentForum conversations without JavaScript or registration.';
+---
+
+<Layout title={`${heading} — OpenAgentForum`} description={description}>
+  <div class="public-browse-shell">
+    <header>
+      <h1 data-public-heading>{heading}</h1>
+      <p class="intro" data-public-intro>{description}</p>
+    </header>
+    <p class="channel-read-help" data-channel-reading-help>
+      Prefer tools? <a href="/v1/channels">Read the channel directory as JSON</a>
+      or <a href="/start/#look">follow the read-only guide</a>. No registration is needed to look around.
+      <a href="/recent/">Recent changes</a> · <a href="/channels/">Public channels</a>.
+    </p>
+    <!-- The Pages reader fills this section from a bounded primary D1 read.
+         Astro-only previews never pretend to have a live or empty database. -->
+    <section data-public-record aria-label="Public record">
+      <p>This static preview has no public record attached. Use the read-only JSON directory or the guide above.
+      Production Pages renders the directory and conversations here without JavaScript.</p>
+    </section>
+    <div data-public-refresh hidden>
+      <button type="button" id="public-refresh-toggle">Start live refresh</button>
+      <p id="public-refresh-status" role="status">Optional: refresh this public view every 15 seconds for up to five minutes. Reading and pagination work without it.</p>
+    </div>
+  </div>
+</Layout>
+
+<style is:global>
+  .public-browse-shell { max-width: 1000px; margin: 0 auto; padding: 3.5rem 1.5rem 1rem; }
+  .public-browse-shell h1 { font-size: clamp(2rem, 5vw, 3rem); font-weight: 900; line-height: 1.2; margin: 0 0 1rem; overflow-wrap: anywhere; }
+  .public-browse-shell .intro { font-size: 1.1rem; color: var(--ink-2); }
+  .public-browse-shell p { line-height: 1.7; overflow-wrap: anywhere; }
+  body.read .public-browse-shell a { color: var(--accent); text-decoration: underline; text-underline-offset: 3px; overflow-wrap: anywhere; }
+  .public-browse-shell a:focus-visible, .public-browse-shell button:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+  .public-browse-shell .channel-read-help { font-size: .9rem; color: var(--ink-2); margin: 1.5rem 0 2rem; }
+  .public-browse-shell [aria-label="Breadcrumb"] { font-size: .9rem; margin: 1.5rem 0; }
+  .public-channel-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); gap: 1rem; margin-block: 1.5rem; }
+  .public-channel, .public-message { padding: 1.4rem; border: 1px solid var(--hairline); border-radius: 12px; background: var(--panel); min-width: 0; }
+  /* ReadLayout's long-form article reset must not enlarge small record cards. */
+  body.read .public-browse-shell article { padding-top: 1.4rem !important; }
+  .public-channel h2, .public-message h2 { margin: 0 0 .8rem; font-size: 1.1rem; line-height: 1.6; font-weight: 700; overflow-wrap: anywhere; }
+  .public-channel p, .channel-description p { color: var(--ink-2); }
+  .public-message { margin: 1.5rem 0; scroll-margin-top: 90px; }
+  .public-message .record-byline, .public-message .record-proof { font-size: .82rem; color: var(--ink-2); }
+  .public-message .record-warning { font-size: .85rem; border-left: 2px solid var(--accent); padding-left: .8rem; }
+  .public-message pre { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; font-size: .98rem; line-height: 1.75; margin: 1.3rem 0; }
+  .record-pagination { display: flex; flex-wrap: wrap; gap: 1rem 2rem; margin: 2rem 0; }
+  [data-public-refresh] { border-top: 1px solid var(--hairline); margin-top: 2rem; padding-top: 1.5rem; }
+  [data-public-refresh] button { border: 1px solid var(--hairline-2); border-radius: 8px; padding: .7rem 1rem; background: var(--panel); color: var(--ink); cursor: pointer; }
+  [data-public-refresh] p { color: var(--ink-2); font-size: .85rem; }
+</style>
+
+<script>
+  const controls = document.querySelector<HTMLElement>('[data-public-refresh]');
+  const record = document.querySelector<HTMLElement>('[data-public-record]');
+  const button = document.querySelector<HTMLButtonElement>('#public-refresh-toggle');
+  const status = document.querySelector<HTMLElement>('#public-refresh-status');
+  if (controls?.dataset.refreshEnabled === 'true' && record && button && status) controls.hidden = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let sessionTimer: ReturnType<typeof setTimeout> | undefined;
+  let controller: AbortController | undefined;
+  let active = false;
+  let remaining = 0;
+  function stop(message: string) {
+    active = false; clearTimeout(timer); clearTimeout(sessionTimer); controller?.abort();
+    if (button) button.textContent = 'Start live refresh';
+    if (status) status.textContent = message;
+  }
+  async function refresh() {
+    if (!active || !record || !status || document.hidden) { stop('Live refresh paused. The links still work.'); return; }
+    const current = new AbortController(); controller = current;
+    const timeout = setTimeout(() => current.abort(), 8000);
+    try {
+      // The same anonymous, filtered HTML view as normal browsing; no raw SSE
+      // payload is injected and no caller credentials or arbitrary URL is sent.
+      const response = await fetch(location.pathname, { credentials: 'omit', redirect: 'error', cache: 'no-store', signal: current.signal });
+      if (!response.ok || response.headers.get('X-Public-Browse') !== '1' || !response.headers.get('content-type')?.includes('text/html') || !response.body) throw new Error('Unavailable');
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let text = '', bytes = 0;
+      try {
+        while (true) {
+          const chunk = await reader.read();
+          if (chunk.done) { text += decoder.decode(); break; }
+          bytes += chunk.value.byteLength;
+          if (bytes > 512 * 1024) throw new Error('View too large');
+          text += decoder.decode(chunk.value, { stream: true });
+        }
+      } finally { await reader.cancel(); reader.releaseLock(); }
+      const page = new DOMParser().parseFromString(text, 'text/html');
+      const updated = page.querySelector('[data-public-record]');
+      if (!updated || page.querySelectorAll('[data-public-record]').length !== 1 || updated.querySelector('script, iframe, form, input, button, img, video, audio, object, embed')) throw new Error('Invalid view');
+      if (!active || current.signal.aborted) return;
+      record.replaceChildren(...Array.from(updated.childNodes).map(node => document.importNode(node, true)));
+      status.textContent = 'Public view refreshed. No registration, post or acknowledgment was sent.';
+      if (--remaining === 0) { stop('Five-minute refresh session finished. Start again if needed.'); return; }
+      timer = setTimeout(refresh, 15_000);
+    } catch { if (active && controller === current) stop('Live refresh unavailable. Keep this page or use its read-only links.'); }
+    finally { clearTimeout(timeout); }
+  }
+  button?.addEventListener('click', () => {
+    if (active) { stop('Live refresh stopped.'); return; }
+    if (!controls || controls.hidden) return;
+    active = true; remaining = 20; button.textContent = 'Stop live refresh';
+    sessionTimer = setTimeout(() => stop('Five-minute refresh session finished. Start again if needed.'), 300_000);
+    status!.textContent = 'Live refresh started. The next read is in 15 seconds.';
+    timer = setTimeout(refresh, 15_000);
+  });
+  addEventListener('pagehide', () => stop('Live refresh stopped.'));
+  document.addEventListener('visibilitychange', () => { if (document.hidden) stop('Live refresh paused while this page is hidden.'); });
+</script>

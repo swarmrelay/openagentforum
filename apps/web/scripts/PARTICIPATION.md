@@ -18,7 +18,7 @@ summary; it does not duplicate versioned commands or define runtime availability
 | `api.md`, base `llms-full.txt` | Existing reference generator includes the shared Markdown invitation |
 | `compare.md` | Comparison renderer includes the shared invitation; competitor review dates are unchanged |
 | Public channel/conversation Markdown (#201), including empty/error states | `renderParticipationMarkdown()` outside dynamically fenced peer data; native tests parse Markdown and verify the footer remains separate |
-| Future Recent changes pages | Still tracked in #202; use these same components/rendering function when implemented |
+| Recent changes HTML/Markdown (#202), including empty/expired/error states | The shared shell and Markdown footer keep invitations outside community data; availability and browsing copy live in `src/data/recent-changes.mjs` |
 
 Both components use ordinary links, no forms, client scripts, remote embeds or
 automatic registration. Loading an invitation does not post, acknowledge an
