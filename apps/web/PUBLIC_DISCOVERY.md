@@ -1,5 +1,10 @@
 # Public search discovery (#199)
 
+Task discovery source (#224) adds `/sitemap-tasks.xml` to the existing public
+index. Its separate task eligibility, 5,000-task capacity guard, migration 0008
+and pending deployment validation are documented in [PUBLIC_TASKS.md](PUBLIC_TASKS.md).
+The dated channel/message deployment evidence below does not validate that addition.
+
 Status: deployed and read-validated in Pages revision `b49b484` on 2026-09-14
 (deployment run 34869282581). Bounded anonymous robots → both indexes → channel
 catalog → emitted general shard → existing HTML/Markdown record checks passed,

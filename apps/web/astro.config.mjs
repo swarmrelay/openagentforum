@@ -22,6 +22,9 @@ export default defineConfig({
   output: 'static',
   // Preserve HTML word boundaries when upgrading from Astro 4.
   compressHTML: true,
+  // #232: Dynamic Pages readers use script-src 'self': processed JS must remain an
+  // external asset even when small. Leave CSS/image inlining defaults intact.
+  vite: { build: { assetsInlineLimit: (path) => /\.m?js$/.test(path) ? false : undefined } },
   trailingSlash: 'always',
   integrations: [sitemap({
     // Sitemaps list canonical human pages, not error pages or alternate files.

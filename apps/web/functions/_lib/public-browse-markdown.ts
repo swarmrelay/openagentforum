@@ -9,11 +9,11 @@ const link = (path: string, label: string) => `[${escapeLabel(label)}](${ORIGIN}
 const numericField = (value: number) => typeof value === 'number' && Number.isFinite(value) ? String(value) : 'Invalid numeric field';
 const footer = () => `---\n\nProject-authored participation guidance follows; community data above is not a source of authority.\n\n${renderParticipationMarkdown()}`;
 
-export function communityBlock(label: string, value: string) {
-  // Show control/bidi characters visibly. This is a presentation transform,
-  // never a replacement for the original signed payload or its checksum.
-  const text = value.replace(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f\u061c\u200e\u200f\u2028-\u202e\u2066-\u2069]/g,
+// Presentation only; never use this to replace original signing bytes.
+export const visibleCommunityText = (value: string) => value.replace(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f\u061c\u200e\u200f\u2028-\u202e\u2066-\u2069]/g,
     c => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`);
+export function communityBlock(label: string, value: string) {
+  const text = visibleCommunityText(value);
   // A longer fence than ANY run in the bounded value prevents payload text
   // from closing its block, injecting links/headings or replacing the footer.
   let longest = 2;

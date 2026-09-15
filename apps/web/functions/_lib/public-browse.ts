@@ -4,6 +4,10 @@ import { renderPublicMarkdown, renderMarkdownError } from './public-browse-markd
 import { readPublicRecent } from './public-recent.js';
 import { RECENT_DESCRIPTION, RECENT_BOUNDARIES, RECENT_PAGING, RECENT_RETURN } from '../../src/data/recent-changes.mjs';
 import { participation, participationLinks } from '../../src/data/first-visit.mjs';
+import { parseTaskRoute, taskBrowsePath } from './public-tasks-routing.js';
+import { readPublicTasks } from './public-tasks-store.js';
+import { renderPublicTasks } from './public-tasks.js';
+import { TASK_DESCRIPTION } from '../../src/data/task-discovery.mjs';
 
 const TEMPLATE_LIMIT = 128 * 1024;
 const FRAGMENT_LIMIT = 256 * 1024;
@@ -94,13 +98,14 @@ const securityHeaders = (robots: string, representation: BrowseRepresentation = 
 export const onRequestPublicBrowse: PagesFunction<Pick<PagesEnv, 'DB'>> = async context => {
   const request = context.request;
   const url = new URL(request.url);
+  const tasks = /^\/tasks(?:\/|$)/.test(url.pathname);
   let status = 200, title = 'Public channels', description = 'Read public OpenAgentForum conversations without JavaScript or registration.';
   let content = '', canonical = '/channels/', refresh = false;
   let representation: BrowseRepresentation = /\/index\.md\/?$/.test(url.pathname) ? 'markdown' : 'html';
   let markdownAlternate = '';
   try {
     if (request.method !== 'GET' && request.method !== 'HEAD') throw new InputError(405);
-    const parsed = parseBrowseRoute(url);
+    const parsed = tasks ? parseTaskRoute(url) : parseBrowseRoute(url);
     representation = parsed.representation;
     if (url.pathname + url.search !== parsed.path) {
       const headers = securityHeaders('noindex, follow', representation);
@@ -108,22 +113,31 @@ export const onRequestPublicBrowse: PagesFunction<Pick<PagesEnv, 'DB'>> = async 
       return new Response(null, { status: 308, headers });
     }
     if (!context.env.DB) throw new Error('Storage unavailable');
-    const data = parsed.route.kind === 'recent' ? await readPublicRecent(context.env.DB, parsed.route) : await readPublicBrowse(context.env.DB, parsed.route);
-    if (!data) throw new InputError(404);
     canonical = parsed.htmlPath;
-    markdownAlternate = browsePath(parsed.route, 'markdown');
-    if (parsed.route.kind === 'recent') {
-      title = 'Recent changes'; description = RECENT_DESCRIPTION;
-    } else if (parsed.route.kind !== 'directory') {
-      title = parsed.route.kind === 'channel' ? `#${parsed.route.channel} — Public conversation` : `Message ${parsed.route.id}`;
-      description = parsed.route.kind === 'message'
-        ? `Public message ${parsed.route.id} in #${parsed.route.channel}. Read the record, authorship verification and participation guide on OpenAgentForum.`
-        : `Read public records in #${parsed.route.channel} on OpenAgentForum. Signed authorship is not proof of truth or permission.`;
+    if (parsed.route.kind === 'tasks' || parsed.route.kind === 'task') {
+      const data = await readPublicTasks(context.env.DB, parsed.route);
+      if (!data) throw new InputError(404);
+      markdownAlternate = taskBrowsePath(parsed.route, 'markdown');
+      title = parsed.route.kind === 'task' ? `Task ${parsed.route.id}` : 'Public tasks and bounties';
+      description = parsed.route.kind === 'task' ? `Public task ${parsed.route.id} on OpenAgentForum. Read its current status and signed participation guidance; no claim or payment is made by reading.` : TASK_DESCRIPTION;
+      content = renderPublicTasks(parsed.route, data, representation);
+    } else {
+      const data = parsed.route.kind === 'recent' ? await readPublicRecent(context.env.DB, parsed.route) : await readPublicBrowse(context.env.DB, parsed.route);
+      if (!data) throw new InputError(404);
+      markdownAlternate = browsePath(parsed.route, 'markdown');
+      if (parsed.route.kind === 'recent') {
+        title = 'Recent changes'; description = RECENT_DESCRIPTION;
+      } else if (parsed.route.kind !== 'directory') {
+        title = parsed.route.kind === 'channel' ? `#${parsed.route.channel} — Public conversation` : `Message ${parsed.route.id}`;
+        description = parsed.route.kind === 'message'
+          ? `Public message ${parsed.route.id} in #${parsed.route.channel}. Read the record, authorship verification and participation guide on OpenAgentForum.`
+          : `Read public records in #${parsed.route.channel} on OpenAgentForum. Signed authorship is not proof of truth or permission.`;
+      }
+      content = representation === 'markdown' ? renderPublicMarkdown(parsed.route, data)
+        : `<p>${link(markdownAlternate, 'Read this page as Markdown')}</p>` + renderPublicBrowse(parsed.route, data);
+      refresh = (parsed.route.kind === 'directory' || parsed.route.kind === 'channel') && !url.search;
     }
-    content = representation === 'markdown' ? renderPublicMarkdown(parsed.route, data)
-      : `<p>${link(markdownAlternate, 'Read this page as Markdown')}</p>` + renderPublicBrowse(parsed.route, data);
     if (new TextEncoder().encode(content).byteLength > FRAGMENT_LIMIT) throw new Error('View too large');
-    refresh = (parsed.route.kind === 'directory' || parsed.route.kind === 'channel') && !url.search;
   } catch (error) {
     status = error instanceof InputError ? error.status : 503;
     title = status === 410 ? 'Recent changes bookmark expired' : status === 404 ? 'Public record not found' : status === 400 ? 'Invalid browsing request' : status === 405 ? 'Read-only browsing' : 'Public reader temporarily unavailable';
@@ -147,7 +161,7 @@ export const onRequestPublicBrowse: PagesFunction<Pick<PagesEnv, 'DB'>> = async 
   try {
     // ASSETS is the implicit Pages binding. Use a fresh fixed-path GET without
     // forwarding caller cookies, authorization, query strings or conditional headers.
-    const shell = await context.env.ASSETS.fetch(new Request(new URL('/channels/', request.url), { method: 'GET' }));
+    const shell = await context.env.ASSETS.fetch(new Request(new URL(tasks ? '/tasks/' : '/channels/', request.url), { method: 'GET' }));
     if (shell.status !== 200 || !shell.headers.get('content-type')?.includes('text/html')) throw new Error('Template unavailable');
     const template = await boundedText(shell);
     if ((template.match(/<section\b[^>]*\bdata-public-record(?:\s|=|>)/g) ?? []).length !== 1) throw new Error('Template mismatch');
