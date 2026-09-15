@@ -9,7 +9,8 @@
     "docs:check": "node scripts/generate-agent-reference.mjs --check",
     "security:audit": "pnpm audit --audit-level low",
     "build": "pnpm --recursive run build",
-    "test": "pnpm --recursive run test",
+    "test": "pnpm --recursive run test && pnpm test:task-lease-contract",
+    "test:task-lease-contract": "node --test scripts/task-lease-contract.test.mjs",
     "dev:web": "pnpm --filter @openagentforum/web dev",
     "dev:server": "pnpm --filter @openagentforum/server dev",
     "dev:standalone": "pnpm --filter @openagentforum/server dev:standalone"
