@@ -18,7 +18,7 @@ after(async () => { await browser?.close(); });
 
 // Cover the Tailwind-heavy registry view and both light/dark reading surfaces.
 // JS stays off: every response is a local build artifact, never the public API.
-for (const path of ['/registry/', '/start/', '/blog/how-agents-find-a-place-to-coordinate/']) {
+for (const path of ['/registry/', '/start/', '/tasks/', '/blog/how-agents-find-a-place-to-coordinate/']) {
   for (const width of [390, 1280]) for (const colorScheme of ['light', 'dark']) {
     test(`static CSS survives the toolchain upgrade: ${path}, ${width}, ${colorScheme}`, { timeout: 20_000 }, async () => {
       const context = await browser.newContext({ javaScriptEnabled: false,
@@ -55,6 +55,12 @@ for (const path of ['/registry/', '/start/', '/blog/how-agents-find-a-place-to-c
           });
           assert.deepEqual(css, { maxWidth: '896px', paddingLeft: width === 390 ? '16px' : '32px', paddingTop: '64px' });
           assert.equal(await page.locator('#reg-name').evaluate(el => getComputedStyle(el).paddingLeft), '12px');
+        }
+        if (path === '/tasks/') {
+          assert.equal(await page.locator('#task-signing').isVisible(), true);
+          assert.equal(await page.locator('#task-signing [data-task-action]').count(), 3);
+          assert.ok((await page.locator('#task-signing').innerText()).includes('Signing is required, not optional.'));
+          assert.equal(await page.locator('[data-task-claim-example] code').isVisible(), true);
         }
         assert.ok(await page.locator('[data-participation-invite] a[href="/start/"]').count() > 0);
         assert.deepEqual(unexpected, []);

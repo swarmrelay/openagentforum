@@ -9,8 +9,9 @@ import { Miniflare } from 'miniflare';
 import workerd from 'workerd';
 import { parse } from 'parse5';
 import { micromark } from 'micromark';
-import { generateAgentKeyPair, signEnvelope, canonicalizeJson } from '@openagentforum/protocol';
+import { generateAgentKeyPair, signEnvelope, canonicalizeJson, signTaskAction } from '@openagentforum/protocol';
 import { inspectPage } from './check-seo.mjs';
+import { taskClaimExample } from '../src/data/task-signing.mjs';
 
 let mf, worker, scratch, author, runtimeOptions;
 let outbound = 0;
@@ -85,7 +86,7 @@ after(async () => {
   else process.env.MINIFLARE_WORKERD_PATH = previousRuntime;
 });
 beforeEach(async () => {
-  await sql(['DELETE FROM messages', 'DELETE FROM channels', 'DELETE FROM agents', 'DELETE FROM public_message_arrivals',
+  await sql(['DELETE FROM tasks', 'DELETE FROM messages', 'DELETE FROM channels', 'DELETE FROM agents', 'DELETE FROM public_message_arrivals',
     'UPDATE public_recent_state SET high_seq=0', "DELETE FROM sqlite_sequence WHERE name='public_message_arrivals'"].map(statement => ({ sql: statement })));
   await sql([{ sql: 'INSERT INTO agents (agent_id,name,public_key,registered_at,last_seen_at) VALUES (?,?,?,?,?)', args: [author.agentId, 'Fixture author', author.signingPublicKey, 1, 1] }]);
   await channel();
@@ -128,6 +129,76 @@ test('records written through the actual Pages API are readable and verified, in
   assert.match(text, /fingerprint and signature verified as stored/);
   assert.match(text, /Author sequence: 37/);
   assert.ok(elements(text).some(n => attr(n, 'id') === `message-${signed.id}`));
+});
+
+test('documented claim example and signed task lifecycle work on native Pages/D1 without outbound requests', async () => {
+  const peer = await generateAgentKeyPair();
+  const post = (path, body) => worker.fetch(`https://fixture.invalid/v1/${path}`, {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(10_000),
+  });
+  const readTasks = async () => {
+    const response = await worker.fetch('https://fixture.invalid/v1/tasks?status=all', { signal: AbortSignal.timeout(10_000) });
+    assert.equal(response.status, 200);
+    return (await response.json()).tasks;
+  };
+  assert.deepEqual(await readTasks(), []);
+  const counts = await sql([{ sql: 'SELECT COUNT(*) AS count FROM agents' }]);
+  assert.equal(counts[0].results[0].count, 1, 'Anonymous task reading must not register an agent');
+  assert.equal((await post('agents/register', { name: 'Task guide fixture', publicKey: peer.signingPublicKey })).status, 200);
+
+  const createPayload = { title: 'Review local documentation', description: 'Local task-signing fixture only', requiredCapabilities: [], timeoutMs: 3600000, reward: null };
+  const timestamp = Date.now();
+  const createBody = { creatorId: author.agentId, ...createPayload, timestamp,
+    signature: await signTaskAction({ action: 'create', taskId: '-', agentId: author.agentId, timestamp, payload: createPayload }, author.signingPrivateKey) };
+  assert.equal((await post('tasks', { ...createBody, signature: undefined })).status, 401);
+  assert.equal((await post('tasks', { ...createBody, title: 'Tampered title' })).status, 403);
+  assert.deepEqual(await readTasks(), []);
+  const created = await post('tasks', createBody);
+  assert.equal(created.status, 200);
+  const taskId = (await created.json()).task.id;
+  assert.equal((await (await post('tasks', createBody)).json()).alreadyCreated, true);
+
+  // Execute only our trusted static documentation excerpt, copied from the real
+  // built HTML. No downloaded/community code, network client or persistent key.
+  const html = await readFile(new URL('../dist/tasks/index.html', import.meta.url), 'utf8');
+  const example = elements(html).find(n => n.tagName === 'pre' && attr(n, 'data-task-claim-example') !== undefined);
+  assert.ok(example);
+  const code = nodeText(example);
+  assert.equal(code, taskClaimExample);
+  const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+  const makeClaim = new AsyncFunction('signTaskAction', 'identity', 'taskId', `${code}\nreturn body;`);
+  const claimBody = await makeClaim(signTaskAction, peer, taskId);
+  assert.deepEqual(Object.keys(claimBody).sort(), ['agentId', 'signature', 'timestamp']);
+  assert.equal((await post(`tasks/${taskId}/claim`, { ...claimBody, signature: undefined })).status, 401);
+  assert.equal((await post(`tasks/${taskId}/claim`, { ...claimBody, agentId: author.agentId })).status, 403);
+  for (const offset of [-6 * 60_000, 6 * 60_000]) {
+    const stale = Date.now() + offset;
+    const signature = await signTaskAction({ action: 'claim', taskId, agentId: peer.agentId, timestamp: stale, payload: {} }, peer.signingPrivateKey);
+    assert.equal((await post(`tasks/${taskId}/claim`, { agentId: peer.agentId, timestamp: stale, signature })).status, 403);
+  }
+  const claimed = await post(`tasks/${taskId}/claim`, claimBody);
+  assert.equal(claimed.status, 200);
+  assert.equal((await claimed.json()).claimedBy, peer.agentId);
+
+  const resultPayload = { message: 'Documentation fixture complete', evidence: 'Local only' };
+  const submission = { agentId: peer.agentId, resultPayload, timestamp: Date.now() };
+  submission.signature = await signTaskAction({ action: 'submit', taskId, agentId: peer.agentId,
+    timestamp: submission.timestamp, payload: { resultPayload } }, peer.signingPrivateKey);
+  assert.equal((await post(`tasks/${taskId}/submit`, { ...submission, signature: undefined })).status, 401);
+  assert.equal((await post(`tasks/${taskId}/submit`, { ...submission, resultPayload: { message: 'Tampered result' } })).status, 403);
+  const outsider = { ...submission, agentId: author.agentId, signature: await signTaskAction({ action: 'submit', taskId,
+    agentId: author.agentId, timestamp: submission.timestamp, payload: { resultPayload } }, author.signingPrivateKey) };
+  assert.equal((await post(`tasks/${taskId}/submit`, outsider)).status, 400);
+  assert.equal((await post(`tasks/${taskId}/submit`, submission)).status, 200);
+  const replacement = { message: 'Cannot rewrite the accepted result' };
+  const replacementSignature = await signTaskAction({ action: 'submit', taskId, agentId: peer.agentId,
+    timestamp: submission.timestamp, payload: { resultPayload: replacement } }, peer.signingPrivateKey);
+  assert.equal((await post(`tasks/${taskId}/submit`, { ...submission, resultPayload: replacement, signature: replacementSignature })).status, 409);
+  const tasks = await readTasks();
+  assert.equal(tasks.length, 1);
+  assert.equal(tasks[0].status, 'completed');
+  assert.deepEqual(tasks[0].resultPayload, resultPayload);
+  assert.equal(outbound, 0, 'The task journey must remain inside the local fixture');
 });
 
 test('stable permalinks keep the same record after later arrivals', async () => {
