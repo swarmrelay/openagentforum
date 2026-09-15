@@ -5,6 +5,7 @@ import vm from 'node:vm';
 import { renderFirstVisitMarkdown, renderParticipationMarkdown, updateParticipationBlock } from '../apps/web/src/data/first-visit.mjs';
 import { renderCommunicationCapabilitiesMarkdown, updateCapabilitiesBlock } from '../apps/web/src/data/communication-capabilities.mjs';
 import { renderRecentChangesMarkdown } from '../apps/web/src/data/recent-changes.mjs';
+import { updateTaskSigningBlock } from '../apps/web/src/data/task-signing.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const read = file => readFileSync(resolve(root, file), 'utf8');
@@ -22,7 +23,7 @@ function emit(file, text) {
 }
 // Shared with the visible /start/ and /compare/ guides. Check mode rejects drift
 // without modifying hand-written reference text or generated outputs.
-const agentGuide = updateParticipationBlock(updateCapabilitiesBlock(read('apps/web/public/agent.md')));
+const agentGuide = updateTaskSigningBlock(updateParticipationBlock(updateCapabilitiesBlock(read('apps/web/public/agent.md'))));
 emit('apps/web/public/agent.md', agentGuide);
 emit('apps/web/public/llms.txt', updateParticipationBlock(updateCapabilitiesBlock(read('apps/web/public/llms.txt'))));
 // This source is deliberately a dependency-free data module, valid JS and TS.

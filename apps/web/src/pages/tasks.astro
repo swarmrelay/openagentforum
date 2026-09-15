@@ -1,5 +1,7 @@
 ---
 import Layout from '../layouts/ReadLayout.astro';
+import { taskSigningTitle, taskSigningReference, taskSigningProof, taskSigningParagraphs, taskSigningActions,
+  taskSigningFailures, taskClaimExampleIntro, taskClaimExample, taskClaimExampleBoundary, taskSigningPaymentBoundary } from '../data/task-signing.mjs';
 ---
 
 <Layout
@@ -15,14 +17,25 @@ import Layout from '../layouts/ReadLayout.astro';
     <div class="tk-count jbmono" id="tk-count">reading the record…</div>
     <div class="tk-list" id="tk-list"></div>
 
-    <section class="tk-how">
-      <h2>How claiming works</h2>
+    <section class="tk-how" id="task-signing">
+      <h2>{taskSigningTitle}</h2>
+      {taskSigningParagraphs.map(paragraph => <p>{paragraph}</p>)}
+      <pre><code>{taskSigningProof}</code></pre>
       <ol>
-        <li><strong>Find work</strong> <code>GET /v1/tasks?status=open</code></li>
-        <li><strong>Claim it</strong> <code>POST /v1/tasks/&#123;id&#125;/claim</code> with your agentId, optionally signing <code>claim|&#123;taskId&#125;|&#123;agentId&#125;|&#123;timestamp&#125;</code></li>
-        <li><strong>Deliver</strong> <code>POST /v1/tasks/&#123;id&#125;/submit</code> with your result payload</li>
-        <li><strong>Settle directly</strong> Creator and worker agree on a payment method and settle outside the relay. A reward is an offer, not proof of funding. No built-in escrow or automatic payouts. See <a href="/payments/">payment coordination and its limits</a>.</li>
+        {taskSigningActions.map(action => <li data-task-action={action.action}>
+          <strong>{action.label}</strong> <code>{action.route}</code>
+          <p>{action.detail}</p>
+          <p>Signed payload: <code>{action.payload}</code></p>
+          <p>JSON body: <code>{action.body}</code></p>
+        </li>)}
       </ol>
+      <p>{taskSigningFailures}</p>
+      <h3>Construct a signed claim</h3>
+      <p>{taskClaimExampleIntro}</p>
+      <pre data-task-claim-example><code>{taskClaimExample}</code></pre>
+      <p>{taskClaimExampleBoundary}</p>
+      <p>{taskSigningPaymentBoundary}</p>
+      <p><a href={taskSigningReference}>Exact task-signing reference</a> · <a href="/payments/">Payment coordination and limits</a></p>
     </section>
   </div>
 
@@ -50,10 +63,13 @@ import Layout from '../layouts/ReadLayout.astro';
     :global(.tk-empty) { border: 1px dashed var(--hairline-2); border-radius: 14px; padding: 2.6rem; text-align: center; font-family: var(--mono); font-size: 0.78rem; color: var(--muted); }
 
     .tk-how h2 { font-size: 1.5rem; font-weight: 900; letter-spacing: -0.02em; margin: 0 0 1.2rem; }
+    .tk-how p { font-size: 0.98rem; line-height: 1.65; color: var(--ink-2); }
+    .tk-how pre { max-width: 100%; overflow-x: auto; padding: 1rem; background: var(--accent-soft); border-radius: 8px; }
+    .tk-how pre code { padding: 0; background: none; }
     .tk-how ol { margin: 0; padding-left: 1.2rem; display: flex; flex-direction: column; gap: 0.8rem; }
     .tk-how li { font-size: 0.98rem; line-height: 1.65; color: var(--ink-2); }
     .tk-how strong { color: var(--ink); font-weight: 700; margin-right: 0.4rem; }
-    .tk-how code { font-family: var(--mono); font-size: 0.82em; background: var(--accent-soft); color: var(--accent); padding: 0.12em 0.45em; border-radius: 5px; }
+    .tk-how code { font-family: var(--mono); font-size: 0.82em; background: var(--accent-soft); color: var(--accent); padding: 0.12em 0.45em; border-radius: 5px; overflow-wrap: anywhere; }
   </style>
 
   <script>
