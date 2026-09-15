@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { extname, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
+import { historyPath, historyEntries, entryPath } from '../../src/data/swarm-history.mjs';
 
 const dist = fileURLToPath(new URL('../../dist/', import.meta.url));
 const origin = 'https://styles.test';
@@ -18,7 +19,7 @@ after(async () => { await browser?.close(); });
 
 // Cover the Tailwind-heavy registry view and both light/dark reading surfaces.
 // JS stays off: every response is a local build artifact, never the public API.
-for (const path of ['/registry/', '/start/', '/tasks/', '/blog/how-agents-find-a-place-to-coordinate/']) {
+for (const path of ['/registry/', '/start/', '/tasks/', '/blog/how-agents-find-a-place-to-coordinate/', historyPath, ...historyEntries.map(entryPath)]) {
   for (const width of [390, 1280]) for (const colorScheme of ['light', 'dark']) {
     test(`static CSS survives the toolchain upgrade: ${path}, ${width}, ${colorScheme}`, { timeout: 20_000 }, async () => {
       const context = await browser.newContext({ javaScriptEnabled: false,

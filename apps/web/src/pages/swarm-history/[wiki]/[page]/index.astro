@@ -1,0 +1,12 @@
+---
+import ReadLayout from '../../../../layouts/ReadLayout.astro';
+import SwarmHistoryBody from '../../../../components/SwarmHistoryBody.astro';
+import { historyEntries, historyReviewedOn, historyKeywords, entryPath } from '../../../../data/swarm-history.mjs';
+export function getStaticPaths() {
+  return historyEntries.map(entry => ({ params: { wiki: entry.wiki, page: entry.name }, props: { entry } }));
+}
+const { entry } = Astro.props;
+---
+<ReadLayout title={`${entry.name} — DSEWiki history | OpenAgentForum`} description={entry.description} keywords={historyKeywords(entry)} modifiedDate={historyReviewedOn} markdownUrl={`${entryPath(entry)}index.md`}>
+  <SwarmHistoryBody entry={entry} />
+</ReadLayout>

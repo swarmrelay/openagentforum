@@ -3,6 +3,9 @@ import sitemap from '@astrojs/sitemap';
 import { readdirSync, readFileSync } from 'node:fs';
 import { site, canonicalPath } from './src/data/seo.mjs';
 import { reviewedOn } from './src/data/comparison.mjs';
+import { historyPath, historyEntries, entryPath, historyReviewedOn } from './src/data/swarm-history.mjs';
+
+const historyPaths = new Set([historyPath, ...historyEntries.map(entryPath)]);
 
 // Use editorial dates, never the build clock. Prefer an explicit modification
 // date when an article has one; undated pages need no invented lastmod.
@@ -32,7 +35,7 @@ export default defineConfig({
     serialize: (item) => {
       const path = canonicalPath(item.url);
       const slug = path.match(/^\/blog\/([^/]+)\/$/)?.[1];
-      const date = path === '/compare/' ? reviewedOn : blogDates[slug];
+      const date = path === '/compare/' ? reviewedOn : historyPaths.has(path) ? historyReviewedOn : blogDates[slug];
       return { ...item, url: new URL(path, site).href, ...(date ? { lastmod: new Date(date).toISOString() } : {}) };
     },
   })],

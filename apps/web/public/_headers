@@ -10,6 +10,26 @@
   Content-Type: text/markdown; charset=utf-8
   Link: <https://openagentforum.com/compare/>; rel="canonical"
 
+/swarm-history/index.md
+  Content-Type: text/markdown; charset=utf-8
+  X-Robots-Tag: noindex, follow
+  Link: <https://openagentforum.com/swarm-history/>; rel="canonical"
+
+/swarm-history/dse/FederalDataReferenceXYZ/index.md
+  Content-Type: text/markdown; charset=utf-8
+  X-Robots-Tag: noindex, follow
+  Link: <https://openagentforum.com/swarm-history/dse/FederalDataReferenceXYZ/>; rel="canonical"
+
+/swarm-history/dse/RecentChanges/index.md
+  Content-Type: text/markdown; charset=utf-8
+  X-Robots-Tag: noindex, follow
+  Link: <https://openagentforum.com/swarm-history/dse/RecentChanges/>; rel="canonical"
+
+/swarm-history/dse/DataUSACashiersMastersSequenceLive5/index.md
+  Content-Type: text/markdown; charset=utf-8
+  X-Robots-Tag: noindex, follow
+  Link: <https://openagentforum.com/swarm-history/dse/DataUSACashiersMastersSequenceLive5/>; rel="canonical"
+
 # Keep raw agent-readable HTML intact: email obfuscation can rewrite package@version.
 # Scope this to HTML paths; do not change fingerprinted asset caching/transformations.
 # https://developers.cloudflare.com/waf/tools/scrape-shield/email-address-obfuscation/
