@@ -1,13 +1,17 @@
 import { CHANNEL_NAME, MESSAGE_ID, PUBLIC_CHANNEL, PUBLIC_MESSAGE } from './public-browse-store.js';
 import { ORIGIN, InputError, channelPath, messagePath } from './public-browse-routing.js';
+import { PUBLIC_TASK, TASK_ORDER } from './public-tasks-store.js';
+import { TASK_ID, taskPath } from './public-tasks-routing.js';
 
 // A complete catalog within explicit safety caps, never a silently truncated
 // sitemap. Expand the shard design before exceeding either operational guard.
 export const SITEMAP_CHANNEL_LIMIT = 1000;
 export const SITEMAP_MESSAGE_LIMIT = 5000;
+export const SITEMAP_TASK_LIMIT = 5000;
 const XML_LIMIT = 4 * 1024 * 1024;
 const INDEX = '/sitemap-public-index.xml';
 const MAP = '/sitemap-public.xml';
+const TASK_MAP = '/sitemap-tasks.xml';
 const escapeXml = (value: string) => value.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' })[c]!);
 const document = (paths: string[], index: boolean) => {
   const root = index ? 'sitemapindex' : 'urlset';
@@ -31,15 +35,16 @@ export const onRequestPublicSitemap: PagesFunction<Pick<PagesEnv, 'DB'>> = async
   try {
     if (request.method !== 'GET' && request.method !== 'HEAD') throw new InputError(405);
     // Preview data must not advertise production canonical URLs to crawlers.
-    if (url.origin !== ORIGIN || ![INDEX, MAP].includes(url.pathname)) throw new InputError(404);
+    if (url.origin !== ORIGIN || ![INDEX, MAP, TASK_MAP].includes(url.pathname)) throw new InputError(404);
     if (url.search.length > 256) throw new InputError(400);
     const index = url.pathname === INDEX;
+    const tasks = url.pathname === TASK_MAP;
     url.searchParams.forEach((_, key) => {
-      if (index || key !== 'channel' || url.searchParams.getAll(key).length !== 1) throw new InputError(400);
+      if (index || tasks || key !== 'channel' || url.searchParams.getAll(key).length !== 1) throw new InputError(400);
     });
     const channel = url.searchParams.get('channel');
     if (channel !== null && !CHANNEL_NAME.test(channel)) throw new InputError(400);
-    const canonical = index ? INDEX : MAP + (channel === null ? '' : `?channel=${encodeURIComponent(channel)}`);
+    const canonical = index ? INDEX : tasks ? TASK_MAP : MAP + (channel === null ? '' : `?channel=${encodeURIComponent(channel)}`);
     if (url.pathname + url.search !== canonical) {
       headers.set('Location', canonical);
       return new Response(null, { status: 308, headers });
@@ -47,14 +52,22 @@ export const onRequestPublicSitemap: PagesFunction<Pick<PagesEnv, 'DB'>> = async
     const db = context.env.DB;
     if (!db) throw new Error('Storage unavailable');
     let paths: string[];
-    if (channel === null) {
+    if (tasks) {
+      const [result] = await db.batch<{ id: string }>([db.prepare(`SELECT id FROM tasks INDEXED BY idx_tasks_public_browse
+        WHERE ${PUBLIC_TASK} ORDER BY ${TASK_ORDER} DESC LIMIT ?`).bind(SITEMAP_TASK_LIMIT + 1)]);
+      if (!result.success || result.results.length > SITEMAP_TASK_LIMIT) throw new Error('Task catalog unavailable or over capacity');
+      paths = ['/tasks/', ...result.results.map(row => {
+        if (typeof row.id !== 'string' || !TASK_ID.test(row.id)) throw new Error('Invalid task projection');
+        return taskPath(row.id);
+      })];
+    } else if (channel === null) {
       const [result] = await db.batch<{ name: string }>([
         db.prepare(`SELECT name FROM channels INDEXED BY idx_channels_public_browse
           WHERE ${PUBLIC_CHANNEL} ORDER BY name LIMIT ?`).bind(SITEMAP_CHANNEL_LIMIT + 1),
       ]);
       if (!result.success || result.results.length > SITEMAP_CHANNEL_LIMIT) throw new Error('Catalog unavailable or over capacity');
       if (result.results.some(row => typeof row.name !== 'string' || !CHANNEL_NAME.test(row.name))) throw new Error('Invalid catalog projection');
-      paths = index ? [MAP, ...result.results.map(row => `${MAP}?channel=${encodeURIComponent(row.name)}`)]
+      paths = index ? [MAP, TASK_MAP, ...result.results.map(row => `${MAP}?channel=${encodeURIComponent(row.name)}`)]
         : ['/channels/', ...result.results.map(row => channelPath(row.name))];
     } else {
       // Keep the policy lookup OUTSIDE the message loop, as in the HTML reader.

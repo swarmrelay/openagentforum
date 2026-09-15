@@ -18,7 +18,7 @@ let outbound = 0;
 const previousRuntime = process.env.MINIFLARE_WORKERD_PATH;
 const origin = 'https://openagentforum.com';
 const nodes = node => [node, ...(node.childNodes ?? []).flatMap(nodes)];
-const attr = (node, key) => node.attrs?.find(a => a.name === key)?.value;
+const attr = (node, key) => node?.attrs?.find(a => a.name === key)?.value;
 const elements = html => nodes(parse(html));
 const ids = html => elements(html).filter(n => attr(n, 'data-record-id')).map(n => attr(n, 'data-record-id'));
 const links = html => elements(html).filter(n => n.tagName === 'a').map(n => attr(n, 'href'));
@@ -47,7 +47,7 @@ async function get(path, options = {}) {
   const response = await worker.fetch(origin + path, { ...options, signal: AbortSignal.timeout(10_000) });
   const text = await response.text();
   assert.equal(outbound, 0, 'public reader must never make outbound requests');
-  assert.ok(Buffer.byteLength(text) < (path.startsWith('/sitemap-public') ? 4 * 1024 * 1024 : 512 * 1024));
+  assert.ok(Buffer.byteLength(text) < (path.startsWith('/sitemap-') ? 4 * 1024 * 1024 : 512 * 1024));
   return { response, text };
 }
 
@@ -56,6 +56,7 @@ before(async () => {
   scratch = await mkdtemp(join(tmpdir(), 'oaf-public-browse-'));
   const config = JSON.parse(await readFile(new URL('../wrangler.jsonc', import.meta.url), 'utf8'));
   const shell = await readFile(new URL('../dist/channels/index.html', import.meta.url), 'utf8');
+  const taskShell = await readFile(new URL('../dist/tasks/index.html', import.meta.url), 'utf8');
   const bundle = await build({ entryPoints: [fileURLToPath(new URL('./fixtures/public-browse-worker.mjs', import.meta.url))], bundle: true,
     write: false, format: 'esm', platform: 'neutral', metafile: true, external: ['node:*', 'cloudflare:*'] });
   assert.ok(Object.values(bundle.metafile.outputs).every(o => o.imports.length === 0));
@@ -63,7 +64,7 @@ before(async () => {
     telemetry: { enabled: false }, logRequests: false, resourceTmpPath: join(scratch, 'runtime'),
     workers: [{ config: { type: 'worker', name: 'public-browse-test', compatibilityDate: config.compatibility_date, compatibilityFlags: [],
       workersDev: false, previewUrls: false, domains: [], triggers: [],
-      env: { DB: { type: 'd1', id: 'public-browse-local', dev: { remote: false } }, SHELL_HTML: { type: 'text', value: shell } },
+      env: { DB: { type: 'd1', id: 'public-browse-local', dev: { remote: false } }, SHELL_HTML: { type: 'text', value: shell }, TASK_SHELL_HTML: { type: 'text', value: taskShell } },
       manifest: { mainModule: 'index.mjs', modules: { 'index.mjs': { type: 'esm', contents: bundle.outputFiles[0].text } } },
     }, dev: { unsafeRegisterWorker: false, outboundService: { type: 'fetcher', handler() { outbound++; throw new Error('No outbound requests allowed'); } } } }],
   };
@@ -156,6 +157,8 @@ test('documented claim example and signed task lifecycle work on native Pages/D1
   const created = await post('tasks', createBody);
   assert.equal(created.status, 200);
   const taskId = (await created.json()).task.id;
+  assert.deepEqual(taskIds((await get('/tasks/')).text), [taskId]);
+  assert.deepEqual(mdTaskIds((await get(`/tasks/${taskId}/index.md`)).text), [taskId]);
   assert.equal((await (await post('tasks', createBody)).json()).alreadyCreated, true);
 
   // Execute only our trusted static documentation excerpt, copied from the real
@@ -198,6 +201,12 @@ test('documented claim example and signed task lifecycle work on native Pages/D1
   assert.equal(tasks.length, 1);
   assert.equal(tasks[0].status, 'completed');
   assert.deepEqual(tasks[0].resultPayload, resultPayload);
+  assert.deepEqual(taskIds((await get('/tasks/')).text), []);
+  for (const path of [`/tasks/${taskId}/`, `/tasks/${taskId}/index.md`]) {
+    const record = await get(path);
+    assert.equal(record.response.status, 200); assert.match(record.text, /Status: completed/);
+    assert.doesNotMatch(record.text, /Documentation fixture complete|Tampered result|Cannot rewrite the accepted result/);
+  }
   assert.equal(outbound, 0, 'The task journey must remain inside the local fixture');
 });
 
@@ -880,7 +889,7 @@ test('public sitemap index discovers all canonical channels and historical messa
   // Sitemaps include historical messages outside the latest 20-message reader.
   const index = await get(sitemapIndexPath);
   assert.equal(index.response.status, 200);
-  assert.deepEqual(sitemapLocations(index.text), [origin + channelSitemapPath, origin + channelSitemapPath + '?channel=empty', origin + messageSitemapPath]);
+  assert.deepEqual(sitemapLocations(index.text), [origin + channelSitemapPath, origin + '/sitemap-tasks.xml', origin + channelSitemapPath + '?channel=empty', origin + messageSitemapPath]);
   const channels = await get(channelSitemapPath);
   assert.deepEqual(sitemapLocations(channels.text), [origin + '/channels/', origin + '/channels/empty/', origin + '/channels/general/']);
   const messages = await get(messageSitemapPath);
@@ -978,7 +987,7 @@ test('sitemap channel catalog includes its exact cap and rejects overflow rather
   await sql([{ sql: `WITH RECURSIVE n(v) AS (SELECT 1 UNION ALL SELECT v+1 FROM n WHERE v<999)
     INSERT INTO channels (name,title,topic,creator_id,created_at) SELECT 'catalog-'||v,'','', 'fixture',1 FROM n` }]);
   const index = await get(sitemapIndexPath); assert.equal(index.response.status, 200);
-  assert.equal(sitemapLocations(index.text).length, 1001);
+  assert.equal(sitemapLocations(index.text).length, 1002);
   const catalog = await get(channelSitemapPath); assert.equal(sitemapLocations(catalog.text).length, 1001);
   assert.ok(Number(catalog.response.headers.get('x-fixture-batch-rows-read')) <= 1002);
   await channel('catalog-overflow');
@@ -1051,9 +1060,273 @@ test('dynamic errors have no canonical, share URL or structured-data claim; curs
   }
 });
 
+const taskIds = html => elements(html).filter(n => attr(n, 'data-task-id')).map(n => attr(n, 'data-task-id'));
+const mdTaskIds = text => elements(markdownHtml(text)).filter(n => n.tagName === 'h2' && nodeText(n).startsWith('Task ')).map(n => nodeText(n).slice(5));
+const taskNext = html => elements(html).find(n => n.tagName === 'a' && nodeText(n) === 'More tasks →');
+const task = (id = 'task_fixture', options = {}) => sql([{ sql: `INSERT INTO tasks
+  (id, creator_id, title, description, required_capabilities_json, status, claimed_by, reward, result_payload_json, created_at, updated_at)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, args: [id, options.creator ?? author.agentId,
+    options.title ?? 'Review documentation', options.description ?? 'An intentionally public task',
+    options.capabilities ?? '["research"]', options.status ?? 'open', options.claimant ?? null, options.reward ?? null,
+    options.result ?? 'PRIVATE_RESULT_NOT_FOR_DISCOVERY', options.created ?? 10, 10] }]);
+const bulkTasks = (count, options = {}) => sql([{ sql: `WITH RECURSIVE n(v) AS (SELECT 1 UNION ALL SELECT v+1 FROM n WHERE v<?)
+  INSERT INTO tasks (id,creator_id,title,description,required_capabilities_json,status,created_at,updated_at)
+  SELECT ?||printf('%06d',v),'fixture','Task title','Task description',?,?,?,1 FROM n`,
+  args: [count, options.prefix ?? 'bulk_', options.capabilities ?? '[]', options.status ?? 'open', options.created ?? 100] }]);
+
+test('task reader: raw HTML and Markdown share records, guidance and safe permalink metadata', async () => {
+  await task();
+  for (const path of ['/tasks/', '/tasks/task_fixture/']) {
+    const html = await get(path), md = await get(markdownPath(path));
+    assert.equal(html.response.status, 200); assert.equal(md.response.status, 200);
+    assert.deepEqual(taskIds(html.text), ['task_fixture']); assert.deepEqual(mdTaskIds(md.text), ['task_fixture']);
+    assert.match(html.text, /Review documentation/); assert.match(md.text, /Review documentation/);
+    assert.doesNotMatch(html.text + md.text, /PRIVATE_RESULT_NOT_FOR_DISCOVERY|reading the record…|static preview has no task/);
+    assert.match(html.text + md.text, /cannot independently verify/);
+    assert.ok(links(html.text).includes('/tasks/#task-signing'));
+    assert.ok(links(html.text).includes('/tasks/task_fixture/index.md'));
+    assert.match(html.text, /data-participation-invite/); assert.match(md.text, /Project-authored participation guidance follows/);
+    assert.deepEqual(inspectPage(html.text, path.slice(1) + 'index.html').errors, []);
+    assert.equal(html.response.headers.get('x-fixture-queries'), '1');
+    assert.equal(md.response.headers.get('x-fixture-queries'), '1'); assert.equal(md.response.headers.get('x-fixture-assets'), '0');
+    assert.equal(md.response.headers.get('content-type'), 'text/markdown; charset=utf-8');
+    assert.equal(md.response.headers.get('x-robots-tag'), 'noindex, follow');
+    assert.ok(md.response.headers.get('link').includes(`<${origin}${path}>; rel="canonical"`));
+    assert.equal(html.response.headers.get('x-robots-tag'), 'index, follow');
+  }
+});
+
+test('task reader: stable tuple pagination covers older-than-50 tasks without duplicates or insertion shifts', async () => {
+  await bulkTasks(65);
+  let path = '/tasks/', seen = [], pages = 0;
+  do {
+    const html = await get(path), md = await get(markdownPath(path));
+    assert.equal(html.response.status, 200); assert.equal(md.response.status, 200);
+    assert.deepEqual(taskIds(html.text), mdTaskIds(md.text));
+    seen.push(...taskIds(html.text)); pages++;
+    const next = attr(taskNext(html.text), 'href');
+    if (next) {
+      const mdNext = attr(taskNext(markdownHtml(md.text)), 'href');
+      assert.equal(mdNext, origin + markdownPath(next));
+    }
+    if (pages === 1) await task('newer_insertion', { created: 101 });
+    path = next;
+  } while (path && pages < 10);
+  assert.equal(pages, 4); assert.equal(seen.length, 65); assert.equal(new Set(seen).size, 65);
+  assert.equal(seen[0], 'bulk_000065'); assert.equal(seen.at(-1), 'bulk_000001');
+  assert.ok(taskIds((await get('/tasks/')).text).includes('newer_insertion'));
+});
+
+test('task reader: sparse capability filters continue across empty bounded indexed scans', async t => {
+  await bulkTasks(205);
+  await sql([{ sql: "UPDATE tasks SET required_capabilities_json='[\"research\"]' WHERE id='bulk_000001'" }]);
+  let path = '/tasks/?capability=research', found = [], pages = 0;
+  do {
+    const result = await get(path, { headers: { 'x-fixture-plans': '1' } });
+    assert.equal(result.response.status, 200);
+    const plans = result.response.headers.get('x-fixture-plans');
+    assert.match(plans, /idx_tasks_public_status_browse/); assert.doesNotMatch(plans, /USE TEMP B-TREE|SCAN tasks/);
+    assert.ok(Number(result.response.headers.get('x-fixture-batch-rows-read')) <= 203, result.response.headers.get('x-fixture-batch-rows-read') + ' rows: ' + plans);
+    found.push(...taskIds(result.text)); pages++;
+    if (pages <= 2) { assert.deepEqual(taskIds(result.text), []); assert.match(result.text, /empty scan is not proof/); }
+    path = attr(taskNext(result.text), 'href');
+    assert.ok(pages < 5);
+  } while (path);
+  assert.deepEqual(found, ['bulk_000001']); assert.equal(pages, 3);
+  assert.deepEqual(taskIds((await get('/tasks/?capability=Research')).text), []);
+  const all = await get('/tasks/?status=all', { headers: { 'x-fixture-plans': '1' } });
+  assert.match(all.response.headers.get('x-fixture-plans'), /idx_tasks_public_browse/);
+  assert.doesNotMatch(all.response.headers.get('x-fixture-plans'), /USE TEMP B-TREE/);
+  t.diagnostic(`Sparse task scan: indexed 100-candidate windows; ${pages} requests to reach the oldest match`);
+});
+
+test('task reader: malformed queries and cursor/filter mismatches fail before storage', async () => {
+  await bulkTasks(21);
+  const next = attr(taskNext((await get('/tasks/')).text), 'href');
+  const bad = ['/tasks/?status=expired', '/tasks/?status=', '/tasks/?status=open&status=open', '/tasks/?capability=',
+    '/tasks/?capability=bad%20value', '/tasks/?capability=research%0A', '/tasks/?capability=research%0D', '/tasks/?capability=' + 'a'.repeat(65), '/tasks/?capability=research&capability=research',
+    '/tasks/?before=', '/tasks/?before=PRIVATE_QUERY', '/tasks/?before=' + 'x'.repeat(800), '/tasks/?write=true',
+    '/tasks/task_fixture/?status=all', '/tasks/task%2ffixture/', '/tasks/%ZZ/', next + '&status=all', next + '&capability=research'];
+  for (const path of bad) {
+    for (const target of representations(path)) {
+      const result = await get(target);
+      assert.equal(result.response.status, 400, target);
+      assert.equal(result.response.headers.get('x-fixture-queries'), '0');
+      assert.equal(result.response.headers.get('x-robots-tag'), 'noindex, nofollow');
+      assert.doesNotMatch(result.text, /PRIVATE_QUERY|write=true/);
+    }
+  }
+  for (const [path, canonical] of [['/tasks', '/tasks/'], ['/tasks/index.html', '/tasks/'], ['/tasks/?status=open', '/tasks/'],
+    ['/tasks/task_fixture', '/tasks/task_fixture/'], ['/tasks/index.md/', '/tasks/index.md'], ['/tasks/?capability=a%2Bb&status=all', '/tasks/?status=all&capability=a%2Bb']]) {
+    const result = await get(path, { redirect: 'manual' });
+    assert.equal(result.response.status, 308); assert.equal(result.response.headers.get('location'), canonical);
+    assert.equal(result.response.headers.get('x-fixture-queries'), '0');
+  }
+  assert.equal((await get('/tasks/task_fixture%0A/')).response.status, 404);
+});
+
+test('public reader build keeps executable scripts external under the unchanged self-only script CSP', async () => {
+  for (const path of ['/tasks/', '/channels/', '/recent/']) {
+    const result = await get(path), all = elements(result.text);
+    assert.match(result.response.headers.get('content-security-policy'), /(?:^|; )script-src 'self';/);
+    const scripts = all.filter(n => n.tagName === 'script' && attr(n, 'type') !== 'application/ld+json');
+    assert.ok(scripts.length > 0);
+    for (const script of scripts) {
+      assert.match(attr(script, 'src'), /^\/_astro\/[A-Za-z0-9_.-]+\.js$/);
+      assert.equal(nodeText(script).trim(), '');
+    }
+  }
+});
+
+test('task reader: UTF-8 rendering capacity errors never return partial successful task lists', async () => {
+  await bulkTasks(20);
+  const capabilities = JSON.stringify(Array.from({ length: 60 }, (_, n) => 'a'.repeat(59) + String(n).padStart(2, '0')));
+  await sql([{ sql: 'UPDATE tasks SET title=?, description=?, creator_id=?, claimed_by=?, reward=?, required_capabilities_json=?',
+    args: ['\t'.repeat(160), '\t'.repeat(1000), '\t'.repeat(128), '\t'.repeat(128), '\t'.repeat(512), capabilities] }]);
+  for (const path of ['/tasks/', '/tasks/index.md']) {
+    const result = await get(path);
+    assert.equal(result.response.status, 503); assert.doesNotMatch(result.text, /bulk_000001|Task title/);
+    assert.equal(result.response.headers.get('x-robots-tag'), 'noindex, nofollow');
+  }
+  assert.equal((await get('/tasks/bulk_000001/')).response.status, 200);
+});
+
+test('task reader: deep timestamp ties seek directly and numeric order includes safe-integer boundaries', async t => {
+  await bulkTasks(10000);
+  const before = Buffer.from(JSON.stringify([1, 'open', '', 100, 'bulk_000003'])).toString('base64url');
+  const result = await get('/tasks/?before=' + before, { headers: { 'x-fixture-plans': '1' } });
+  assert.deepEqual(taskIds(result.text), ['bulk_000002', 'bulk_000001']);
+  assert.ok(Number(result.response.headers.get('x-fixture-batch-rows-read')) <= 5, result.response.headers.get('x-fixture-batch-rows-read'));
+  assert.match(result.response.headers.get('x-fixture-plans'), /SEARCH tasks USING INDEX idx_tasks_public_status_browse/);
+  for (const [id, created] of [['zero', 0], ['max', Number.MAX_SAFE_INTEGER], ['middle', 101], ['negative', -1], ['unsafe', Number.MAX_SAFE_INTEGER + 1], ['fraction', 1.5]]) await task(id, { created });
+  assert.deepEqual(taskIds((await get('/tasks/')).text).slice(0, 2), ['max', 'middle']);
+  const older = Buffer.from(JSON.stringify([1, 'all', '', 1, 'z'])).toString('base64url');
+  assert.deepEqual(taskIds((await get('/tasks/?status=all&before=' + older)).text), ['zero']);
+  for (const value of [[2, 'open', '', 100, 'bulk_000003'], [1, 'open', '', -1, 'id'], [1, 'open', '', 1.5, 'id'],
+    [1, 'open', '', Number.MAX_SAFE_INTEGER + 1, 'id'], [1, 'open', '', 0, 'bad:id'], [1, 'open', '', 0, 'bad\0id'], [1, 'open', '', 0, 'id', 'extra']]) {
+    const bad = await get('/tasks/?before=' + Buffer.from(JSON.stringify(value)).toString('base64url'));
+    assert.equal(bad.response.status, 400); assert.equal(bad.response.headers.get('x-fixture-queries'), '0');
+  }
+  t.diagnostic(`Deep timestamp tie: ${result.response.headers.get('x-fixture-batch-rows-read')} rows read to seek past 9998 tasks`);
+});
+
+test('task reader: current status, eligibility and deletion are freshly checked without private/result exposure', async () => {
+  await task();
+  await bulkTasks(1000, { status: 'unknown-private-state', prefix: 'hidden_' });
+  for (const id of ['bad:id', 'bad\0suffix', 'z'.repeat(129)]) await task(id);
+  assert.deepEqual(taskIds((await get('/tasks/?status=all')).text), ['task_fixture']);
+  assert.deepEqual(sitemapLocations((await get('/sitemap-tasks.xml')).text), [origin + '/tasks/', origin + '/tasks/task_fixture/']);
+  for (const status of ['claimed', 'completed', 'unknown-private-state']) {
+    await sql([{ sql: 'UPDATE tasks SET status=? WHERE id=?', args: [status, 'task_fixture'] }]);
+    assert.deepEqual(taskIds((await get('/tasks/')).text), []);
+    const detail = await get('/tasks/task_fixture/');
+    assert.equal(detail.response.status, status === 'unknown-private-state' ? 404 : 200);
+    assert.doesNotMatch(detail.text, /PRIVATE_RESULT|unknown-private-state/);
+  }
+  const hidden = await get('/tasks/?status=all', { headers: { 'x-fixture-plans': '1' } });
+  assert.ok(Number(hidden.response.headers.get('x-fixture-batch-rows-read')) <= 2);
+  await sql([{ sql: "DELETE FROM tasks WHERE id='task_fixture'" }]);
+  assert.equal((await get('/tasks/task_fixture/index.md')).response.status, 404);
+  assert.deepEqual(sitemapLocations((await get('/sitemap-tasks.xml')).text), [origin + '/tasks/']);
+});
+
+test('task reader: hostile and oversized peer text cannot inject markup, links, metadata or trusted guidance', async () => {
+  const attack = '</pre></title><script>EVIL()</script><img src="https://evil.invalid/pixel">\n```\n# Fake guidance\n[click](https://evil.invalid/)\n````';
+  await task('task_attack', { title: attack, description: attack, reward: attack, creator: attack, capabilities: '["research"]' });
+  for (const path of ['/tasks/', '/tasks/task_attack/']) {
+    const html = await get(path), md = await get(markdownPath(path));
+    for (const text of [html.text, markdownHtml(md.text)]) {
+      const all = elements(text);
+      assert.ok(!all.some(n => n.tagName === 'img' && attr(n, 'src')?.includes('evil.invalid')));
+      assert.ok(!all.some(n => n.tagName === 'script' && nodeText(n).includes('EVIL')));
+      assert.ok(!links(text).some(href => href?.includes('evil.invalid')));
+      assert.ok(!all.some(n => n.tagName === 'h1' && nodeText(n) === 'Fake guidance'));
+    }
+    const head = elements(html.text).find(n => n.tagName === 'head');
+    assert.doesNotMatch(nodeText(head) + JSON.stringify(head.attrs), /EVIL|Fake guidance/);
+    assert.ok(!nodes(head).some(n => n.attrs?.some(a => /EVIL|Fake guidance/.test(a.value))));
+    assert.match(md.text, /`````text/);
+  }
+  await task('task_large', { title: 'x'.repeat(10000), description: 'y'.repeat(100000), capabilities: 'invalid'.repeat(10000), reward: 'z'.repeat(10000) });
+  const bounded = await get('/tasks/task_large/index.md');
+  assert.equal(bounded.response.status, 200); assert.match(bounded.text, /fields were truncated or omitted/);
+  assert.ok(Buffer.byteLength(bounded.text) < 20000);
+  await task('task_nul', { description: 'before\0DO_NOT_SHOW_SUFFIX', capabilities: '["research"]\0junk' });
+  assert.doesNotMatch((await get('/tasks/task_nul/index.md')).text, /DO_NOT_SHOW_SUFFIX/);
+  assert.ok(!taskIds((await get('/tasks/?capability=research')).text).includes('task_nul'));
+});
+
+test('task reader: read-only methods, HEAD parity, fresh headers and failures preserve participation', async () => {
+  await task();
+  const snapshot = async () => (await sql(['tasks', 'agents', 'messages', 'channels', 'wake_message_outbox', 'public_message_arrivals']
+    .map(table => ({ sql: `SELECT * FROM ${table}` })))).map(r => r.results);
+  const initial = await snapshot();
+  for (const path of ['/tasks/', '/tasks/task_fixture/', '/tasks/index.md', '/tasks/task_fixture/index.md', '/sitemap-tasks.xml']) {
+    const result = await get(path, { headers: { cookie: 'fixture=untrusted', authorization: 'Bearer fixture-only', 'if-none-match': '*' } });
+    assert.equal(result.response.status, 200);
+    assert.equal(result.response.headers.get('cache-control'), 'no-store, no-transform');
+    assert.equal(result.response.headers.get('set-cookie'), null); assert.equal(result.response.headers.get('etag'), null);
+    const head = await get(path, { method: 'HEAD' });
+    assert.equal(head.response.status, 200); assert.equal(head.text, '');
+    for (const name of ['content-type', 'x-robots-tag', 'content-security-policy', 'cache-control', 'link']) assert.equal(head.response.headers.get(name), result.response.headers.get(name));
+    for (const method of ['POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']) {
+      const denied = await get(path, { method });
+      assert.equal(denied.response.status, 405); assert.equal(denied.response.headers.get('allow'), 'GET, HEAD');
+      assert.equal(denied.response.headers.get('x-fixture-queries'), '0');
+    }
+    for (const mode of ['missing', 'failure']) {
+      const failure = await get(path, { headers: { 'x-fixture-db': mode } });
+      assert.equal(failure.response.status, 503); assert.ok(failure.response.headers.has('retry-after'));
+      assert.doesNotMatch(failure.text, /PRIVATE_STORAGE|task_fixture/);
+    }
+  }
+  for (const mode of ['failure', 'missing', 'type', 'oversize']) {
+    const failure = await get('/tasks/', { headers: { 'x-fixture-assets': mode } });
+    assert.equal(failure.response.status, 503); assert.ok(links(failure.text).includes('/start/'));
+    assert.doesNotMatch(failure.text, /PRIVATE_ASSET|task_fixture/);
+    assert.equal((await get('/tasks/index.md', { headers: { 'x-fixture-assets': mode } })).response.status, 200);
+  }
+  assert.deepEqual(await snapshot(), initial);
+  const filtered = await get('/tasks/?capability=research');
+  assert.equal(filtered.response.headers.get('x-robots-tag'), 'noindex, follow');
+  assert.ok(elements(filtered.text).some(n => attr(n, 'rel') === 'canonical' && attr(n, 'href') === origin + '/tasks/?capability=research'));
+  assert.equal((await worker.fetch('https://preview.invalid/tasks/')).headers.get('x-robots-tag'), 'noindex, follow');
+  for (const path of ['/tasks/missing/', '/tasks/?invalid=query']) {
+    const result = await get(path);
+    assert.ok(!elements(result.text).some(n => attr(n, 'rel') === 'canonical' || attr(n, 'type') === 'application/ld+json'));
+  }
+});
+
+test('task sitemap: complete at capacity, overflow fails closed, and query/index errors never leak URLs', async t => {
+  await bulkTasks(5000);
+  const full = await get('/sitemap-tasks.xml', { headers: { 'x-fixture-plans': '1' } });
+  assert.equal(full.response.status, 200); assert.equal(sitemapLocations(full.text).length, 5001);
+  assert.equal(new Set(sitemapLocations(full.text)).size, 5001);
+  assert.match(full.response.headers.get('x-fixture-plans'), /idx_tasks_public_browse/);
+  assert.doesNotMatch(full.text, /Task title|Task description|lastmod|index\.md|before=|capability=/);
+  assert.ok(Number(full.response.headers.get('x-fixture-batch-rows-read')) <= 10003);
+  await task();
+  assert.equal((await get('/sitemap-tasks.xml')).response.status, 503);
+  for (const path of ['/sitemap-tasks.xml?channel=general', '/sitemap-tasks.xml?status=open']) {
+    const invalid = await get(path); assert.equal(invalid.response.status, 400); assert.equal(invalid.response.headers.get('x-fixture-queries'), '0');
+  }
+  assert.equal((await worker.fetch('https://preview.invalid/sitemap-tasks.xml')).status, 404);
+  for (const [index, paths] of [['idx_tasks_public_browse', ['/tasks/?status=all', '/sitemap-tasks.xml']], ['idx_tasks_public_status_browse', ['/tasks/', '/tasks/index.md']]]) {
+    const [{ results: [definition] }] = await sql([{ sql: 'SELECT sql FROM sqlite_master WHERE name=?', args: [index] }]);
+    await sql([{ sql: `DROP INDEX ${index}` }]);
+    try {
+      for (const path of paths) {
+        const missing = await get(path); assert.equal(missing.response.status, 503); assert.doesNotMatch(missing.text, /bulk_000001|<loc>|SQLITE/);
+      }
+    } finally { await sql([{ sql: definition.sql }]); }
+  }
+  t.diagnostic(`Task sitemap: ${full.response.headers.get('x-fixture-batch-rows-read')} rows read at 5000-task capacity`);
+});
+
 if (process.env.OAF_BROWSE_PLAYWRIGHT) {
   test('optional browser: no-JS links, narrow layouts and explicitly bounded live refresh', { timeout: 60_000 }, async () => {
     const { checkBrowser } = await import('./public-browse.browser.mjs');
+    await bulkTasks(22, { capabilities: '["research"]' });
     await checkBrowser({ worker, message, scratch });
   });
 }

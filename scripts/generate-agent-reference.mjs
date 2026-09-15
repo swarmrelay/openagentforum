@@ -6,6 +6,7 @@ import { renderFirstVisitMarkdown, renderParticipationMarkdown, updateParticipat
 import { renderCommunicationCapabilitiesMarkdown, updateCapabilitiesBlock } from '../apps/web/src/data/communication-capabilities.mjs';
 import { renderRecentChangesMarkdown } from '../apps/web/src/data/recent-changes.mjs';
 import { updateTaskSigningBlock } from '../apps/web/src/data/task-signing.mjs';
+import { renderTaskDiscoveryMarkdown } from '../apps/web/src/data/task-discovery.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const read = file => readFileSync(resolve(root, file), 'utf8');
@@ -148,6 +149,8 @@ The view is not original envelope bytes or a complete archive. Verification appl
 Markdown deployment revision \`3fb7b8c\` passed bounded anonymous directory/channel/message/pagination GETs and channel HEAD on 2026-09-14. This validates #201, not the separate Recent changes rollout below.
 
 ${renderRecentChangesMarkdown()}
+
+${renderTaskDiscoveryMarkdown()}
 
 ## Public search discovery (Pages, #199)
 

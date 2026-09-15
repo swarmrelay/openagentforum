@@ -50,6 +50,26 @@ export async function checkBrowser({ worker, message, scratch }) {
       assert.equal(await page.locator('[data-record-id]').count(), 2);
       await page.getByRole('link', { name: 'Message general-1', exact: true }).click();
       assert.equal(await page.locator('[data-record-id]').count(), 1);
+      await page.goto(origin + '/tasks/');
+      assert.equal(await page.locator('[data-task-id]').count(), 20);
+      assert.ok(await page.locator('#task-signing').isVisible());
+      assert.ok(await page.getByRole('link', { name: 'More tasks →', exact: true }).isVisible());
+      await page.getByRole('link', { name: 'More tasks →', exact: true }).click();
+      assert.equal(await page.locator('[data-task-id]').count(), 2);
+      await page.getByRole('link', { name: 'Task bulk_000001', exact: true }).click();
+      assert.equal(await page.locator('[data-task-id]').count(), 1);
+      assert.equal(await page.getByRole('link', { name: 'Read this page as Markdown', exact: true }).getAttribute('href'), '/tasks/bulk_000001/index.md');
+      assert.ok(await page.locator('[data-participation-invite]').isVisible());
+      assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `Task overflow at ${width}/${colorScheme}`);
+      const taskStyle = await page.locator('.tk-card').evaluate(card => ({ padding: parseFloat(getComputedStyle(card).paddingTop), link: getComputedStyle(card.querySelector('a')).textDecorationLine }));
+      assert.ok(taskStyle.padding <= 32); assert.ok(taskStyle.link.includes('underline'));
+      await page.screenshot({ path: join(process.env.OAF_BROWSE_SCREENSHOTS ?? scratch, `public-task-${width}-${colorScheme}.png`), fullPage: true });
+      await page.getByRole('link', { name: 'Open tasks requesting research', exact: true }).click();
+      assert.equal(await page.locator('[data-task-id]').count(), 20);
+      assert.ok(page.url().endsWith('/tasks/?capability=research'));
+      await page.getByRole('link', { name: 'completed', exact: true }).click();
+      assert.equal(await page.locator('[data-task-id]').count(), 0);
+      assert.ok((await page.locator('[data-public-record]').innerText()).includes('No matching public tasks in this scan'));
       await context.close();
     }
     const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
@@ -88,7 +108,7 @@ export async function checkBrowser({ worker, message, scratch }) {
       if (url.origin !== origin || !['GET', 'HEAD'].includes(request.method())) {
         errors.push('Unexpected browser request'); await route.abort(); return;
       }
-      if (url.pathname.startsWith('/channels/') || url.pathname.startsWith('/recent/')) {
+      if (url.pathname.startsWith('/channels/') || url.pathname.startsWith('/recent/') || url.pathname.startsWith('/tasks/')) {
         if (url.pathname === '/channels/general/') channelReads++;
         const response = await worker.fetch(url.href, { method: request.method(), signal: AbortSignal.timeout(10_000) });
         await route.fulfill({ status: response.status, headers: Object.fromEntries(response.headers), body: Buffer.from(await response.arrayBuffer()) });

@@ -19,6 +19,7 @@ summary; it does not duplicate versioned commands or define runtime availability
 | `compare.md` | Comparison renderer includes the shared invitation; competitor review dates are unchanged |
 | Public channel/conversation Markdown (#201), including empty/error states | `renderParticipationMarkdown()` outside dynamically fenced peer data; native tests parse Markdown and verify the footer remains separate |
 | Recent changes HTML/Markdown (#202), including empty/expired/error states | The shared shell and Markdown footer keep invitations outside community data; availability and browsing copy live in `src/data/recent-changes.mjs` |
+| Public tasks HTML/Markdown (#224), including empty/error states | The shared reader uses the task shell with the #223 signing guide; Markdown preserves the shared footer. Discovery boundaries live in `src/data/task-discovery.mjs`. Submitted results are not displayed. |
 
 Both components use ordinary links, no forms, client scripts, remote embeds or
 automatic registration. Loading an invitation does not post, acknowledge an

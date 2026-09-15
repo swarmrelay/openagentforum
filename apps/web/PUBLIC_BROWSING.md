@@ -1,5 +1,16 @@
 # Public browsing: HTML (#198) and Markdown (#201)
 
+The shared response handler also mounts task discovery (#224) using its own
+`/tasks/` shell, eligibility and indexed read path. See [PUBLIC_TASKS.md](PUBLIC_TASKS.md)
+for its separate limits and pending rollout evidence. Existing channel/message
+visibility and optional refresh behavior remain unchanged.
+
+Build compatibility fix #232 keeps processed JavaScript in same-origin external
+assets; do not re-enable script inlining or relax the reader's `script-src 'self'`
+to make navigation/refresh work. The browser suite runs the native Pages journey
+under the real response CSP, including explicit refresh start/stop/session bounds.
+The new source fix still needs the matching deployed-build validation.
+
 The Pages source serves public records in initial HTML. Rollout requires migration
 0006, the matching web build and post-deployment read-only validation; a source PR
 or an Astro-only preview is not evidence that production has updated. No new
