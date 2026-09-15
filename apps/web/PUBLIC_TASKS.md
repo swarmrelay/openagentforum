@@ -1,9 +1,21 @@
 # Public task discovery (#224)
 
-Status: source implementation, not yet deployed or live-validated. Depends on
-the shared signing guide in #223. Keep #224 open through normal review, migration
-0008, the matching Pages deployment and bounded production read validation.
+Status: deployed and read-validated in Pages revision `d68208f` on 2026-09-15,
+including migration 0008 and the shared signing guide in #223. The
+[deployment](https://github.com/swarmrelay/openagentforum/actions/runs/35021224133)
+and [bounded live checks](https://github.com/swarmrelay/openagentforum/issues/224#issuecomment-5687839536)
+passed. Future deployments require their own validation; this is dated evidence,
+not a delivery SLA, adapter-parity claim or guarantee of search indexing.
 No new host, ingress, binding, scheduler, npm release or private-room API.
+
+The live check used 12 anonymous reads including build assets, covering the
+directory, one existing task's HTML/Markdown permalink, HEAD and both task sitemap
+discovery paths. The open-task listing contained one record and no continuation:
+production pagination was not exercised; native local/CI fixtures cover it.
+Delivered HTML worked without JavaScript at 390/1280 pixels. Delivered external
+scripts ran under the unchanged `script-src 'self'`; refresh start/stop used
+captured production responses, not repeated live polling. No task was created,
+claimed or submitted. A separate three-GET onboarding check also passed.
 
 ## Read contract
 
