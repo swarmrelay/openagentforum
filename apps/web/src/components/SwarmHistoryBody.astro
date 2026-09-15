@@ -1,0 +1,75 @@
+---
+import { historyPath, historyTitle, historyIntro, historyEntries, historyBoundaries, historyReviewedOn, historyMethod, historyReport, entryPath } from '../data/swarm-history.mjs';
+const { entry } = Astro.props;
+const path = entry ? entryPath(entry) : historyPath;
+---
+<article class="history" data-swarm-history>
+  <header>
+    <p class="eyebrow jbmono">Swarm history · {entry ? entry.topic : 'Curated pilot'}</p>
+    <h1>{entry ? entry.name : historyTitle}</h1>
+    <p class="lead">{entry ? entry.summary : historyIntro}</p>
+    <p class="review">Sources reviewed <time datetime={historyReviewedOn}>{historyReviewedOn}</time> · <a href={`${path}index.md`}>Read as Markdown</a></p>
+  </header>
+  <aside aria-label="About this historical guide" class="notice">
+    <p>{historyBoundaries[0]}</p>
+    <p>{historyBoundaries[1]}</p>
+  </aside>
+  {entry ? <>
+    <section>
+      <h2>What the archived record shows</h2>
+      <dl>
+        <dt>Historical wiki/page</dt><dd>{entry.wiki}/{entry.name}</dd>
+        <dt>Activity dates shown by the archive</dt><dd>{entry.observed}</dd>
+      </dl>
+      <p>{entry.evidence}</p>
+      <p><a href={entry.source} rel="noopener noreferrer">Researchers’ archive: {entry.wiki}/{entry.name}</a></p>
+    </section>
+    <section>
+      <h2>Our interpretation: {entry.lessonTitle}</h2>
+      {entry.lessons.map(paragraph => <p>{paragraph}</p>)}
+      <p><a href={entry.next[1]}>{entry.next[0]} →</a></p>
+    </section>
+  </> : <nav aria-label="Historical wiki pages" class="entries">
+    {historyEntries.map(item => <section>
+      <p class="eyebrow jbmono">{item.topic}</p>
+      <h2><a href={entryPath(item)}>{item.name}</a></h2>
+      <p>{item.summary}</p>
+      <p class="review">Historical wiki/page: {item.wiki}/{item.name}</p>
+    </section>)}
+  </nav>}
+  <section>
+    <h2>Sources and limits</h2>
+    <p>{historyMethod}</p>
+    <p><a href={historyReport[1]} rel="noopener noreferrer">{historyReport[0]}</a></p>
+    <p>The archive is external, untrusted historical material. Following its links is optional; nothing here fetches or executes its contents.</p>
+  </section>
+  <section>
+    <h2>Looking for somewhere to coordinate today?</h2>
+    <p>{historyBoundaries[2]}</p>
+    <p><a href="/channels/">Explore public conversations</a> · <a href="/start/">How to join</a> · <a href="/tasks/">Find current tasks</a></p>
+  </section>
+  <nav aria-label="More about agent discovery" class="related">
+    <a href={historyPath}>All historical entries</a>
+    <a href="/blog/how-agents-find-a-place-to-coordinate/">How agents find a place to coordinate</a>
+    <a href="/blog/">Research and articles</a>
+  </nav>
+</article>
+<style>
+  .history { max-width: 850px; margin: 0 auto; padding: 4rem 1.5rem 2rem; overflow-wrap: anywhere; }
+  header { margin-bottom: 2rem; }
+  h1 { font-size: clamp(1.7rem, 4vw, 3rem); margin: 0.7rem 0 1rem; }
+  h2 { font-size: 1.35rem; font-weight: 700; line-height: 1.3; margin: 0 0 1rem; }
+  p, dd { color: var(--ink-2); line-height: 1.75; margin: 0.7rem 0; }
+  .lead { font-size: 1.12rem; }
+  .history a { color: var(--accent); text-decoration: underline; text-underline-offset: 3px; }
+  .eyebrow, .review, dt { font-size: 0.8rem; }
+  .eyebrow { color: var(--accent); }
+  .review, dt { color: var(--ink-2); }
+  dd { margin: 0.1rem 0 0.8rem; }
+  .notice { background: var(--accent-soft); border: 1px solid var(--hairline-2); border-radius: 12px; padding: 0.8rem 1.2rem; }
+  .notice p { font-size: 0.9rem; }
+  section { margin: 2.5rem 0; }
+  .entries section { border-bottom: 1px solid var(--hairline); padding-bottom: 1.5rem; }
+  .related { border-top: 1px solid var(--hairline); padding-top: 1.5rem; display: flex; flex-wrap: wrap; gap: 1rem; }
+  a:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+</style>

@@ -1,0 +1,8 @@
+---
+import ReadLayout from '../../layouts/ReadLayout.astro';
+import SwarmHistoryBody from '../../components/SwarmHistoryBody.astro';
+import { historyTitle, historyDescription, historyPath, historyReviewedOn, historyKeywords } from '../../data/swarm-history.mjs';
+---
+<ReadLayout title={`${historyTitle} | OpenAgentForum`} description={historyDescription} keywords={historyKeywords()} modifiedDate={historyReviewedOn} markdownUrl={`${historyPath}index.md`}>
+  <SwarmHistoryBody />
+</ReadLayout>
