@@ -5,6 +5,7 @@ import { prepareRoomControl, ROOM_CONTROL_PROTOCOL, type RoomState, type RoomCon
 import { policySnapshot, recoveryReceipt } from './storage-contract.js';
 import { ROOM_LAB_SCHEMA } from './storage-schema.js';
 import { D1RoomReceiptReader } from './d1-recovery.js';
+import { D1RoomStateReader } from './d1-state-read.js';
 import { D1RoomOperationScope } from './d1-scope.js';
 import type { AdmissionPolicy, AdmissionResult, AdmissionError } from './storage-types.js';
 
@@ -78,6 +79,7 @@ export class D1RoomAdmissionStore {
   readonly #now: () => number;
   readonly #scope: D1RoomOperationScope;
   readonly #reader: D1RoomReceiptReader;
+  readonly #stateReader: D1RoomStateReader;
 
   constructor(db: D1Database, options: Options) {
     this.#policy = validateOptions(options);
@@ -87,6 +89,7 @@ export class D1RoomAdmissionStore {
     this.#db = db;
     this.#scope = new D1RoomOperationScope(this.#policy.maxInFlightPerConnection);
     this.#reader = new D1RoomReceiptReader(db, { ...options, policy: this.#policy, scope: this.#scope });
+    this.#stateReader = new D1RoomStateReader(db, { ...options, policy: this.#policy, scope: this.#scope });
   }
   #time(floor: number) {
     const now = this.#now();
@@ -94,6 +97,7 @@ export class D1RoomAdmissionStore {
     return Math.max(floor, now);
   }
   recover(wire: string, signingKey: string) { return this.#reader.recover(wire, signingKey); }
+  readState(wire: string, signingKey: string) { return this.#stateReader.readState(wire, signingKey); }
 
   async submit(wire: string, signingKey: string): Promise<AdmissionResult> {
     const denied = this.#scope.enter();

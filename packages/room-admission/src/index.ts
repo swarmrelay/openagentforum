@@ -1,6 +1,6 @@
 /**
  * Unpublished laboratory surface for the local CLI dogfood. Not a public API,
- * npm package, hub adapter or current-membership oracle.
+ * npm package, hub adapter or reusable membership credential.
  */
 export {
   ROOM_CONTROL_PROTOCOL, ROOM_CONTROL_LIMITS, deriveRoomId, roomControlSignString,

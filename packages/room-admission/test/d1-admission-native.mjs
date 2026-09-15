@@ -10,6 +10,7 @@ import workerd from 'workerd';
 import { generateAgentKeyPair, sha256Hex } from '@openagentforum/protocol';
 import { ROOM_CONTROL_PROTOCOL, deriveRoomId, roomControlSignString, signRoomControl } from '../dist/control.js';
 import { ROOM_RECOVERY_PROTOCOL, signRoomRecovery } from '../dist/recovery.js';
+import { ROOM_STATE_PROTOCOL, signRoomState } from '../dist/state-read.js';
 
 let mf, worker, scratch, runtimeConfig;
 let outbound = 0;
@@ -89,7 +90,13 @@ async function setup(patch = {}) {
       roomId: a.roomId, requestId: a.requestId, proofDigest: await sha256Hex(roomControlSignString(a)), issuedAt: now, expiresAt: now + 60000 };
     return call('recover', { wire: await signRoomRecovery(query, owner.signingPrivateKey), key: owner.signingPublicKey });
   };
-  return { call, action, owner, peer, outsider, submit, inspect, state, recover };
+  const readState = async (roomId, actor = owner, extra = {}) => {
+    const now = Date.now();
+    const query = { protocol: ROOM_STATE_PROTOCOL, hub, actor: actor.agentId, queryId: 'b'.repeat(32), roomId,
+      issuedAt: now, expiresAt: now + 60000 };
+    return call('state', { wire: await signRoomState(query, actor.signingPrivateKey), key: actor.signingPublicKey, ...extra });
+  };
+  return { call, action, owner, peer, outsider, submit, inspect, state, recover, readState };
 }
 
 test('native D1 full create/invite/accept/close and recovery uses authoritative state, not fixture-seeded receipts', async () => {
@@ -179,4 +186,76 @@ test('native D1 rejects a proof that expires while queued even with a stale work
   create.expiresAt = create.issuedAt + 25;
   assert.deepEqual(await f.submit(create, f.owner, { fault: 'queued-expiry', now: create.issuedAt }), { ok: false, reason: 'expired_proof' });
   assert.equal((await f.inspect()).rooms.length, 0);
+});
+
+test('native D1 member-only state reads follow real admission and never return keys or invitations', async () => {
+  const f = await setup(); const create = await f.action(f.owner); assert.equal((await f.submit(create)).ok, true);
+  const before = await f.inspect();
+  const owner = await f.readState(create.roomId);
+  assert.deepEqual(owner.result.room, { roomId: create.roomId, revision: 1, status: 'open', role: 'owner' });
+  assert.equal(owner.queries, 2);
+  assert.equal((await f.readState(create.roomId, f.peer)).result.room, null);
+  assert.equal((await f.readState(`room_${'f'.repeat(32)}`)).result.room, null);
+  assert.deepEqual(await f.inspect(), before);
+  const invite = await f.action(f.owner, 'invite', await f.state(create.roomId), {
+    recipient: f.peer.agentId, recipientSigningPublicKey: f.peer.signingPublicKey, inviteExpiresAt: Date.now() + 120000 });
+  assert.equal((await f.submit(invite)).ok, true);
+  assert.equal((await f.readState(create.roomId, f.peer)).result.room, null);
+  const invited = await f.state(create.roomId);
+  assert.equal((await f.submit(await f.action(f.peer, 'accept', invited, {
+    invitationDigest: invited.invitation.digest, encryptionPublicKey: f.peer.encryptionPublicKey }), f.peer)).ok, true);
+  assert.deepEqual((await f.readState(create.roomId, f.peer)).result.room,
+    { roomId: create.roomId, revision: 3, status: 'open', role: 'peer' });
+  assert.equal((await f.readState(create.roomId, f.outsider)).result.room, null);
+  assert.equal((await f.submit(await f.action(f.peer, 'close', await f.state(create.roomId), {}), f.peer)).ok, true);
+  assert.deepEqual((await f.readState(create.roomId, f.peer)).result.room,
+    { roomId: create.roomId, revision: 4, status: 'closed', role: 'peer' });
+  const closed = await f.inspect(); await mf.dispose(); await startRuntime();
+  assert.equal((await f.readState(create.roomId)).result.room.status, 'closed');
+  assert.equal((await f.readState(create.roomId, f.outsider)).result.room, null);
+  assert.deepEqual(await f.inspect(), closed);
+});
+
+test('native D1 state reads remain read-only at reserved close capacity', async () => {
+  const f = await setup({ maxReceipts: 2 }); const create = await f.action(f.owner);
+  assert.equal((await f.submit(create)).ok, true);
+  const before = await f.inspect();
+  assert.equal((await f.readState(create.roomId)).result.room.status, 'open');
+  assert.deepEqual(await f.inspect(), before);
+  assert.equal((await f.submit(await f.action(f.owner, 'close', await f.state(create.roomId), {}))).ok, true);
+  const closed = await f.inspect();
+  assert.equal((await f.readState(create.roomId)).result.room.status, 'closed');
+  assert.deepEqual(await f.inspect(), closed);
+});
+
+test('native D1 invalid state signatures stop before querying rooms', async () => {
+  const f = await setup(); const create = await f.action(f.owner); assert.equal((await f.submit(create)).ok, true);
+  const now = Date.now();
+  const query = { protocol: ROOM_STATE_PROTOCOL, hub, actor: f.owner.agentId, queryId: 'b'.repeat(32), roomId: create.roomId,
+    issuedAt: now, expiresAt: now + 60000 };
+  const result = await f.call('state', { wire: await signRoomState(query, f.outsider.signingPrivateKey), key: f.owner.signingPublicKey });
+  assert.deepEqual(result.result, { ok: false, reason: 'invalid_signature' }); assert.equal(result.queries, 1);
+});
+
+test('native D1 rejects expired asynchronous state responses and poisons uncertain reads', async () => {
+  const f = await setup(); const create = await f.action(f.owner); assert.equal((await f.submit(create)).ok, true);
+  const before = await f.inspect();
+  assert.deepEqual((await f.readState(create.roomId, f.owner, { fault: 'state-expiry' })).result, { ok: false, reason: 'expired_proof' });
+  const failed = await f.readState(create.roomId, f.owner, { fault: 'state-failure' });
+  assert.deepEqual(failed.result, { ok: false, reason: 'storage_error' });
+  assert.deepEqual(failed.poisoned, Array(3).fill({ ok: false, reason: 'storage_error' }));
+  assert.equal(failed.queries, 2);
+  assert.deepEqual(await f.inspect(), before);
+});
+
+test('native D1 overlapping close does not turn a status snapshot into a reusable permission', async () => {
+  const f = await setup(); const create = await f.action(f.owner); assert.equal((await f.submit(create)).ok, true);
+  const state = await f.state(create.roomId);
+  const close = await f.action(f.owner, 'close', state, {});
+  const read = await f.readState(create.roomId, f.owner, { closeWire: await signRoomControl(close, f.owner.signingPrivateKey) });
+  assert.equal(read.result.room.status, 'open'); // Read snapshot predates the overlapping close.
+  assert.equal((await f.readState(create.roomId)).result.room.status, 'closed');
+  const invite = await f.action(f.owner, 'invite', state, {
+    recipient: f.peer.agentId, recipientSigningPublicKey: f.peer.signingPublicKey, inviteExpiresAt: Date.now() + 120000 });
+  assert.equal((await f.submit(invite)).ok, false); // Old status cannot authorize a new mutation.
 });
