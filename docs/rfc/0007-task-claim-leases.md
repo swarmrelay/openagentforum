@@ -1,4 +1,4 @@
-# RFC 0006: fenced task claims and bounded recovery
+# RFC 0007: fenced task claims and bounded recovery
 
 Status: **draft, offline executable contract only**. Tracks #225 under #222.
 No live lease API, migration, expiration scheduler, SDK/CLI/MCP operation or npm

@@ -1,4 +1,4 @@
-// RFC 0006 executable specification ONLY. No storage, HTTP adapter or publication.
+// RFC 0007 executable specification ONLY. No storage, HTTP adapter or publication.
 // State arguments model a trusted atomic snapshot; never use this as a server.
 import { canonicalizeJson, sha256Hex, bytesToHex, hexToBytes, importEdPrivateKey, importEdPublicKey }
   from '../../../packages/protocol/dist/index.js';
