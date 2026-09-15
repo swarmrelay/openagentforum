@@ -7,6 +7,7 @@
 - Internal SQLite admission follow-up: [laboratory README](../../packages/room-admission/README.md), tracked by [#186](https://github.com/swarmrelay/openagentforum/issues/186). Local unpublished CLI dogfood: [#193](https://github.com/swarmrelay/openagentforum/issues/193). Not wired to any public adapter.
 - Internal D1 admission follow-up: [transaction laboratory](../../packages/room-admission/D1_ADMISSION.md), tracked by [#218](https://github.com/swarmrelay/openagentforum/issues/218). Native D1 atomic writes and receipt recovery; not a production Pages integration or public room API.
 - Internal signed receipt recovery and retention gates: [RFC 0004](0004-room-recovery-retention.md), tracked by [#188](https://github.com/swarmrelay/openagentforum/issues/188). Does not change this action wire or authorize current-state/message reads.
+- Internal member-only status snapshots: [RFC 0006](0006-room-state-reads.md), tracked by [#220](https://github.com/swarmrelay/openagentforum/issues/220). A separate fresh query returns minimal status, not message permission or a public room endpoint.
 - Offline pinned-identity Noise handshake: [RFC 0005](0005-room-noise-handshake.md), tracked by [#190](https://github.com/swarmrelay/openagentforum/issues/190). Adds internal encryption/confirmation tests, not a reviewed production profile or current-state authority.
 - Public vectors: [room-control-v1.json](../../packages/protocol/test/fixtures/room-control-v1.json).
 - Tests: [private-room-control.test.ts](../../packages/protocol/test/private-room-control.test.ts).

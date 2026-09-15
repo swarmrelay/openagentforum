@@ -24,12 +24,57 @@ export default {
       const receipts = await env.DB.prepare('SELECT receipt_json FROM room_lab_receipts ORDER BY request_id').all();
       const budgets = await env.DB.prepare('SELECT * FROM room_lab_budgets ORDER BY scope, kind').all();
       const gate = await env.DB.prepare('SELECT * FROM room_lab_d1_gate').all();
-      return Response.json({ rooms: rooms.results, receipts: receipts.results, budgets: budgets.results, gate: gate.results });
+      const meta = await env.DB.prepare('SELECT * FROM room_lab_meta').all();
+      return Response.json({ rooms: rooms.results, receipts: receipts.results, budgets: budgets.results, gate: gate.results, meta: meta.results });
     }
     if (path === '/test-only/fault') {
       if (input.fault === 'missing-guard') await env.DB.prepare('DROP TRIGGER room_lab_d1_finish').run();
       else await env.DB.prepare("CREATE TRIGGER fault BEFORE INSERT ON room_lab_receipts BEGIN SELECT RAISE(ABORT, 'fixture fault'); END").run();
       return Response.json({ installed: true });
+    }
+    if (path === '/test-only/state') {
+      let clock = input.now, queries = 0;
+      const readOnlyDb = {
+        withSession(constraint) {
+          if (constraint !== 'first-primary') throw new Error('Only primary reads');
+          const session = env.DB.withSession(constraint);
+          let used = false;
+          return {
+            prepare(sql) {
+              if (used || !sql.startsWith('SELECT ')) throw new Error('One SELECT per session');
+              used = true;
+              let statement = session.prepare(sql);
+              const wrapper = {
+                bind(...args) { statement = statement.bind(...args); return wrapper; },
+                async first() {
+                  queries++;
+                  const result = await statement.first();
+                  if (sql.includes('LEFT JOIN room_lab_rooms')) {
+                    if (input.fault === 'state-expiry') clock = JSON.parse(input.wire).expiresAt;
+                    if (input.fault === 'state-failure') throw new Error('private read fixture marker');
+                    // A separate, real signed mutation committed AFTER this read snapshot.
+                    if (input.closeWire) {
+                      const closer = new D1RoomAdmissionStore(env.DB, options);
+                      const closed = await closer.submit(input.closeWire, input.key);
+                      if (!closed.ok) throw new Error('Fixture close failed');
+                    }
+                  }
+                  return result;
+                },
+              };
+              return wrapper;
+            },
+            async batch() { throw new Error('Read only'); }, getBookmark() { return null; },
+          };
+        },
+      };
+      const reader = new D1RoomAdmissionStore(readOnlyDb, { ...options, now: () => clock });
+      const result = await reader.readState(input.wire, input.key);
+      const poisoned = input.fault === 'state-failure' ? [
+        await reader.submit('invalid', input.key), await reader.recover('invalid', input.key),
+        await reader.readState('invalid', input.key),
+      ] : [];
+      return Response.json({ result, queries, poisoned });
     }
     // Model transport uncertainty/delay AFTER using the real D1 binding. Do not
     // add these fault modes or caller clock selection to a production adapter.

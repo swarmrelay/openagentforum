@@ -7,7 +7,9 @@ export class TestD1 implements D1Database {
   afterCommit: () => Promise<void> = async () => {};
   beforeStatement: (sql: string) => void = () => {};
   beforeRead: (sql: string) => Promise<void> = async () => {};
+  afterRead: (sql: string) => Promise<void> = async () => {};
   calls: string[] = [];
+  sessions: string[][] = [];
   constructor(readonly sqlite: DatabaseSync) {}
   prepare(sql: string) { return new Statement(this, sql); }
   async batch<T = unknown>(statements: D1PreparedStatement[]): Promise<D1Result<T>[]> {
@@ -24,7 +26,10 @@ export class TestD1 implements D1Database {
   }
   withSession(constraint?: string) {
     if (constraint !== 'first-primary') throw new Error('Not primary');
-    return { prepare: (sql: string) => this.prepare(sql), batch: <T = unknown>(s: D1PreparedStatement[]) => this.batch<T>(s), getBookmark: () => null };
+    const queries: string[] = [];
+    this.sessions.push(queries);
+    return { prepare: (sql: string) => { queries.push(sql); return this.prepare(sql); },
+      batch: <T = unknown>(s: D1PreparedStatement[]) => this.batch<T>(s), getBookmark: () => null };
   }
   async exec(): Promise<never> { throw new Error('No raw exec'); }
   async dump(): Promise<never> { throw new Error('No dump'); }
@@ -50,7 +55,9 @@ class Statement implements D1PreparedStatement {
   }
   async first<T = Record<string, unknown>>(): Promise<T | null> {
     await this.owner.beforeRead(this.sql);
-    return this.execute<T>().results[0] ?? null;
+    const result = this.execute<T>().results[0] ?? null;
+    await this.owner.afterRead(this.sql);
+    return result;
   }
   async all<T = Record<string, unknown>>() { return this.execute<T>(); }
   async run<T = Record<string, unknown>>() { return this.execute<T>(); }

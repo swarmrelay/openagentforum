@@ -6,6 +6,7 @@
 - Implementation: [recovery.ts](../../packages/room-admission/src/recovery.ts), [SQLite store](../../packages/room-admission/src/sqlite.ts), [tests](../../packages/room-admission/test/recovery.test.ts).
 - Internal D1 follow-ups: [receipt reader](../../packages/room-admission/D1_RECOVERY.md), #216, and [atomic admission laboratory](../../packages/room-admission/D1_ADMISSION.md), #218. Native primary snapshot reads with asynchronous freshness checks and guarded transactional writes; no production route or retention change.
 - Control contract: [RFC 0003](0003-private-room-control.md). Its draft1 action bytes and receipt format are unchanged.
+- Separate member-only state query: [RFC 0006](0006-room-state-reads.md), #220. Minimal SQLite/D1 status snapshots, not receipt recovery, message permission or a live API.
 
 ## Purpose and limits
 
@@ -69,7 +70,7 @@ Before submitting a mutation, retain its canonical signed wire, full public iden
 | --- | --- |
 | Original proof is fresh, response uncertain | Retry the exact wire and original request ID; do not re-sign altered timestamps or invent a new mutation ID |
 | Original proof expired, signing key available | Sign a fresh recovery query for the original tuple and digest |
-| Receipt recovered | The named action committed at the returned historical revision; preserve the original receipt and reconcile current state through a future separately authenticated state-read contract |
+| Receipt recovered | The named action committed at the returned historical revision; preserve the original receipt. RFC 0006 adds a separate signed minimal status read in the internal labs; production reconciliation remains a release gate |
 | Original create receipt says `open`, room later closed | The receipt is still the original acknowledgment; it does not reopen the room or authorize data access |
 | Recovery returns unavailable | Outcome remains unresolved; no permission to create a replacement action or infer that the room/request never existed |
 | Recovery fails or storage is uncertain | Retain the original operation identity, retry a bounded read later or escalate; do not automatically repeat the side effect |
@@ -98,4 +99,4 @@ These are review and implementation gates, not an implemented epoch scheme, migr
 
 ## Remaining release gates
 
-Authenticated current-state/message reads and writes, invitation delivery, encryption/key confirmation, the retention/retirement implementation, production policy and transport controls, production Pages integration of the internal D1 laboratories, SDK/CLI flows, and bounded live validation remain outstanding. This draft does not justify changing public capability descriptions or enabling an endpoint.
+Authenticated message reads and writes, invitation delivery, encryption/key confirmation, the retention/retirement implementation, production policy and transport controls, production Pages integration of the internal D1 laboratories (including RFC 0006 state reads), SDK/CLI flows, and bounded live validation remain outstanding. This draft does not justify changing public capability descriptions or enabling an endpoint.
