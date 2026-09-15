@@ -7,7 +7,9 @@ remain Planned.** Read [README.md](README.md), [RFC 0003](../../docs/rfc/0003-pr
 and [D1_RECOVERY.md](D1_RECOVERY.md) before changing this implementation.
 
 `src/d1-admission.ts` adds `D1RoomAdmissionStore.submit(rawWire, fullSigningKey)`
-and `recover(rawWire, fullSigningKey)`. It accepts no client-prepared state,
+and `recover(rawWire, fullSigningKey)`. The later [RFC 0006](../../docs/rfc/0006-room-state-reads.md)
+adds `readState(rawWire, fullSigningKey)` for minimal member-only status snapshots,
+sharing verification slots and poisoning with both methods. It accepts no client-prepared state,
 verified flag, SQL, bookmark or cached membership authority. The operator supplies
 one authoritative D1 binding, exact hub, complete policy and trusted clock.
 Constructor/import performs no I/O. `initializeD1RoomAdmission` explicitly creates
@@ -83,7 +85,7 @@ it does not require a fresh create/invite budget. Independent store instances
 share the SQL limits, not a JavaScript mutex. Finite lifetime retention, fixed-window
 bursts and clock trust have the same limitations described in the README.
 
-All thrown storage errors return generic `storage_error` and poison both methods
+All thrown storage errors return generic `storage_error` and poison all three methods
 on that instance. This includes a failed final guard: **do not parse driver error
 text into a promise of rollback or absence**. A driver can also lose a response
 after commit. Reconstruct with the authoritative binding and retry only the exact
@@ -114,7 +116,7 @@ production endpoints**.
 Local D1 evidence is not remote replica/commit-latency, production load, disaster
 recovery or cross-adapter conformance evidence. The local shared operation scope
 is not durable cross-request verification/abuse protection. Still required:
-authenticated current-state/message authorization, reviewed encryption and key
+production state-read integration and authenticated message authorization, reviewed encryption and key
 confirmation, strict transport decoding/errors/cache/logging, request/verification/
 stream bounds, invitation delivery, production retention/policy/migrations,
 published clients and bounded live validation. No public adapter imports this

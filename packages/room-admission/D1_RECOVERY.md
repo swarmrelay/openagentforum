@@ -57,9 +57,12 @@ The caller owns the instance lifetime. Do not keep request state or a reader in
 Worker globals. The in-flight bound is local to that instance, **not** durable
 cross-request, per-agent or hub-wide abuse protection. `D1RoomAdmissionStore`
 shares its slots and poisoning state with its receipt reader; a standalone reader
-has its own scope. Transport authentication,
-strict UTF-8 and byte limits, request/time/rate controls, private error/log/cache
-handling and shared admission/recovery verification admission remain release
+has its own scope.
+The [RFC 0006 state reader](../../docs/rfc/0006-room-state-reads.md) also shares that
+store scope; it is a separate fresh query, never a recovered receipt as membership.
+Transport authentication, strict UTF-8 and byte limits, request/time/rate controls,
+private error/log/cache handling and durable cross-request verification admission
+for all three operations remain release
 gates before any public integration. The metadata read itself needs those bounds.
 
 ## Verification and limits

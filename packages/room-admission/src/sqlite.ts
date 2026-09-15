@@ -6,6 +6,7 @@ import {
   type PreparedRoomControl, type RoomControlError, type RoomState,
 } from './control.js';
 import { prepareRoomRecovery, type RoomRecoveryQuery } from './recovery.js';
+import { prepareRoomStateRead, roomStateView, type RoomStateReadResult } from './state-read.js';
 import { policySnapshot, recoveryReceipt } from './storage-contract.js';
 import { ROOM_LAB_SCHEMA } from './storage-schema.js';
 import type { AdmissionPolicy, AdmissionReceipt, AdmissionError, AdmissionResult, RecoveryResult } from './storage-types.js';
@@ -162,6 +163,49 @@ export class RoomAdmissionStore {
       this.#broken = true;
       return fail('storage_error');
     } finally { this.#inFlight -= 1; }
+  }
+
+  /** Minimal member-only state read. This result never authorizes a later message operation. */
+  async readState(wire: string, signingKey: string): Promise<RoomStateReadResult> {
+    const fail = (reason: RoomControlError | 'storage_error' | 'busy'): RoomStateReadResult => ({ ok: false, reason });
+    if (this.#broken) return fail('storage_error');
+    if (this.#inFlight >= this.#policy.maxInFlightPerConnection) return fail('busy');
+    this.#inFlight++;
+    let begun = false;
+    try {
+      const initial = this.#meta();
+      const startedAt = this.#time(initial);
+      const prepared = await prepareRoomStateRead(wire, signingKey, { hub: this.#hub, now: startedAt });
+      if (this.#broken) return fail('storage_error');
+      if (!prepared.ok) return prepared;
+      // No await inside this read transaction. Metadata, membership and status share its snapshot.
+      this.#db.exec('BEGIN');
+      begun = true;
+      const meta = this.#meta();
+      if (meta.clock < initial.clock) throw new Error('Clock regression');
+      const observedAt = Math.max(startedAt, this.#time(meta));
+      const stale = prepared.freshness(observedAt);
+      if (stale) {
+        this.#db.exec('ROLLBACK'); begun = false;
+        return fail(stale);
+      }
+      const row = this.#db.prepare('SELECT state_json FROM room_lab_rooms WHERE room_id = ?')
+        .get(prepared.query.roomId);
+      const room = roomStateView(row ? row.state_json : null, prepared.query, signingKey);
+      const expired = prepared.freshness(Math.max(observedAt, this.#time(meta)));
+      if (expired) {
+        this.#db.exec('ROLLBACK'); begun = false;
+        return fail(expired);
+      }
+      this.#db.exec('COMMIT'); begun = false;
+      const finalExpiry = prepared.freshness(Math.max(observedAt, this.#time(meta)));
+      if (finalExpiry) return fail(finalExpiry);
+      return { ok: true, queryId: prepared.query.queryId, observedAt, room };
+    } catch {
+      if (begun) { try { this.#db.exec('ROLLBACK'); } catch { /* never infer absence */ } }
+      this.#broken = true;
+      return fail('storage_error');
+    } finally { this.#inFlight--; }
   }
 
   #recoverReceipt(query: Readonly<RoomRecoveryQuery>, signingKey: string): AdmissionReceipt | null {
