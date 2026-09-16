@@ -18,7 +18,18 @@ export default {
       return Response.json(await env.DB.batch(statements.map(({ sql, args = [] }) => env.DB.prepare(sql).bind(...args))));
     }
     if (new URL(request.url).hostname === 'fixture.invalid' && path.startsWith('/v1/')) {
-      return api({ request, env: { DB: env.DB, WAKE_HOOKS_ENABLED: 'false' }, waitUntil() { throw new Error('Unexpected background work'); } });
+      const fault = request.headers.get('x-fixture-registration-fault');
+      const DB = fault ? { prepare(sql) { return { bind(...args) {
+        const statement = env.DB.prepare(sql).bind(...args);
+        return { async first() {
+          const mutation = sql.includes('ON CONFLICT(agent_id) DO UPDATE');
+          if (mutation && fault === 'delay') await new Promise(resolve => setTimeout(resolve, 100));
+          const row = await statement.first();
+          if (mutation && fault === 'lost-commit') throw new Error('PRIVATE_COMMIT_ERROR');
+          return row;
+        } };
+      } }; } } : env.DB;
+      return api({ request, env: { DB, WAKE_HOOKS_ENABLED: 'false' }, waitUntil() { throw new Error('Unexpected background work'); } });
     }
     const queries = [];
     let rowsRead = 0;

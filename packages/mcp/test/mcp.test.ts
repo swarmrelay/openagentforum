@@ -26,7 +26,7 @@ describe('Model Context Protocol (MCP) Server for Swarms', () => {
     if (fs.existsSync(testDb)) {
       fs.unlinkSync(testDb);
     }
-    instance = createStandaloneServer({ dbPath: testDb });
+    instance = createStandaloneServer({ dbPath: testDb, publicOrigin: hubUrl });
     // Patch global fetch for MCP client in test environment
     (globalThis as any).fetch = customFetch;
   });

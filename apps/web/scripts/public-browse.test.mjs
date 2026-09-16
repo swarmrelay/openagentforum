@@ -9,7 +9,7 @@ import { Miniflare } from 'miniflare';
 import workerd from 'workerd';
 import { parse } from 'parse5';
 import { micromark } from 'micromark';
-import { generateAgentKeyPair, signEnvelope, canonicalizeJson, signTaskAction } from '@openagentforum/protocol';
+import { generateAgentKeyPair, signEnvelope, canonicalizeJson, signTaskAction, signProfileRegistration } from '@openagentforum/protocol';
 import { inspectPage } from './check-seo.mjs';
 import { taskClaimExample } from '../src/data/task-signing.mjs';
 
@@ -91,6 +91,53 @@ beforeEach(async () => {
     'UPDATE public_recent_state SET high_seq=0', "DELETE FROM sqlite_sequence WHERE name='public_message_arrivals'"].map(statement => ({ sql: statement })));
   await sql([{ sql: 'INSERT INTO agents (agent_id,name,public_key,registered_at,last_seen_at) VALUES (?,?,?,?,?)', args: [author.agentId, 'Fixture author', author.signingPublicKey, 1, 1] }]);
   await channel();
+});
+
+test('native D1 profile CAS, exact-retry receipts and content-bound signatures', async () => {
+  const keys = await generateAgentKeyPair();
+  const issuedAt = Date.now();
+  const document = { proofVersion: 2, action: 'register-profile', hub: 'https://fixture.invalid', publicKey: keys.signingPublicKey,
+    expectedRevision: 0, issuedAt, expiresAt: issuedAt + 300_000,
+    profile: { name: 'Native owner', x25519PublicKey: keys.encryptionPublicKey, capabilities: ['research'], metadata: {}, endpoint: null } };
+  const proof = await signProfileRegistration(document, keys.signingPrivateKey);
+  const post = body => worker.fetch('https://fixture.invalid/v1/agents/register', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  assert.equal((await post({ ...proof, profile: { ...proof.profile, name: 'Forged' } })).status, 403);
+  const results = await Promise.all(Array.from({ length: 4 }, async () => {
+    const response = await post(proof); assert.equal(response.status, 200); return response.json();
+  }));
+  assert.equal(results.filter(r => !r.replayed).length, 1);
+  assert.ok(results.every(r => r.receipt.revision === 1));
+  const contenders = await Promise.all(['A', 'B'].map(name => signProfileRegistration({ ...document, expectedRevision: 1, profile: { ...document.profile, name } }, keys.signingPrivateKey)));
+  const responses = await Promise.all(contenders.map(post));
+  assert.deepEqual(responses.map(r => r.status).sort(), [200, 409]);
+  assert.equal((await post(proof)).status, 409);
+  const stateResponse = await worker.fetch(`https://fixture.invalid/v1/agents/${keys.agentId}/registration`);
+  assert.equal(stateResponse.headers.get('cache-control'), 'no-store');
+  const state = await stateResponse.json();
+  assert.equal(state.revision, 2);
+  assert.equal(state.agent.publicKey, keys.signingPublicKey);
+  assert.equal(outbound, 0);
+});
+
+test('native D1 rejects expiry at the write boundary and recovers a lost commit without reapplying', async () => {
+  const keys = await generateAgentKeyPair();
+  const issuedAt = Date.now() - 1000;
+  const document = { proofVersion: 2, action: 'register-profile', hub: 'https://fixture.invalid', publicKey: keys.signingPublicKey,
+    expectedRevision: 0, issuedAt, expiresAt: Date.now() + 50,
+    profile: { name: 'Native recovery', x25519PublicKey: null, capabilities: [], metadata: {}, endpoint: null } };
+  const send = (proof, fault = '') => worker.fetch('https://fixture.invalid/v1/agents/register', { method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-fixture-registration-fault': fault }, body: JSON.stringify(proof) });
+  assert.equal((await send(await signProfileRegistration(document, keys.signingPrivateKey), 'delay')).status, 409);
+  const proof = await signProfileRegistration({ ...document, expiresAt: issuedAt + 300_000 }, keys.signingPrivateKey);
+  const lost = await send(proof, 'lost-commit');
+  assert.equal(lost.status, 503);
+  assert.doesNotMatch(await lost.text(), /PRIVATE_COMMIT_ERROR/);
+  const recovered = await send(proof);
+  assert.equal(recovered.status, 200);
+  assert.deepEqual((await recovered.json()).replayed, true);
+  const stored = (await sql([{ sql: 'SELECT profile_revision FROM agents WHERE agent_id = ?', args: [keys.agentId] }]))[0].results;
+  assert.equal(stored[0].profile_revision, 1);
+  assert.equal(outbound, 0);
 });
 
 test('native Pages/D1 renders linked public channels inside the actual built shell', async () => {

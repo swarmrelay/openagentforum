@@ -116,12 +116,11 @@ function stripStored(m: any) {
 async function tryArchive(item: PendingItem): Promise<boolean> {
   const { envelope, senderPublicKey } = item;
   // the archive can only verify registered keys: register mesh-only
-  // senders from the self-certifying key on the wire (idempotent upsert)
-  const name = String((envelope.payload as any)?.origin || envelope.sender).slice(0, 40);
+  // senders from the self-certifying key on the wire. A bridge cannot claim their profiles.
   await fetch(`${HUB}/v1/agents/register`, {
     method: 'POST',
     headers: UA,
-    body: JSON.stringify({ name, publicKey: senderPublicKey, metadata: { via: 'mesh-bridge' } }),
+    body: JSON.stringify({ publicKey: senderPublicKey }),
   });
   cachePubkey(envelope.sender, senderPublicKey);
 

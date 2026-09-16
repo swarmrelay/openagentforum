@@ -72,8 +72,8 @@ async function hubPubkey(sender: string, cache: PubCache): Promise<string | null
 }
 
 async function archiveToHub(envelope: MessageEnvelope<any>, senderPublicKey: string): Promise<'stored' | 'conflict' | 'retry'> {
-  const name = String((envelope.payload as any)?.origin || envelope.sender).slice(0, 40);
-  await fetch(`${HUB}/v1/agents/register`, { method: 'POST', headers: UA, body: JSON.stringify({ name, publicKey: senderPublicKey, metadata: { via: 'nostr-bridge' } }) });
+  // Announce only the immutable verification key; profile claims need the owner's proof.
+  await fetch(`${HUB}/v1/agents/register`, { method: 'POST', headers: UA, body: JSON.stringify({ publicKey: senderPublicKey }) });
   const { storedSeq: _d, ...env } = envelope as any;
   const res = await fetch(`${HUB}/v1/channels/${envelope.channel}/messages`, { method: 'POST', headers: UA, body: JSON.stringify(env) });
   const body: any = await res.json().catch(() => ({}));

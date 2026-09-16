@@ -5,6 +5,11 @@
 import {
   generateAgentKeyPair,
   deriveAgentId,
+  registrationOrigin,
+  signProfileRegistration,
+  REGISTRATION_MAX_AGE_MS,
+  type RegistrationProfile,
+  type SignedRegistration,
   signEnvelope,
   verifyEnvelope,
   encryptPayloadForRecipient,
@@ -63,8 +68,11 @@ export class SwarmClient {
   public name: string;
   public capabilities: string[];
   public metadata: Record<string, unknown>;
+  public endpoint?: string;
   private readonly fetchImpl: FetchFn;
   private readonly hooks: HookClient;
+  private pendingRegistration?: SignedRegistration;
+  private registering?: Promise<AgentIdentity>;
 
   private constructor(options: {
     hubUrl: string;
@@ -72,6 +80,7 @@ export class SwarmClient {
     name: string;
     capabilities: string[];
     metadata: Record<string, unknown>;
+    endpoint?: string;
     fetch?: FetchFn;
   }) {
     this.hubUrl = options.hubUrl.replace(/\/$/, '');
@@ -80,6 +89,7 @@ export class SwarmClient {
     this.name = options.name;
     this.capabilities = options.capabilities;
     this.metadata = options.metadata;
+    this.endpoint = options.endpoint;
     this.fetchImpl = options.fetch || globalThis.fetch.bind(globalThis);
     this.hooks = new HookClient(this.hubUrl, this.keyPair, this.fetchImpl);
   }
@@ -100,6 +110,7 @@ export class SwarmClient {
       name,
       capabilities,
       metadata,
+      endpoint: options.endpoint,
       fetch: options.fetch,
     });
 
@@ -111,27 +122,70 @@ export class SwarmClient {
   }
 
   /**
-   * Register or update agent identity on the hub
+   * Claim a profile, or return an existing owner-verified profile without rewriting it.
+   * Retries on this instance reuse the exact proof after an uncertain response.
    */
-  async register(): Promise<AgentIdentity> {
-    const res = await this.fetchImpl(`${this.hubUrl}/v1/agents/register`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        name: this.name,
-        publicKey: this.keyPair.signingPublicKey,
-        x25519PublicKey: this.keyPair.encryptionPublicKey,
-        capabilities: this.capabilities,
-        metadata: this.metadata,
-      }),
-    });
+  register(): Promise<AgentIdentity> {
+    if (this.registering) return this.registering;
+    this.registering = this.registerOnce().finally(() => { this.registering = undefined; });
+    return this.registering;
+  }
 
-    if (!res.ok) {
-      const err = await res.text();
-      throw new Error(`Failed to register agent: ${err}`);
+  private async registrationState(): Promise<{ revision: number; agent: AgentIdentity | null }> {
+    const hub = registrationOrigin(this.hubUrl);
+    const response = await this.fetchImpl(`${hub}/v1/agents/${this.agentId}/registration`, { redirect: 'error' });
+    if (!response.ok) throw new Error('Relay does not provide v2 registration state; no unsigned fallback was attempted');
+    const state = await response.json() as { proofVersion: number; hub: string; revision: number; agent: AgentIdentity | null };
+    if (state.proofVersion !== 2 || state.hub !== hub || !Number.isSafeInteger(state.revision) || state.revision < 0 ||
+        state.revision >= Number.MAX_SAFE_INTEGER || (state.agent !== null &&
+        (!state.agent || state.agent.agentId !== this.agentId || state.agent.publicKey !== this.keyPair.signingPublicKey ||
+         state.agent.profileRevision !== state.revision || state.agent.profileVerified !== (state.revision > 0)))) {
+      throw new Error('Invalid or mismatched registration state');
     }
+    return state;
+  }
 
-    const data = (await res.json()) as { success: boolean; agent: AgentIdentity };
+  private async registerOnce(): Promise<AgentIdentity> {
+    if (!this.pendingRegistration) {
+      const state = await this.registrationState();
+      if (state.agent && state.revision > 0) return state.agent;
+      this.pendingRegistration = await this.signProfile({
+        name: this.name, x25519PublicKey: this.keyPair.encryptionPublicKey,
+        capabilities: this.capabilities, metadata: this.metadata, endpoint: this.endpoint ?? null,
+      }, state.revision);
+    }
+    const agent = await this.submitProfileRegistration(this.pendingRegistration);
+    this.pendingRegistration = undefined;
+    return agent;
+  }
+
+  private signProfile(profile: RegistrationProfile, expectedRevision: number): Promise<SignedRegistration> {
+    const issuedAt = Date.now();
+    return signProfileRegistration({ proofVersion: 2, action: 'register-profile', hub: registrationOrigin(this.hubUrl),
+      publicKey: this.keyPair.signingPublicKey, expectedRevision, issuedAt,
+      expiresAt: issuedAt + REGISTRATION_MAX_AGE_MS, profile }, this.keyPair.signingPrivateKey);
+  }
+
+  /** Explicit profile change. Persist the returned public proof before sending for restart-safe retries. */
+  async prepareProfileRegistration(profile: RegistrationProfile): Promise<SignedRegistration> {
+    const state = await this.registrationState();
+    return this.signProfile(profile, state.revision);
+  }
+
+  /** Submit/retry exactly this proof. Never refresh its clock, revision or fields automatically. */
+  async submitProfileRegistration(proof: SignedRegistration): Promise<AgentIdentity> {
+    if (proof.hub !== registrationOrigin(this.hubUrl) || proof.publicKey !== this.keyPair.signingPublicKey) {
+      throw new Error('Registration proof belongs to a different relay or key');
+    }
+    const response = await this.fetchImpl(`${this.hubUrl}/v1/agents/register`, {
+      method: 'POST', redirect: 'error', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(proof),
+    });
+    if (!response.ok) throw new Error(`Registration returned HTTP ${response.status}; retain the exact proof for reconciliation`);
+    const data = await response.json() as { success: boolean; agent: AgentIdentity; receipt: { revision: number } };
+    if (data.success !== true || data.agent?.agentId !== this.agentId || data.agent.publicKey !== proof.publicKey ||
+        data.agent.profileRevision !== proof.expectedRevision + 1 || data.receipt?.revision !== proof.expectedRevision + 1) {
+      throw new Error('Invalid registration acknowledgment; retain the exact proof for reconciliation');
+    }
     return data.agent;
   }
 

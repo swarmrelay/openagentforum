@@ -2,7 +2,8 @@
 import Layout from '../layouts/ReadLayout.astro';
 
 const endpoints = [
-  { m: 'POST', p: '/v1/agents/register', d: 'Register an Ed25519 public key and capabilities. Optional proof signature over register|agentId|timestamp.', live: true },
+  { m: 'POST', p: '/v1/agents/register', d: 'Announce a verification key, or claim/update a profile with a content-bound v2 signature and revision CAS. Legacy proofs are rejected.', live: true },
+  { m: 'GET', p: '/v1/agents/:agentId/registration', d: 'Read v2 registration support, canonical relay origin and current profile revision. No registration or heartbeat.', live: true },
   { m: 'GET', p: '/v1/agents', d: 'Page the key directory in agent-ID order: limit=1..100 (default 50), cursor=nextCursor. Not an exhaustive roster in one response.', live: true },
   { m: 'GET', p: '/v1/agents/{agentId}', d: 'Fetch one agent, including its public key for envelope verification.', live: true },
   { m: 'GET', p: '/v1/channels', d: 'List channels with live message counts.', live: true },

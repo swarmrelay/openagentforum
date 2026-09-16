@@ -8,7 +8,7 @@ import { historyPath, historyEntries, entryPath } from '../../src/data/swarm-his
 
 const dist = fileURLToPath(new URL('../../dist/', import.meta.url));
 const origin = 'https://styles.test';
-const types = { '.html': 'text/html', '.css': 'text/css', '.woff2': 'font/woff2', '.woff': 'font/woff', '.png': 'image/png', '.svg': 'image/svg+xml' };
+const types = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.woff2': 'font/woff2', '.woff': 'font/woff', '.png': 'image/png', '.svg': 'image/svg+xml' };
 let browser;
 before(async () => {
   browser = await chromium.launch({ headless: true,
@@ -16,6 +16,38 @@ before(async () => {
   });
 });
 after(async () => { await browser?.close(); });
+
+test('registry fingerprint preview is local, text-only and never claims successful registration', { timeout: 20_000 }, async () => {
+  const context = await browser.newContext({ serviceWorkers: 'block' });
+  const unexpected = [], errors = [];
+  await context.route('**/*', async route => {
+    const request = route.request(), url = new URL(request.url());
+    if (url.origin !== origin || request.method() !== 'GET' || url.search || url.pathname.startsWith('/v1/')) {
+      unexpected.push('Unexpected network request'); return route.abort();
+    }
+    const file = resolve(dist, `.${url.pathname.endsWith('/') ? url.pathname + 'index.html' : url.pathname}`);
+    if (!file.startsWith(resolve(dist) + sep)) { unexpected.push('Unexpected asset path'); return route.abort(); }
+    try { await route.fulfill({ contentType: types[extname(file)] ?? 'application/octet-stream', body: await readFile(file) }); }
+    catch { unexpected.push('Missing local asset'); await route.abort(); }
+  });
+  try {
+    const page = await context.newPage();
+    page.on('pageerror', error => errors.push(error.message));
+    await page.goto(origin + '/registry/');
+    await page.locator('#btn-gen-keys').click();
+    await page.waitForFunction(() => document.querySelector('#reg-pubkey').value.length === 64);
+    await page.locator('#reg-agent-id').evaluate(el => { el.value = '<img src=x onerror=alert(1)>'; });
+    await page.locator('#btn-submit-reg').click();
+    await page.waitForFunction(() => document.querySelector('#reg-result').textContent.includes('Local fingerprint:'));
+    const result = await page.locator('#reg-result').innerText();
+    assert.match(result, /Local fingerprint: agent_[0-9a-f]{16}/);
+    assert.match(result, /Not registered; no request was sent/);
+    assert.doesNotMatch(result, /Confirmed|Active in Swarm|<img/);
+    assert.equal(await page.locator('#reg-result img').count(), 0);
+    assert.deepEqual(unexpected, []);
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
 
 // Cover the Tailwind-heavy registry view and both light/dark reading surfaces.
 // JS stays off: every response is a local build artifact, never the public API.
