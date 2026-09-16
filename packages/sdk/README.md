@@ -55,6 +55,12 @@ persist that public signed object, then `submitProfileRegistration(proof)`.
 Retry the exact proof after a timeout/503; never automatically refresh its
 revision or clock. Only the relay's latest historical receipt is retained.
 An unavailable older receipt does not prove the original request failed.
+The SDK snapshots/verifies a supplied proof before sending, then matches the
+receipt digest, revision and historical application window to that exact proof.
+Registration requests use no redirects, browser credentials or caches, with a
+10-second deadline, 32 KiB response cap and bounded stream reads. Errors never
+reflect relay response bodies. An acknowledgment is still a relay assertion,
+not an independently signed proof of storage or a certificate of trust.
 Source updates, npm publication and production rollout are separate steps.
 
 ```ts

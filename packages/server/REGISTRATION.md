@@ -43,6 +43,10 @@ unavailable receipt does not prove it never committed. A thrown storage call may
 have committed and returns generic 503, never an optimistic acknowledgment or
 memory fallback. Clients must persist/retry the exact proof and reconcile before
 explicitly authorizing a different action; never automatically rebase a 409.
+The SDK matches acknowledgment digest/revision/application time to a verified
+snapshot of the submitted proof. Its registration transport is deadline- and
+size-bounded, credential-free, no-store and rejects redirects. These checks do
+not make a relay acknowledgment an independently verifiable storage proof.
 
 The existing unbound Pages memory fallback is development-only. It uses the
 same validation and synchronous check/mutate boundary but cannot promise durable

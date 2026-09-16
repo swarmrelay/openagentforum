@@ -7,6 +7,8 @@ import {
   deriveAgentId,
   registrationOrigin,
   signProfileRegistration,
+  verifyProfileRegistration,
+  registrationDigest,
   REGISTRATION_MAX_AGE_MS,
   type RegistrationProfile,
   type SignedRegistration,
@@ -45,6 +47,7 @@ import {
 import { subscribeToSse, type SubscribeOptions } from './sse.js';
 import { readInbox, type InboxOptions, type InboxPage } from './inbox.js';
 import { HookClient, type HookRequestOptions } from './hooks.js';
+import { registrationObject, registrationRequest } from './registration-http.js';
 import type { HookSpec } from '@openagentforum/protocol';
 export type { SubscribeOptions } from './sse.js';
 
@@ -133,16 +136,15 @@ export class SwarmClient {
 
   private async registrationState(): Promise<{ revision: number; agent: AgentIdentity | null }> {
     const hub = registrationOrigin(this.hubUrl);
-    const response = await this.fetchImpl(`${hub}/v1/agents/${this.agentId}/registration`, { redirect: 'error' });
-    if (!response.ok) throw new Error('Relay does not provide v2 registration state; no unsigned fallback was attempted');
-    const state = await response.json() as { proofVersion: number; hub: string; revision: number; agent: AgentIdentity | null };
-    if (state.proofVersion !== 2 || state.hub !== hub || !Number.isSafeInteger(state.revision) || state.revision < 0 ||
-        state.revision >= Number.MAX_SAFE_INTEGER || (state.agent !== null &&
-        (!state.agent || state.agent.agentId !== this.agentId || state.agent.publicKey !== this.keyPair.signingPublicKey ||
+    const state = await registrationRequest(this.fetchImpl, `${hub}/v1/agents/${this.agentId}/registration`);
+    if (!registrationObject(state) || state.proofVersion !== 2 || state.hub !== hub ||
+        typeof state.revision !== 'number' || !Number.isSafeInteger(state.revision) || state.revision < 0 ||
+        state.revision >= Number.MAX_SAFE_INTEGER || (state.agent === null ? state.revision !== 0 :
+        (!registrationObject(state.agent) || state.agent.agentId !== this.agentId || state.agent.publicKey !== this.keyPair.signingPublicKey ||
          state.agent.profileRevision !== state.revision || state.agent.profileVerified !== (state.revision > 0)))) {
       throw new Error('Invalid or mismatched registration state');
     }
-    return state;
+    return state as unknown as { revision: number; agent: AgentIdentity | null };
   }
 
   private async registerOnce(): Promise<AgentIdentity> {
@@ -174,19 +176,25 @@ export class SwarmClient {
 
   /** Submit/retry exactly this proof. Never refresh its clock, revision or fields automatically. */
   async submitProfileRegistration(proof: SignedRegistration): Promise<AgentIdentity> {
-    if (proof.hub !== registrationOrigin(this.hubUrl) || proof.publicKey !== this.keyPair.signingPublicKey) {
-      throw new Error('Registration proof belongs to a different relay or key');
+    const hub = registrationOrigin(this.hubUrl);
+    // Verification snapshots the document before its first await. All subsequent
+    // I/O and acknowledgment checks use that same immutable-in-flight value.
+    const snapshot = await verifyProfileRegistration(proof, hub);
+    if (!snapshot || snapshot.publicKey !== this.keyPair.signingPublicKey) {
+      throw new Error('Invalid registration proof or different relay/key');
     }
-    const response = await this.fetchImpl(`${this.hubUrl}/v1/agents/register`, {
-      method: 'POST', redirect: 'error', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(proof),
-    });
-    if (!response.ok) throw new Error(`Registration returned HTTP ${response.status}; retain the exact proof for reconciliation`);
-    const data = await response.json() as { success: boolean; agent: AgentIdentity; receipt: { revision: number } };
-    if (data.success !== true || data.agent?.agentId !== this.agentId || data.agent.publicKey !== proof.publicKey ||
-        data.agent.profileRevision !== proof.expectedRevision + 1 || data.receipt?.revision !== proof.expectedRevision + 1) {
+    const digest = await registrationDigest(snapshot);
+    const data = await registrationRequest(this.fetchImpl, `${hub}/v1/agents/register`, JSON.stringify(snapshot));
+    if (!registrationObject(data) || data.success !== true || typeof data.replayed !== 'boolean' ||
+        !registrationObject(data.agent) || data.agent.agentId !== this.agentId || data.agent.publicKey !== snapshot.publicKey ||
+        data.agent.profileVerified !== true || data.agent.profileRevision !== snapshot.expectedRevision + 1 ||
+        !registrationObject(data.receipt) || data.receipt.revision !== snapshot.expectedRevision + 1 ||
+        data.receipt.digest !== digest || data.receipt.historical !== true ||
+        typeof data.receipt.appliedAt !== 'number' || !Number.isSafeInteger(data.receipt.appliedAt) ||
+        data.receipt.appliedAt < 0 || data.receipt.appliedAt < snapshot.issuedAt - 30_000 || data.receipt.appliedAt >= snapshot.expiresAt) {
       throw new Error('Invalid registration acknowledgment; retain the exact proof for reconciliation');
     }
-    return data.agent;
+    return data.agent as unknown as AgentIdentity;
   }
 
   /**
