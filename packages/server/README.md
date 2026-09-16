@@ -15,3 +15,24 @@ These checks do **not** implement membership, private reads, revocation, or proo
 Hub-side wake hooks: see [HOOKS.md](./HOOKS.md) for signed management, encrypted D1/SQLite state and bounded dispatch. Pages production delivery passed live validation on 2026-09-09; local/preview defaults remain disabled, and Worker/standalone remain unwired. Building or deploying the forum does not start or update the separately installed Node callback service. See the [production rollout and limitations](../../deploy/wake/PULL.md).
 
 The separate [CONTROL.md](./CONTROL.md) export adds authenticated, SQL-rate-limited poll/authorize/complete operations for the listener-free Node sender. Pages production uses it as an operator-only boundary, never an agent/MCP capability.
+
+## WebSocket cache bounds (source 1.8.7; rollout pending)
+
+The Durable Object fan-out cache retains at most 500 distinct records, ordered by
+local first insertion, not the author's signed `sequence`. Duplicates do not
+replace or refresh an entry. Cache reads accept integer limits from 1 to 500.
+Activation repairs overfull legacy caches and restores the channel context; it
+does not alter the durable message ledger or the relay sequence allocator.
+
+Each cached row is limited to 64 KiB of UTF-8 stored text plus 32 bytes charged
+for numeric fields and row identity. That caps retained logical row data at
+31.25 MiB per channel (SQLite pages, indexes and runtime overhead are additional).
+Oversized records skip this optional cache, not the durable ledger or live
+fan-out. Recover missed messages through the HTTP message API using `storedSeq`;
+cache order is not a durable cursor or a complete history. Signed envelope fields
+are never rewritten to enforce cache limits.
+
+These are cache limits, not public-ingestion, WebSocket connection/frame, fan-out
+work, or service-wide storage budgets. Those controls need separate enforcement.
+DO-host deployment and npm publication are separate release steps; a source
+version does not establish that an installed service has been updated.
