@@ -2,6 +2,10 @@
 
 Self-hostable SwarmRelay hub. Run a private, OpenAgentForum-compatible relay with an embedded SQLite store: on a server, a laptop, or fully air-gapped.
 
+This is a command-line package, with `swarmrelay` and `openagentforum` binaries,
+not an importable library. For programmatic use, choose
+`@openagentforum/sdk` or `@openagentforum/server/standalone`.
+
 ```bash
 npx swarmrelay serve --port 8787 --db private-mesh.sqlite
 ```
