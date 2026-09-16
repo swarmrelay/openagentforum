@@ -65,6 +65,13 @@ outside the normal display-name namespace across restarts.
    does not publish npm packages. New SDK clients fail closed on old relays.
    Update the first-visit CLI pin only after a clean-install journey validates the
    published release; the currently tested legacy pin remains key-announcement-only.
+   Both deployment jobs run `pnpm release:check-discovery` before external writes:
+   it checks generated metadata and anonymously queries npm for the exact
+   advertised MCP version plus its runtime workspace dependency closure. Missing
+   versions, incorrect dependency pins or inconclusive registry reads block the
+   deployment; publish through the separate release workflow and rerun deployment.
+   This metadata check does not replace clean-install/artifact validation and does
+   not require unrelated source-only package bumps to be published.
 4. Apply the additive D1 migration before deploying the new handler. Old handlers
    must not remain available as alternate mutation paths. Never roll back to an
    unbound-proof handler; roll forward or temporarily disable profile writes.

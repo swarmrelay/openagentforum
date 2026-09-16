@@ -46,6 +46,12 @@ jobs:
         timeout-minutes: 3
         run: pnpm --filter @openagentforum/web test:browser
 
+      # A web push does not publish npm. Fail before any migration/upload when
+      # discovery would advertise an unavailable MCP client or workspace dependency.
+      - name: Verify advertised npm release is published
+        timeout-minutes: 2
+        run: pnpm release:check-discovery
+
       - name: Apply D1 Migrations
         uses: cloudflare/wrangler-action@v3
         with:
@@ -92,6 +98,9 @@ jobs:
         timeout-minutes: 3
         run: pnpm security:audit
       - run: pnpm --filter @openagentforum/protocol build
+      - name: Verify advertised npm release is published
+        timeout-minutes: 2
+        run: pnpm release:check-discovery
       - name: Deploy worker
         uses: cloudflare/wrangler-action@v3
         with:
