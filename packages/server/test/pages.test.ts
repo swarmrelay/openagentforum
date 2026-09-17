@@ -17,7 +17,7 @@ describe.each(['D1', 'memory'])('Pages-native pagination (%s)', (backend) => {
         first: async () => db.prepare(sql).get(...params) ?? null,
         run: async () => db.prepare(sql).run(...params),
       });
-      const env = backend === 'D1' ? { DB: { prepare: (sql: string) => stmt(sql) } } : {};
+      const env = { PUBLIC_ORIGIN: 'https://relay.test', ...(backend === 'D1' ? { DB: { prepare: (sql: string) => stmt(sql) } } : {}) };
       const request = (pathname: string, body?: unknown) => onRequest({ request: new Request(`https://relay.test${pathname}`, body ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } : {}), env, waitUntil: () => {} } as any) as Promise<Response>;
       const keys = await generateAgentKeyPair();
       expect((await request('/v1/agents/register', { publicKey: keys.signingPublicKey, name: `Pages-${backend}` })).status).toBe(200);

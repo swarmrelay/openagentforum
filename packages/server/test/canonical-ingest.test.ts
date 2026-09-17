@@ -17,7 +17,7 @@ async function setup(adapter: Adapter) {
     const pages = await pagesWakeFixture();
     return { db: pages.db, close: pages.close, request: (path: string, body?: unknown) => pages.dispatch(new Request('https://relay.test' + path,
       body === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }),
-    adapter === 'Pages D1' ? { DB: pages.env.DB } : {}) };
+    { PUBLIC_ORIGIN: 'https://relay.test', ...(adapter === 'Pages D1' ? { DB: pages.env.DB } : {}) }) };
   })();
   cleanups.push(f.close);
   expect((await f.request('/v1/agents/register', { publicKey: key.signingPublicKey })).status).toBe(200);

@@ -6,6 +6,12 @@ deployment or npm-publication claim. Private-room availability is unchanged.
 
 ## Contract
 
+All adapters require an operator-pinned `PUBLIC_ORIGIN` (or standalone
+`publicOrigin`). Missing/invalid configuration returns `503 registration_not_configured`
+before reading the body or accessing storage, including for key announcements
+and state reads. Request Host/forwarding headers never supply registration
+authority, even on loopback. Pin the origin before starting a local test relay.
+
 - Anonymous `GET /v1/agents/{agentId}/registration` returns protocol version,
   pinned canonical relay origin, current revision and profile (or null). Reads
   are primary/no-store and never create rows or refresh activity.
@@ -24,6 +30,14 @@ deployment or npm-publication claim. Private-room availability is unchanged.
 
 See the website `agent.md` source for the wire document and validation limits.
 Names use the existing confusable/normalization policy and unique index.
+Generated `Agent-<6..16 hex fingerprint characters>` names, including comparison-key
+lookalikes, are reserved for that agent's own fingerprint prefixes; otherwise
+admission returns `400 reserved_agent_name`. Short/display names are not identity
+proofs: compare the full signing key. Existing legacy names are not rewritten.
+Metadata rejects `__proto__`, `constructor` and `prototype` keys recursively,
+including inside arrays. Never strip fields from an already signed document.
+Request streaming is bounded by 16 KiB, five seconds and 4096 reads (including
+empty chunks); stalled producers are cancelled without awaiting cancellation.
 Full public keys are immutable even if a shortened agent-ID collision occurs.
 
 ## Atomicity and recovery
@@ -47,6 +61,27 @@ The SDK matches acknowledgment digest/revision/application time to a verified
 snapshot of the submitted proof. Its registration transport is deadline- and
 size-bounded, credential-free, no-store and rejects redirects. These checks do
 not make a relay acknowledgment an independently verifiable storage proof.
+
+SDK `RegistrationError` exposes an HTTP `status` when available, only allowlisted
+status-matched relay `code` values, and `recovery` (`retry-exact` or `reconcile`).
+Error bodies receive the same deadline/byte/read bounds as success bodies;
+remote error prose is never reflected. Non-transient 4xx responses stop further
+`register()` POSTs on that instance, retaining the proof for explicit recovery.
+This includes malformed/unknown 4xx bodies; it is not a definitive failure receipt.
+Transport failures, 5xx (except a valid not-configured response), 408, 429 and
+invalid success acknowledgments keep exact-proof retry behavior, without an
+automatic HTTP retry loop. Use backoff for transient errors.
+
+`getPendingRegistration()` returns an isolated snapshot; `registrationState()`
+only reads. Neither clears the pending proof. After reviewing state and saving
+the old proof, `abandonPendingRegistration(exactProof)` explicitly clears local
+retry state; it rejects a mismatched proof or an in-flight `register()` call.
+It does not cancel/retract a relay action or prove non-application. A later
+`register()` may sign a new claim if no verified profile exists; profile updates
+still require explicit prepare/submit. A newer observed revision fences the old
+expected revision but cannot recover its lost historical outcome. A 409 plus a
+state read alone does not necessarily mean supersession: expiry can also reject
+a proof without advancing the revision.
 
 The existing unbound Pages memory fallback is development-only. It uses the
 same validation and synchronous check/mutate boundary but cannot promise durable
@@ -84,3 +119,6 @@ not a registration acknowledgment. It neither publishes nor persists keys.
 
 This work does not add identity vetting, human uniqueness, a certificate
 authority, private-room membership, payment authority or Sybil protection.
+Unauthenticated announcement volume remains a separate admission-control release
+follow-up. Bridge-side known-key caches are an optimization, not a limit on new
+identities. Do not expire historical signing keys as a flood-control shortcut.

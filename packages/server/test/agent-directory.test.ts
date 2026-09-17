@@ -15,7 +15,7 @@ async function setup(adapter: Adapter) {
   const f = await pagesWakeFixture(); cleanups.push(f.close);
   return { db: f.db, request: (path: string, body?: unknown) => f.dispatch(new Request('https://relay.test' + path,
     body === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }),
-  adapter === 'Pages D1' ? { DB: f.env.DB } : {}) };
+  { PUBLIC_ORIGIN: 'https://relay.test', ...(adapter === 'Pages D1' ? { DB: f.env.DB } : {}) }) };
 }
 
 describe.each(['Worker', 'standalone', 'Pages D1', 'Pages memory'] as const)('%s agent directory (#158)', adapter => {

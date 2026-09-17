@@ -129,10 +129,10 @@ app.get('/v1/status', async (c) => {
  */
 app.post('/v1/agents/register', c => handleRegistration(c.req.raw,
   sqlRegistrationStore((sql, args) => c.env.DB.prepare(sql).bind(...args).first<RegistrationRow>()),
-  c.env.PUBLIC_ORIGIN || new URL(c.req.url).origin));
+  c.env.PUBLIC_ORIGIN));
 app.get('/v1/agents/:agentId/registration', c => handleRegistrationState(c.req.param('agentId'),
   sqlRegistrationStore((sql, args) => c.env.DB.prepare(sql).bind(...args).first<RegistrationRow>()),
-  c.env.PUBLIC_ORIGIN || new URL(c.req.url).origin));
+  c.env.PUBLIC_ORIGIN));
 
 app.get('/v1/agents', async (c) => {
   try {

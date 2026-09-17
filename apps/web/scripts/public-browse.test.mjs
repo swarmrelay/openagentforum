@@ -119,6 +119,39 @@ test('native D1 profile CAS, exact-retry receipts and content-bound signatures',
   assert.equal(outbound, 0);
 });
 
+test('native registration requires a pinned origin and reserves generated names', async () => {
+  const keys = await generateAgentKeyPair(), other = await generateAgentKeyPair();
+  const send = (body, fault = '') => worker.fetch('https://fixture.invalid/v1/agents/register', { method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-fixture-registration-fault': fault }, body: JSON.stringify(body) });
+  const disabled = await send({ publicKey: keys.signingPublicKey }, 'no-origin');
+  assert.equal(disabled.status, 503);
+  assert.equal(disabled.headers.get('x-fixture-registration-storage'), '0');
+  assert.deepEqual(await disabled.json(), { error: 'registration_not_configured' });
+  assert.equal((await send({ publicKey: keys.signingPublicKey })).status, 200);
+  const issuedAt = Date.now();
+  const document = { proofVersion: 2, action: 'register-profile', hub: 'https://fixture.invalid', publicKey: other.signingPublicKey,
+    expectedRevision: 0, issuedAt, expiresAt: issuedAt + 300_000,
+    profile: { name: `Agent-${keys.agentId.slice(6)}`, x25519PublicKey: null, capabilities: [], metadata: {}, endpoint: null } };
+  const rejected = await send(await signProfileRegistration(document, other.signingPrivateKey));
+  assert.equal(rejected.status, 400);
+  assert.deepEqual(await rejected.json(), { error: 'reserved_agent_name' });
+  const own = { ...document, publicKey: keys.signingPublicKey };
+  assert.equal((await send(await signProfileRegistration(own, keys.signingPrivateKey))).status, 200);
+});
+
+for (const [fault, status, error] of [['stalled-body', 408, 'registration_read_timeout'], ['empty-chunks', 400, 'invalid_registration']]) {
+  test(`native registration bounds ${fault} and releases the body without storage access`, { timeout: 15_000 }, async () => {
+    const response = await worker.fetch('https://fixture.invalid/v1/agents/register', { method: 'POST',
+      headers: { 'x-fixture-registration-fault': fault }, body: '{}', signal: AbortSignal.timeout(12_000) });
+    assert.equal(response.status, status);
+    assert.deepEqual(await response.json(), { error });
+    assert.equal(response.headers.get('x-fixture-registration-storage'), '0');
+    assert.equal(response.headers.get('x-fixture-registration-cancelled'), 'true');
+    assert.equal(response.headers.get('x-fixture-registration-locked'), 'false');
+    assert.equal(outbound, 0);
+  });
+}
+
 test('native D1 rejects expiry at the write boundary and recovers a lost commit without reapplying', async () => {
   const keys = await generateAgentKeyPair();
   const issuedAt = Date.now() - 1000;

@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { registrationRequest } from '../src/registration-http.js';
+import { RegistrationError, registrationRequest } from '../src/registration-http.js';
 
 const url = 'https://relay.test/v1/agents/register';
 const privateDetail = 'untrusted-relay-detail-not-for-errors';
@@ -33,12 +33,40 @@ it.each(['oversizedHeader', 'badHeader', 'oversizedStream', 'html', 'malformedJs
   expect(error.message).not.toContain(privateDetail);
 });
 
-it.each([403, 409, 429, 503])('reports HTTP %s without consuming its error body or retrying', async status => {
+it.each([403, 409, 429, 503])('reports HTTP %s with an unusable error body without retrying', async status => {
   const cancel = vi.fn();
   const fetcher = vi.fn(async () => new Response(new ReadableStream({ cancel }), { status }));
-  await expect(registrationRequest(fetcher, url, '{}')).rejects.toThrow(`HTTP ${status}; retain the exact proof`);
+  const error = await registrationRequest(fetcher, url, '{}').catch(e => e);
+  expect(error).toBeInstanceOf(RegistrationError);
+  expect(error).toMatchObject({ status, code: undefined, recovery: status === 403 || status === 409 ? 'reconcile' : 'retry-exact' });
   expect(fetcher).toHaveBeenCalledTimes(1);
   expect(cancel).toHaveBeenCalledTimes(1);
+});
+
+it.each([
+  [409, 'registration_not_applied', 'reconcile'], [409, 'display_name_claimed', 'reconcile'],
+  [403, 'invalid_registration_proof', 'reconcile'], [400, 'reserved_agent_name', 'reconcile'],
+  [503, 'registration_outcome_unknown', 'retry-exact'], [503, 'registration_not_configured', 'reconcile'],
+  [408, 'registration_read_timeout', 'retry-exact'],
+] as const)('exposes only a validated code for HTTP %s / %s', async (status, code, recovery) => {
+  const fetcher = vi.fn(async () => Response.json({ error: code, message: privateDetail, stack: privateDetail }, { status }));
+  const error = await registrationRequest(fetcher, url, '{}').catch(e => e);
+  expect(error).toBeInstanceOf(RegistrationError);
+  expect(error).toMatchObject({ status, code, recovery });
+  expect(JSON.stringify(error)).not.toContain(privateDetail);
+  expect(error.message).not.toContain(privateDetail);
+  expect(fetcher).toHaveBeenCalledTimes(1);
+});
+
+it.each(['unknown', 'wrongStatus', 'oversized', 'malformed', 'redirected'])('does not trust a %s error body', async kind => {
+  const response = kind === 'malformed' ? new Response('{', { status: 503, headers: { 'content-type': 'application/json' } })
+    : Response.json({ error: kind === 'unknown' ? privateDetail : 'display_name_claimed', detail: kind === 'oversized' ? 'x'.repeat(32768) : privateDetail },
+      { status: kind === 'oversized' || kind === 'redirected' ? 409 : 503 });
+  if (kind === 'redirected') Object.defineProperty(response, 'redirected', { value: true });
+  const error = await registrationRequest(async () => response, url, '{}').catch(e => e);
+  expect(error).toBeInstanceOf(RegistrationError);
+  expect(error.code).toBeUndefined();
+  expect(error.message).not.toContain(privateDetail);
 });
 
 it('sanitizes transport failures and does not retry', async () => {

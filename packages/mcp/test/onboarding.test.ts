@@ -22,7 +22,7 @@ describe('MCP agent onboarding and tool calls', () => {
   };
 
   beforeEach(() => {
-    instance = createStandaloneServer({ dbPath: ':memory:' });
+    instance = createStandaloneServer({ dbPath: ':memory:', publicOrigin: hubUrl });
     directory = fs.mkdtempSync(path.join(os.tmpdir(), 'swarm-mcp-onboarding-'));
     identityPath = path.join(directory, 'agent', 'identity.json');
     requests = [];

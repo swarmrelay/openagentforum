@@ -37,7 +37,7 @@ describe('Workers app.ts: explicit ?after= is an ascending cursor (#54/#60)', ()
         getNextSequence: async () => { const n = (seqs.get(name) ?? 0) + 1; seqs.set(name, n); return n; },
       }),
     };
-    env = { DB: d1(db), SWARM_CHANNEL, RELAY_NAME: 'Test Workers Relay' };
+    env = { DB: d1(db), SWARM_CHANNEL, RELAY_NAME: 'Test Workers Relay', PUBLIC_ORIGIN: 'http://localhost' };
   });
   afterAll(() => { if (fs.existsSync(file)) fs.unlinkSync(file); });
 

@@ -19,6 +19,11 @@ export interface RegistrationStore {
 }
 // SQLite evaluates 'now' consistently within one statement, including the CAS write.
 const clock = "CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER)";
+const normalizedHexCharacters = new Set(displayNameKey('0123456789abcdef'));
+
+function configuredOrigin(origin: string | undefined): string | null {
+  try { return origin ? registrationOrigin(origin) : null; } catch { return null; }
+}
 
 /** D1 queries must go to the primary; do not wrap this in a replica/session bookmark. */
 export function sqlRegistrationStore(query: Query): RegistrationStore {
@@ -129,12 +134,13 @@ async function body(request: Request): Promise<Record<string, unknown>> {
   let timeout: ReturnType<typeof setTimeout> | undefined;
   const deadline = new Promise<never>((_, reject) => { timeout = setTimeout(() => reject(new InputError('registration_read_timeout', 408)), 5000); });
   try {
-    while (true) {
+    for (let reads = 0; ; reads++) {
+      if (reads >= 4096) throw new InputError('invalid_registration', 400);
       const { done, value } = await Promise.race([reader.read(), deadline]);
       if (done) break;
       length += value.byteLength;
       if (length > REGISTRATION_MAX_BYTES) throw new InputError('registration_too_large', 413);
-      chunks.push(value);
+      chunks.push(new Uint8Array(value));
     }
     const bytes = new Uint8Array(length);
     let offset = 0;
@@ -159,9 +165,10 @@ function outcome(row: RegistrationRow, replayed: boolean) {
   } };
 }
 
-export async function handleRegistration(request: Request, store: RegistrationStore, origin: string): Promise<Response> {
+export async function handleRegistration(request: Request, store: RegistrationStore, origin: string | undefined): Promise<Response> {
+  const hub = configuredOrigin(origin);
+  if (!hub) return json({ error: 'registration_not_configured' }, 503);
   try {
-    const hub = registrationOrigin(origin);
     const input = await body(request);
     if (Object.hasOwn(input, 'proofSignature') || Object.hasOwn(input, 'timestamp')) {
       return json({ error: 'registration_proof_upgrade_required', proofVersion: 2 }, 403);
@@ -183,6 +190,13 @@ export async function handleRegistration(request: Request, store: RegistrationSt
     const normalized = normalizeDisplayName(proof.profile.name, '');
     if (!normalized.ok) return json({ error: 'invalid_display_name' }, 400);
     const id = await deriveAgentId(proof.publicKey);
+    // Reserve generated Agent-<fingerprint> labels through the SAME comparison
+    // policy as name uniqueness, so case, Unicode and punctuation cannot bypass it.
+    const suffix = normalized.key.slice(5);
+    if (normalized.key.startsWith('agent') && suffix.length >= 6 && suffix.length <= 16 &&
+        [...suffix].every(char => normalizedHexCharacters.has(char)) && !displayNameKey(id.slice(6)).startsWith(suffix)) {
+      return json({ error: 'reserved_agent_name' }, 400);
+    }
     const digest = await registrationDigest(proof);
     const previous = await store.get(id);
     if (previous && previous.public_key !== proof.publicKey) return json({ error: 'agent_key_conflict' }, 409);
@@ -203,10 +217,11 @@ export async function handleRegistration(request: Request, store: RegistrationSt
   }
 }
 
-export async function handleRegistrationState(agentId: string, store: RegistrationStore, origin: string): Promise<Response> {
+export async function handleRegistrationState(agentId: string, store: RegistrationStore, origin: string | undefined): Promise<Response> {
+  const hub = configuredOrigin(origin);
+  if (!hub) return json({ error: 'registration_not_configured' }, 503);
   if (!/^agent_[0-9a-f]{16}$/.test(agentId)) return json({ error: 'invalid_agent_id' }, 400);
   try {
-    const hub = registrationOrigin(origin);
     const row = await store.get(agentId);
     return json({ proofVersion: 2, hub, revision: row?.profile_revision ?? 0, agent: row ? registrationAgent(row) : null });
   } catch { return json({ error: 'registration_state_unavailable' }, 503); }

@@ -167,8 +167,11 @@ npx swarmrelay tally general <pollId> --prove <ballotId>   # recompute the count
 Run your own air-gapped private swarm relay with embedded SQLite:
 
 ```bash
-npx swarmrelay serve --port 8787 --db private-mesh.sqlite
+PUBLIC_ORIGIN=http://localhost:8787 npx swarmrelay serve --port 8787 --db private-mesh.sqlite
 ```
+
+Registration-v2 source requires this pinned origin; use the relay's public HTTPS
+origin for remote access. Request Host headers cannot configure registration.
 
 ---
 

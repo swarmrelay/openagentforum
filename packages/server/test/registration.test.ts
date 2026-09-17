@@ -11,8 +11,8 @@ import { handleRegistration, sqlRegistrationStore } from '../src/registration.js
 import { createStandaloneServer } from '../src/standalone.js';
 
 const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite') as typeof import('node:sqlite');
-function fixture(adapter: string) {
-  if (adapter === 'Worker' || adapter === 'standalone') return adapterFixture(adapter);
+function fixture(adapter: string, publicOrigin: string | null = 'https://relay.test') {
+  if (adapter === 'Worker' || adapter === 'standalone') return adapterFixture(adapter, publicOrigin);
   const db = new DatabaseSync(':memory:');
   const migrations = new URL('../../../apps/web/migrations/', import.meta.url);
   for (const name of readdirSync(migrations).sort()) db.exec(readFileSync(new URL(name, migrations), 'utf8'));
@@ -22,18 +22,71 @@ function fixture(adapter: string) {
     all: async () => ({ results: db.prepare(sql).all(...args) }),
     run: async () => db.prepare(sql).run(...args),
   });
-  const env = adapter === 'Pages D1' ? { DB: { prepare: (sql: string) => statement(sql) } } : {};
-  const request = (path: string, body?: unknown) => Promise.resolve(onRequest({
-    request: new Request('https://relay.test' + path, body === undefined ? {} : { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }),
+  const env = { PUBLIC_ORIGIN: publicOrigin ?? undefined, ...(adapter === 'Pages D1' ? { DB: { prepare: (sql: string) => statement(sql) } } : {}) };
+  const dispatch = (request: Request) => Promise.resolve(onRequest({
+    request,
     env, waitUntil() { throw new Error('No detached registration work'); },
   } as any));
-  return { db, request, close: () => db.close() };
+  const request = (path: string, body?: unknown) => dispatch(new Request('https://relay.test' + path,
+    body === undefined ? {} : { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }));
+  return { db, request, dispatch, close: () => db.close() };
 }
 
 describe.each(['Worker', 'standalone', 'Pages D1', 'Pages memory'])('v2 profile admission: %s', adapter => {
   const cleanups: (() => void)[] = [];
-  afterEach(() => { vi.restoreAllMocks(); for (const close of cleanups.splice(0)) close(); });
+  afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); for (const close of cleanups.splice(0)) close(); });
   const setup = () => { const f = fixture(adapter); cleanups.push(f.close); return f; };
+
+  it('requires a configured origin, never a request Host, before touching storage', async () => {
+    const keys = await generateAgentKeyPair(), proof = await profileProof(keys);
+    for (const origin of [null, '', 'https://relay.test/path']) {
+      const f = fixture(adapter, origin); cleanups.push(f.close);
+      const reads = vi.spyOn(f.db, 'prepare');
+      for (const body of [proof, { publicKey: keys.signingPublicKey }]) {
+        const response = await f.request('/v1/agents/register', body);
+        expect(response.status).toBe(503);
+        expect(await response.json()).toEqual({ error: 'registration_not_configured' });
+      }
+      expect((await f.request(`/v1/agents/${keys.agentId}/registration`)).status).toBe(503);
+      expect(reads).not.toHaveBeenCalled();
+    }
+    const pinned = fixture(adapter, 'https://different.test'); cleanups.push(pinned.close);
+    expect((await pinned.request('/v1/agents/register', proof)).status).toBe(403);
+    expect(await (await pinned.request(`/v1/agents/${keys.agentId}/registration`)).json()).toMatchObject({ hub: 'https://different.test', revision: 0, agent: null });
+  });
+
+  it('cancels a stalled body at five seconds without storage access or awaiting cancellation', async () => {
+    const f = setup();
+    const reads = vi.spyOn(f.db, 'prepare');
+    const cancel = vi.fn(() => new Promise<void>(() => {}));
+    const stream = new ReadableStream<Uint8Array>({ cancel });
+    vi.useFakeTimers();
+    const pending = f.dispatch(new Request('https://relay.test/v1/agents/register', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: stream, duplex: 'half',
+    } as RequestInit));
+    await vi.advanceTimersByTimeAsync(5001);
+    const response = await pending;
+    expect(response.status).toBe(408);
+    expect(await response.json()).toEqual({ error: 'registration_read_timeout' });
+    expect(cancel).toHaveBeenCalledTimes(1);
+    expect(stream.locked).toBe(false);
+    expect(reads).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('reserves generated identity labels for the matching key, including normalized lookalikes', async () => {
+    const f = setup(), owner = await generateAgentKeyPair(), other = await generateAgentKeyPair();
+    const name = `Agent-${owner.agentId.slice(6)}`;
+    await f.request('/v1/agents/register', { publicKey: owner.signingPublicKey });
+    for (const label of [name, name.toUpperCase(), name.replace('A', 'Ａ'), name.replace('A', 'А'), name.replace('-', ' ')]) {
+      const response = await f.request('/v1/agents/register', await profileProof(other, label));
+      expect(response.status).toBe(400);
+      expect(await response.json()).toEqual({ error: 'reserved_agent_name' });
+    }
+    expect((await f.request('/v1/agents/register', await profileProof(owner, name))).status).toBe(200);
+    const ownShort = `Agent-${other.agentId.slice(6, 12)}`;
+    expect((await f.request('/v1/agents/register', await profileProof(other, ownShort))).status).toBe(200);
+  });
 
   it('unsigned announcements cannot preclaim a name, inject encryption keys or bump activity', async () => {
     const f = setup(), keys = await generateAgentKeyPair(), other = await generateAgentKeyPair();
@@ -153,7 +206,7 @@ describe.each(['Worker', 'standalone', 'Pages D1', 'Pages memory'])('v2 profile 
 describe('atomic SQL boundary and uncertain commits', () => {
   it('retains receipts and key-only name reservations across a standalone restart', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'oaf-registration-restart-'));
-    let instance = createStandaloneServer({ dbPath: join(directory, 'relay.sqlite') });
+    let instance = createStandaloneServer({ dbPath: join(directory, 'relay.sqlite'), publicOrigin: 'https://relay.test' });
     const send = (value: unknown) => instance.app.request('https://relay.test/v1/agents/register', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(value) });
     try {
       const keys = await generateAgentKeyPair(), keyOnly = await generateAgentKeyPair();
@@ -163,12 +216,13 @@ describe('atomic SQL boundary and uncertain commits', () => {
       expect((await send({ publicKey: keyOnly.signingPublicKey })).status).toBe(200);
       const before = instance.db.prepare('SELECT * FROM agents ORDER BY agent_id').all();
       instance.db.close();
-      instance = createStandaloneServer({ dbPath: join(directory, 'relay.sqlite') });
+      instance = createStandaloneServer({ dbPath: join(directory, 'relay.sqlite'), publicOrigin: 'https://relay.test' });
       expect(instance.db.prepare('SELECT * FROM agents ORDER BY agent_id').all()).toEqual(before);
       expect(await (await send(proof)).json()).toEqual({ ...first, replayed: true });
-      // A key announcement did not claim even its generated display name after migration/restart.
+      // Generated labels are key-bound even though announcements do not claim names.
       const claimant = await generateAgentKeyPair();
-      expect((await send(await profileProof(claimant, `Agent-${keyOnly.agentId.slice(6)}`))).status).toBe(200);
+      expect((await send(await profileProof(claimant, `Agent-${keyOnly.agentId.slice(6)}`))).status).toBe(400);
+      expect((await send(await profileProof(keyOnly, `Agent-${keyOnly.agentId.slice(6)}`))).status).toBe(200);
     } finally { instance.db.close(); rmSync(directory, { recursive: true, force: true }); }
   });
 

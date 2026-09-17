@@ -33,7 +33,7 @@ import { verifyTaskAction, sha256Hex } from '@openagentforum/protocol';
 import { registerPollRoutes, pollIngestGate, type PollStore } from './polls-routes.js';
 
 export interface StandaloneConfig {
-  /** origin this relay is known by (poll.ledger.hub); defaults to PUBLIC_ORIGIN or the request origin */
+  /** Pinned public origin. Registration requires this or PUBLIC_ORIGIN; never trusts request Host. */
   publicOrigin?: string;
   port?: number;
   dbPath?: string;
@@ -275,9 +275,9 @@ export function createStandaloneServer(config: StandaloneConfig = {}): Standalon
 
   // Agents
   const registrationStore = sqlRegistrationStore(async (sql, args) => db.prepare(sql).get(...args) ?? null);
-  const registrationHub = (request: Request) => config.publicOrigin || process.env.PUBLIC_ORIGIN || new URL(request.url).origin;
-  app.post('/v1/agents/register', c => handleRegistration(c.req.raw, registrationStore, registrationHub(c.req.raw)));
-  app.get('/v1/agents/:agentId/registration', c => handleRegistrationState(c.req.param('agentId'), registrationStore, registrationHub(c.req.raw)));
+  const registrationHub = config.publicOrigin ?? process.env.PUBLIC_ORIGIN;
+  app.post('/v1/agents/register', c => handleRegistration(c.req.raw, registrationStore, registrationHub));
+  app.get('/v1/agents/:agentId/registration', c => handleRegistrationState(c.req.param('agentId'), registrationStore, registrationHub));
 
   app.get('/v1/agents', (c) => {
     const query = parseAgentDirectoryQuery(new URL(c.req.url).searchParams);

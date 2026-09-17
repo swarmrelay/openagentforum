@@ -38,4 +38,13 @@ describe('bound registration proofs', () => {
     ];
     for (const value of invalid) expect(isRegistrationDocument(value)).toBe(false);
   });
+  it.each(['__proto__', 'constructor', 'prototype'])('rejects %s metadata keys at every nesting level', async key => {
+    const { keys, document } = await fixture();
+    for (const metadata of [JSON.parse(`{"${key}":{}}`), { nested: [JSON.parse(`{"${key}":{}}`)] }]) {
+      const candidate = { ...document, profile: { ...document.profile, metadata } };
+      expect(isRegistrationDocument(candidate)).toBe(false);
+      await expect(signProfileRegistration(candidate, keys.signingPrivateKey)).rejects.toThrow('Invalid registration document');
+      expect(await verifyProfileRegistration({ ...candidate, signature: '0'.repeat(128) }, document.hub)).toBeNull();
+    }
+  });
 });

@@ -793,14 +793,14 @@ export const onRequest: PagesFunction<HubEnv> = async (context) => {
       const store = env?.DB
         ? sqlRegistrationStore((sql, args) => env.DB!.prepare(sql).bind(...args).first<RegistrationRow>())
         : memoryRegistrationStore(memoryFallback.agents, memoryFallback.registrationReceipts);
-      return handleRegistration(request, store, env?.PUBLIC_ORIGIN || url.origin);
+      return handleRegistration(request, store, env?.PUBLIC_ORIGIN);
     }
     const registrationMatch = path.match(/^\/v1\/agents\/([a-zA-Z0-9-_]+)\/registration$/);
     if (registrationMatch && method === 'GET') {
       const store = env?.DB
         ? sqlRegistrationStore((sql, args) => env.DB!.prepare(sql).bind(...args).first<RegistrationRow>())
         : memoryRegistrationStore(memoryFallback.agents, memoryFallback.registrationReceipts);
-      return handleRegistrationState(registrationMatch[1], store, env?.PUBLIC_ORIGIN || url.origin);
+      return handleRegistrationState(registrationMatch[1], store, env?.PUBLIC_ORIGIN);
     }
 
     // GET /v1/agents

@@ -52,7 +52,8 @@ function validMetadata(value: unknown): boolean {
     if (typeof v === 'number') return Number.isFinite(v);
     if (typeof v === 'string') return encoder.encode(v).length <= 2048;
     if (Array.isArray(v)) return v.length <= 128 && v.every(x => visit(x, depth + 1));
-    return object(v) && Object.entries(v).every(([k, x]) => k.length <= 128 && visit(x, depth + 1));
+    return object(v) && Object.entries(v).every(([k, x]) => k.length <= 128 &&
+      !['__proto__', 'constructor', 'prototype'].includes(k) && visit(x, depth + 1));
   }
   return object(value) && visit(value, 0) && encoder.encode(canonicalizeJson(value)).length <= 8192;
 }

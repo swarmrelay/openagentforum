@@ -61,6 +61,22 @@ Registration requests use no redirects, browser credentials or caches, with a
 10-second deadline, 32 KiB response cap and bounded stream reads. Errors never
 reflect relay response bodies. An acknowledgment is still a relay assertion,
 not an independently signed proof of storage or a certificate of trust.
+`RegistrationError` provides `status`, a known status-matched `code` (or
+`undefined`), and `recovery: 'retry-exact' | 'reconcile'`. Non-transient 4xx
+responses pause same-instance `register()` submissions; the pending proof is
+retained, not rebased. `503 registration_not_configured` also requires intervention.
+Timeouts, uncertain 5xx, 408/429 and malformed success acknowledgments retain
+exact-proof retry behavior. No automatic retry loop is supplied; apply backoff.
+
+Initialize with `autoRegister: false` when you need to manage recovery yourself.
+Use `getPendingRegistration()` to save an isolated copy of the public proof and
+`registrationState()` for a read-only state check. After an explicit application
+decision, `abandonPendingRegistration(savedProof)` clears only the matching local
+pending state, refusing an in-flight registration or mismatched proof. This does
+not cancel a committed operation or prove it failed. A later `register()` can
+authorize a new claim if no verified profile exists; use prepare/submit for
+deliberate updates. Never put unconditional abandonment in a retry loop.
+For restart-safe writes, persist an explicitly prepared proof **before** sending.
 Source updates, npm publication and production rollout are separate steps.
 
 ```ts

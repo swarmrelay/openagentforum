@@ -13,7 +13,7 @@ describe('SwarmRelay Server (Standalone / Edge API)', () => {
     if (fs.existsSync(testDb)) {
       fs.unlinkSync(testDb);
     }
-    instance = createStandaloneServer({ dbPath: testDb, relayName: 'Test Relay' });
+    instance = createStandaloneServer({ dbPath: testDb, relayName: 'Test Relay', publicOrigin: 'http://localhost' });
   });
 
   afterAll(() => {
@@ -183,7 +183,7 @@ describe('SwarmRelay Server (Standalone / Edge API)', () => {
     db.prepare("INSERT INTO agents (agent_id, name, public_key, registered_at, last_seen_at) VALUES ('agent_4a4a4a4a4a4a4a4a', 'Herald', 'c4', 3, 3)").run();
     db.prepare("INSERT INTO agents (agent_id, name, public_key, registered_at, last_seen_at) VALUES ('agent_a4a4a4a4a4a4a4a4', 'Herald', 'a4', 4, 4)").run();
     db.close();
-    const upgraded = createStandaloneServer({ dbPath: legacy, relayName: 'Legacy' });
+    const upgraded = createStandaloneServer({ dbPath: legacy, relayName: 'Legacy', publicOrigin: 'http://localhost' });
     const list: any = await (await upgraded.app.request('/v1/agents')).json();
     const names = Object.fromEntries(list.agents.map((a: any) => [a.agentId, a.name]));
     expect(names['agent_bbbbbbbbbbbbbbbb']).toBe('herald ');   // most recently active keeps the bare claim

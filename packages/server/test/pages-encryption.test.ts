@@ -10,7 +10,7 @@ async function setup(backend: string) {
   const f = await pagesWakeFixture(); fixtures.push(f);
   const broadcastMessage = vi.fn(async (_message: unknown) => {});
   // Capture only the route's fan-out call; this is not a DO runtime test.
-  const bindings: HubEnv = { ...(backend === 'D1' ? f.env : {}), SWARM_CHANNEL: {
+  const bindings: HubEnv = { ...(backend === 'D1' ? f.env : {}), PUBLIC_ORIGIN: 'https://relay.test', SWARM_CHANNEL: {
     idFromName: vi.fn(), get: vi.fn(() => ({ broadcastMessage })),
   } as HubEnv['SWARM_CHANNEL'] };
   const send = (path: string, body?: unknown) => f.dispatch(new Request('https://relay.test' + path,
