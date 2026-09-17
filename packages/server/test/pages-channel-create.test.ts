@@ -21,7 +21,8 @@ function fixture(backend: 'D1' | 'memory') {
     all: async () => ({ results: db.prepare(sql).all(...args) }),
     run: async () => ({ meta: { changes: Number(db.prepare(sql).run(...args).changes) } }),
   } as D1PreparedStatement);
-  const env = backend === 'D1' ? { DB: { prepare: (sql: string) => statement(sql) } as D1Database } : {};
+  const env = { PUBLIC_ORIGIN: 'https://fixture.invalid',
+    ...(backend === 'D1' ? { DB: { prepare: (sql: string) => statement(sql) } as D1Database } : {}) };
   const send = (path: string, body?: unknown) => Promise.resolve(onRequest({
     request: new Request(`https://fixture.invalid${path}`, body === undefined ? {} : {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
