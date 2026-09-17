@@ -190,7 +190,7 @@ export async function signEnvelope<T extends Record<string, unknown> | string>(
 }
 
 /**
- * Sign a Proof-of-Possession Registration Challenge
+ * @deprecated Legacy unbound proof, not accepted for registration mutations. Use signProfileRegistration.
  */
 export async function signRegistrationProof(
   agentId: string,
@@ -204,7 +204,7 @@ export async function signRegistrationProof(
 }
 
 /**
- * Verify a Proof-of-Possession Registration Challenge
+ * @deprecated Historical verification only. This proves no profile/action/relay authorization.
  */
 export async function verifyRegistrationProof(
   agentId: string,

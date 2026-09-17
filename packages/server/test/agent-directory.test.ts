@@ -3,6 +3,7 @@ import { generateAgentKeyPair, signEnvelope, verifyEnvelope } from '@openagentfo
 import { adapterFixture } from './adapter-fixture.js';
 import { pagesWakeFixture } from './pages-wake-fixture.js';
 import { fixtureAgentName } from './agent-name-fixture.js';
+import { profileProof } from './registration-fixture.js';
 
 const cleanups: (() => void)[] = [];
 afterEach(() => { for (const close of cleanups.splice(0)) close(); });
@@ -14,7 +15,7 @@ async function setup(adapter: Adapter) {
   const f = await pagesWakeFixture(); cleanups.push(f.close);
   return { db: f.db, request: (path: string, body?: unknown) => f.dispatch(new Request('https://relay.test' + path,
     body === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }),
-  adapter === 'Pages D1' ? { DB: f.env.DB } : {}) };
+  { PUBLIC_ORIGIN: 'https://relay.test', ...(adapter === 'Pages D1' ? { DB: f.env.DB } : {}) }) };
 }
 
 describe.each(['Worker', 'standalone', 'Pages D1', 'Pages memory'] as const)('%s agent directory (#158)', adapter => {
@@ -41,10 +42,10 @@ describe.each(['Worker', 'standalone', 'Pages D1', 'Pages memory'] as const)('%s
     const { messages } = await (await f.request('/v1/channels/general/messages')).json();
     expect((await verifyEnvelope(messages.find((m: { id: string }) => m.id === envelope.id), agent.publicKey)).valid).toBe(true);
 
-    // A heartbeat must not move an already-enumerated key behind the cursor.
+    // A repeated key announcement neither changes activity nor directory order.
     const heartbeat = await f.request('/v1/agents/register', { publicKey: keys[0].signingPublicKey, name: fixtureAgentName(keys[0].agentId) });
     expect(heartbeat.status).toBe(200);
-    expect((await heartbeat.json()).agent.name).toBe(fixtureAgentName(keys[0].agentId));
+    expect((await heartbeat.json()).agent.name).toBe(`Agent-${keys[0].agentId.slice(6)}`);
     const ids: string[] = first.agents.map((a: { agentId: string }) => a.agentId);
     let cursor = first.nextCursor;
     for (let n = 0; cursor !== null && n < 20; n++) {
@@ -72,14 +73,14 @@ describe.each(['Worker', 'standalone', 'Pages D1', 'Pages memory'] as const)('%s
     const f = await setup(adapter);
     const first = await generateAgentKeyPair(), second = await generateAgentKeyPair();
     const sharedName = fixtureAgentName(first.agentId);
-    expect((await f.request('/v1/agents/register', { publicKey: first.signingPublicKey, name: sharedName })).status).toBe(200);
-    const conflict = await f.request('/v1/agents/register', { publicKey: second.signingPublicKey, name: sharedName.toLowerCase() });
+    expect((await f.request('/v1/agents/register', await profileProof(first, sharedName))).status).toBe(200);
+    const conflict = await f.request('/v1/agents/register', await profileProof(second, sharedName.toLowerCase()));
     expect(conflict.status).toBe(409);
-    expect((await conflict.json()).claimedBy).toBe(first.agentId);
+    expect((await conflict.json()).error).toBe('display_name_claimed');
     expect((await f.request(`/v1/agents/${second.agentId}`)).status).toBe(404);
 
     const distinctName = fixtureAgentName(second.agentId);
-    const accepted = await f.request('/v1/agents/register', { publicKey: second.signingPublicKey, name: distinctName });
+    const accepted = await f.request('/v1/agents/register', await profileProof(second, distinctName));
     expect(accepted.status).toBe(200);
     expect((await accepted.json()).agent).toMatchObject({ agentId: second.agentId, name: distinctName, publicKey: second.signingPublicKey });
     expect((await (await f.request(`/v1/agents/${first.agentId}`)).json()).agent)

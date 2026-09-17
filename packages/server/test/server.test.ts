@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { createStandaloneServer, type StandaloneInstance } from '../src/standalone.js';
 import { generateAgentKeyPair, signEnvelope, verifyEnvelope, signTaskAction, verifyPollProof } from '@openagentforum/protocol';
 import { fixtureAgentName } from './agent-name-fixture.js';
+import { profileProof } from './registration-fixture.js';
 import fs from 'node:fs';
 
 describe('SwarmRelay Server (Standalone / Edge API)', () => {
@@ -12,7 +13,7 @@ describe('SwarmRelay Server (Standalone / Edge API)', () => {
     if (fs.existsSync(testDb)) {
       fs.unlinkSync(testDb);
     }
-    instance = createStandaloneServer({ dbPath: testDb, relayName: 'Test Relay' });
+    instance = createStandaloneServer({ dbPath: testDb, relayName: 'Test Relay', publicOrigin: 'http://localhost' });
   });
 
   afterAll(() => {
@@ -39,13 +40,7 @@ describe('SwarmRelay Server (Standalone / Edge API)', () => {
     const res = await instance.app.request('/v1/agents/register', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        name: 'Sol-Agent-7',
-        publicKey: agentKeys.signingPublicKey,
-        x25519PublicKey: agentKeys.encryptionPublicKey,
-        capabilities: ['python_exec', 'vulnerability_analysis'],
-        metadata: { model: 'gpt-5.6-sol' }
-      })
+      body: JSON.stringify(await profileProof(agentKeys, 'Sol-Agent-7', { hub: 'http://localhost' }))
     });
 
     expect(res.status).toBe(200);
@@ -148,21 +143,21 @@ describe('SwarmRelay Server (Standalone / Edge API)', () => {
   it('display names are first-claim unique, case-insensitively (#28)', async () => {
     const first = await generateAgentKeyPair();
     const second = await generateAgentKeyPair();
-    const reg = (k: any, name: string) => instance.app.request('/v1/agents/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, publicKey: k.signingPublicKey }) });
+    const reg = async (k: any, name: string, expectedRevision = 0) => instance.app.request('/v1/agents/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(await profileProof(k, name, { hub: 'http://localhost', expectedRevision })) });
     expect((await reg(first, 'Herald')).status).toBe(200);
     const clash = await reg(second, 'herald');
     expect(clash.status).toBe(409);
-    expect(((await clash.json()) as any).claimedBy).toBe(first.agentId);
+    expect(((await clash.json()) as any).error).toBe('display_name_claimed');
     // the holder re-registering with its own name is fine
-    expect((await reg(first, 'Herald')).status).toBe(200);
+    expect((await reg(first, 'Herald', 1)).status).toBe(200);
     // and a different name for the second key is fine
     expect((await reg(second, 'Herald-2')).status).toBe(200);
   });
 
   it('name claims survive whitespace, lookalikes, and invisible characters (#64)', async () => {
     const owner = await generateAgentKeyPair();
-    const reg = async (name: string) => instance.app.request('/v1/agents/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, publicKey: (await generateAgentKeyPair()).signingPublicKey }) });
-    expect((await instance.app.request('/v1/agents/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Vigil', publicKey: owner.signingPublicKey }) })).status).toBe(200);
+    const reg = async (name: string) => instance.app.request('/v1/agents/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(await profileProof(await generateAgentKeyPair(), name, { hub: 'http://localhost' })) });
+    expect((await instance.app.request('/v1/agents/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(await profileProof(owner, 'Vigil', { hub: 'http://localhost' })) })).status).toBe(200);
     expect((await reg('Vigil ')).status).toBe(409);          // trailing space
     expect((await reg(' vigil')).status).toBe(409);          // leading space + case
     expect((await reg('V i g i l')).status).toBe(409);       // inner whitespace
@@ -188,7 +183,7 @@ describe('SwarmRelay Server (Standalone / Edge API)', () => {
     db.prepare("INSERT INTO agents (agent_id, name, public_key, registered_at, last_seen_at) VALUES ('agent_4a4a4a4a4a4a4a4a', 'Herald', 'c4', 3, 3)").run();
     db.prepare("INSERT INTO agents (agent_id, name, public_key, registered_at, last_seen_at) VALUES ('agent_a4a4a4a4a4a4a4a4', 'Herald', 'a4', 4, 4)").run();
     db.close();
-    const upgraded = createStandaloneServer({ dbPath: legacy, relayName: 'Legacy' });
+    const upgraded = createStandaloneServer({ dbPath: legacy, relayName: 'Legacy', publicOrigin: 'http://localhost' });
     const list: any = await (await upgraded.app.request('/v1/agents')).json();
     const names = Object.fromEntries(list.agents.map((a: any) => [a.agentId, a.name]));
     expect(names['agent_bbbbbbbbbbbbbbbb']).toBe('herald ');   // most recently active keeps the bare claim
@@ -199,7 +194,7 @@ describe('SwarmRelay Server (Standalone / Edge API)', () => {
     expect(keys.size).toBe(list.agents.length);
     // and the claim now holds against a newcomer
     const k = await generateAgentKeyPair();
-    const r = await upgraded.app.request('/v1/agents/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'HERALD', publicKey: k.signingPublicKey }) });
+    const r = await upgraded.app.request('/v1/agents/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(await profileProof(k, 'HERALD', { hub: 'http://localhost' })) });
     expect(r.status).toBe(409);
     fs.unlinkSync(legacy);
   });
@@ -230,7 +225,7 @@ describe('SwarmRelay Server (Standalone / Edge API)', () => {
     const keys = await generateAgentKeyPair();
     const first = await instance.app.request('/v1/agents/register', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: 'Original', publicKey: keys.signingPublicKey })
+      body: JSON.stringify(await profileProof(keys, 'Original', { hub: 'http://localhost' }))
     });
     expect((await first.json()).success).toBe(true);
     // a "forever" proof: signature is valid over the literal string, but the

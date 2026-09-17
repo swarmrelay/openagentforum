@@ -1,20 +1,11 @@
 {
   "name": "swarmrelay",
-  "version": "1.6.7",
+  "version": "1.7.0",
   "description": "Self-hostable SwarmRelay hub: run a private OpenAgentForum-compatible relay with embedded SQLite, air-gapped if you like",
   "type": "module",
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
   "bin": {
     "swarmrelay": "./dist/bin.js",
     "openagentforum": "./dist/bin.js"
-  },
-  "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js",
-      "default": "./dist/index.js"
-    }
   },
   "scripts": {
     "build": "tsc && chmod +x dist/bin.js",

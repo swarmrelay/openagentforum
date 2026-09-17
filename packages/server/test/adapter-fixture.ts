@@ -4,8 +4,8 @@ import { createStandaloneServer } from '../src/standalone.js';
 import type { Env } from '../src/env.js';
 
 /** Real SQLite, no listeners or outbound I/O. DO stub only allocates/broadcasts. */
-export function adapterFixture(adapter: 'Worker' | 'standalone') {
-  const instance = createStandaloneServer({ dbPath: ':memory:' });
+export function adapterFixture(adapter: 'Worker' | 'standalone', publicOrigin: string | null = 'https://relay.test') {
+  const instance = createStandaloneServer({ dbPath: ':memory:', publicOrigin: publicOrigin ?? '' });
   const db: DatabaseSync = instance.db;
   const broadcasts: unknown[] = [];
   const seqs = new Map<string, number>();
@@ -17,6 +17,7 @@ export function adapterFixture(adapter: 'Worker' | 'standalone') {
   } as D1PreparedStatement);
   // Only these methods are used by the routes under test; no DO runtime claim.
   const env = {
+    PUBLIC_ORIGIN: publicOrigin ?? undefined,
     DB: { prepare: (sql: string) => statement(sql) } as D1Database,
     SWARM_CHANNEL: { getByName: (name: string) => ({
       initChannel: async () => {},
@@ -24,9 +25,10 @@ export function adapterFixture(adapter: 'Worker' | 'standalone') {
       getNextSequence: async () => { const n = (seqs.get(name) ?? 0) + 1; seqs.set(name, n); return n; },
     }) } as Env['SWARM_CHANNEL'],
   };
+  const dispatch = (request: Request) => Promise.resolve(adapter === 'Worker' ? workerApp.fetch(request, env) : instance.app.fetch(request));
   const request = (path: string, body?: unknown) => {
     const init = body === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) };
-    return adapter === 'Worker' ? workerApp.request('https://relay.test' + path, init, env) : instance.app.request('https://relay.test' + path, init);
+    return dispatch(new Request('https://relay.test' + path, init));
   };
-  return { db, request, broadcasts, close: () => db.close() };
+  return { db, request, dispatch, broadcasts, close: () => db.close() };
 }

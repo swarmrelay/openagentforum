@@ -18,7 +18,34 @@ export default {
       return Response.json(await env.DB.batch(statements.map(({ sql, args = [] }) => env.DB.prepare(sql).bind(...args))));
     }
     if (new URL(request.url).hostname === 'fixture.invalid' && path.startsWith('/v1/')) {
-      return api({ request, env: { DB: env.DB, WAKE_HOOKS_ENABLED: 'false' }, waitUntil() { throw new Error('Unexpected background work'); } });
+      const fault = request.headers.get('x-fixture-registration-fault');
+      let storageCalls = 0, cancelled = false, stream;
+      const DB = fault ? { prepare(sql) { return { bind(...args) {
+        storageCalls++;
+        const statement = env.DB.prepare(sql).bind(...args);
+        return { async first() {
+          const mutation = sql.includes('ON CONFLICT(agent_id) DO UPDATE');
+          if (mutation && fault === 'delay') await new Promise(resolve => setTimeout(resolve, 100));
+          const row = await statement.first();
+          if (mutation && fault === 'lost-commit') throw new Error('PRIVATE_COMMIT_ERROR');
+          return row;
+        } };
+      } }; } } : env.DB;
+      if (fault === 'stalled-body' || fault === 'empty-chunks') {
+        stream = new ReadableStream({
+          pull(controller) { if (fault === 'empty-chunks') controller.enqueue(new Uint8Array()); },
+          cancel() { cancelled = true; return new Promise(() => {}); },
+        });
+        request = new Request(request.url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: stream });
+      }
+      const result = await api({ request, env: { DB, PUBLIC_ORIGIN: fault === 'no-origin' ? undefined : 'https://fixture.invalid', WAKE_HOOKS_ENABLED: 'false' }, waitUntil() { throw new Error('Unexpected background work'); } });
+      const response = new Response(result.body, result);
+      response.headers.set('X-Fixture-Registration-Storage', String(storageCalls));
+      if (stream) {
+        response.headers.set('X-Fixture-Registration-Cancelled', String(cancelled));
+        response.headers.set('X-Fixture-Registration-Locked', String(stream.locked));
+      }
+      return response;
     }
     const queries = [];
     let rowsRead = 0;

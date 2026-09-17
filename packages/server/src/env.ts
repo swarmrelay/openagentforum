@@ -9,4 +9,5 @@ export interface Env {
   DB: D1Database;
   RELAY_NAME?: string;
   RELAY_PUBKEY?: string;
+  PUBLIC_ORIGIN?: string;
 }

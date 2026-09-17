@@ -11,7 +11,6 @@ import { createRequire } from 'node:module';
 import { WebSocketServer, WebSocket } from 'ws';
 import { createServer, type Server as HttpServer } from 'node:http';
 import {
-  deriveAgentId,
   verifyEnvelope,
   type AgentIdentity,
   type Channel,
@@ -25,7 +24,8 @@ import path from 'node:path';
 
 const require = createRequire(import.meta.url);
 const { DatabaseSync } = require('node:sqlite');
-import { normalizeDisplayName, displayNameKey } from './names.js';
+import { displayNameKey } from './names.js';
+import { handleRegistration, handleRegistrationState, sqlRegistrationStore } from './registration.js';
 import { createMcpManifest } from './mcp-manifest.js';
 import { encryptionError, sameStoredEnvelope, storedEnvelope, type EnvelopeRow } from './envelopes.js';
 import { AGENT_DIRECTORY_SQL, agentDirectoryPage, parseAgentDirectoryQuery } from './agent-directory.js';
@@ -33,7 +33,7 @@ import { verifyTaskAction, sha256Hex } from '@openagentforum/protocol';
 import { registerPollRoutes, pollIngestGate, type PollStore } from './polls-routes.js';
 
 export interface StandaloneConfig {
-  /** origin this relay is known by (poll.ledger.hub); defaults to PUBLIC_ORIGIN or the request origin */
+  /** Pinned public origin. Registration requires this or PUBLIC_ORIGIN; never trusts request Host. */
   publicOrigin?: string;
   port?: number;
   dbPath?: string;
@@ -121,6 +121,14 @@ export function createStandaloneServer(config: StandaloneConfig = {}): Standalon
       updated_at INTEGER NOT NULL
     );
   `);
+  const agentColumns = new Set((db.prepare('PRAGMA table_info(agents)').all() as { name: string }[]).map(column => column.name));
+  for (const [name, definition] of [
+    ['profile_revision', 'INTEGER NOT NULL DEFAULT 0'],
+    ['registration_digest', 'TEXT'],
+    ['registration_applied_at', 'INTEGER'],
+  ]) {
+    if (!agentColumns.has(name)) db.exec(`ALTER TABLE agents ADD COLUMN ${name} ${definition}`);
+  }
   // (#64) Backfill keys for rows from before this column existed. SQLite's
   // UNIQUE allows many NULLs and the claim check is `name_key = ?`, so an
   // un-keyed row could be re-claimed. Pre-existing collisions keep the bare
@@ -266,107 +274,10 @@ export function createStandaloneServer(config: StandaloneConfig = {}): Standalon
   db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_channel_stored_seq ON messages (channel, stored_seq)');
 
   // Agents
-  app.post('/v1/agents/register', async (c) => {
-    const { name, publicKey, x25519PublicKey, capabilities = [], metadata = {}, endpoint, proofSignature, timestamp } = await c.req.json();
-    if (!publicKey) return c.json({ error: 'publicKey required' }, 400);
-
-    const agentId = await deriveAgentId(publicKey);
-    const norm = normalizeDisplayName(name, `Agent-${agentId.slice(6, 12)}`);
-    if (!norm.ok) return c.json({ error: `Invalid display name: ${norm.error}` }, 400);
-    const agentName = norm.name;
-    const nameKey = norm.key;
-    const now = Date.now();
-
-    // (#30) anyone can create; only the keyholder can change. Updates to an
-    // existing registration require a valid proof over register|agentId|ts.
-    let proofValid = false;
-    if (proofSignature && timestamp) {
-      const tsNum = Number(timestamp);
-      if (!Number.isFinite(tsNum) || Math.abs(now - tsNum) > 5 * 60 * 1000) return c.json({ error: 'Registration proof timestamp outside the allowed window' }, 403);
-      try {
-        const pubKey = await crypto.subtle.importKey('raw', Uint8Array.from((publicKey.toLowerCase().match(/../g) || []).map((h: string) => parseInt(h, 16))), { name: 'Ed25519' }, false, ['verify']);
-        const sigBytes = Uint8Array.from((String(proofSignature).match(/../g) || []).map((h: string) => parseInt(h, 16)));
-        proofValid = await crypto.subtle.verify('Ed25519', pubKey, sigBytes, new TextEncoder().encode(`register|${agentId}|${timestamp}`));
-      } catch { proofValid = false; }
-      if (!proofValid) return c.json({ error: 'Invalid registration proof signature' }, 403);
-    }
-    const existingAgent = db.prepare('SELECT * FROM agents WHERE agent_id = ?').get(agentId) as any;
-    if (existingAgent && !proofValid) {
-      db.prepare('UPDATE agents SET last_seen_at = ? WHERE agent_id = ?').run(now, agentId);
-      return c.json({
-        success: true,
-        alreadyRegistered: true,
-        agent: {
-          agentId: existingAgent.agent_id,
-          name: existingAgent.name,
-          publicKey: existingAgent.public_key,
-          x25519PublicKey: existingAgent.x25519_public_key || undefined,
-          capabilities: JSON.parse(existingAgent.capabilities_json || '[]'),
-          metadata: JSON.parse(existingAgent.metadata_json || '{}'),
-          registeredAt: existingAgent.registered_at,
-          lastSeenAt: now,
-        },
-      });
-    }
-
-    // (#28) first-claim unique display names (case-insensitive); identity stays the key
-
-    const nameOwner = db.prepare('SELECT agent_id FROM agents WHERE name_key = ? AND agent_id != ?').get(nameKey, agentId) as any;
-
-    if (nameOwner) return c.json({ error: `Display name '${agentName}' is already claimed by another agent`, claimedBy: nameOwner.agent_id }, 409);
-
-    try {
-
-      db.prepare(`
-        INSERT INTO agents (agent_id, name, name_key, public_key, x25519_public_key, capabilities_json, metadata_json, registered_at, last_seen_at, endpoint)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(agent_id) DO UPDATE SET
-          name = excluded.name,
-          name_key = excluded.name_key,
-          x25519_public_key = COALESCE(excluded.x25519_public_key, agents.x25519_public_key),
-          capabilities_json = excluded.capabilities_json,
-          metadata_json = excluded.metadata_json,
-          last_seen_at = excluded.last_seen_at,
-          endpoint = COALESCE(excluded.endpoint, agents.endpoint)
-      `).run(
-        agentId,
-        agentName,
-        nameKey,
-        publicKey.toLowerCase(),
-        x25519PublicKey ? x25519PublicKey.toLowerCase() : null,
-        JSON.stringify(capabilities),
-        JSON.stringify(metadata),
-        now,
-        now,
-        endpoint || null
-      );
-
-    } catch (e: any) {
-
-      // (#28) concurrent claim of the same name: the unique index wins the race; report it as a claim, not a crash
-
-      if (String(e?.message || e).includes('UNIQUE')) return c.json({ error: `Display name '${agentName}' is already claimed by another agent` }, 409);
-
-      throw e;
-
-    }
-
-    return c.json({
-      success: true,
-      agent: {
-        agentId,
-        name: agentName,
-        publicKey: publicKey.toLowerCase(),
-        x25519PublicKey,
-        capabilities,
-        metadata,
-        registeredAt: now,
-        lastSeenAt: now,
-        reputationScore: 100,
-        endpoint,
-      },
-    });
-  });
+  const registrationStore = sqlRegistrationStore(async (sql, args) => db.prepare(sql).get(...args) ?? null);
+  const registrationHub = config.publicOrigin ?? process.env.PUBLIC_ORIGIN;
+  app.post('/v1/agents/register', c => handleRegistration(c.req.raw, registrationStore, registrationHub));
+  app.get('/v1/agents/:agentId/registration', c => handleRegistrationState(c.req.param('agentId'), registrationStore, registrationHub));
 
   app.get('/v1/agents', (c) => {
     const query = parseAgentDirectoryQuery(new URL(c.req.url).searchParams);
@@ -376,6 +287,8 @@ export function createStandaloneServer(config: StandaloneConfig = {}): Standalon
       agentId: r.agent_id,
       name: r.name,
       publicKey: r.public_key,
+      profileRevision: r.profile_revision,
+      profileVerified: r.profile_revision > 0,
       x25519PublicKey: r.x25519_public_key || undefined,
       capabilities: JSON.parse(r.capabilities_json),
       metadata: JSON.parse(r.metadata_json),
@@ -395,6 +308,8 @@ export function createStandaloneServer(config: StandaloneConfig = {}): Standalon
         agentId: r.agent_id,
         name: r.name,
         publicKey: r.public_key,
+        profileRevision: r.profile_revision,
+        profileVerified: r.profile_revision > 0,
         x25519PublicKey: r.x25519_public_key || undefined,
         capabilities: JSON.parse(r.capabilities_json),
         metadata: JSON.parse(r.metadata_json),

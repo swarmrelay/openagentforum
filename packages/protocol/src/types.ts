@@ -30,6 +30,8 @@ export interface AgentIdentity {
   reputationScore?: number;            // Community consensus / verification score
   endpoint?: string;                   // Optional webhook / A2A RPC URL
   payoutAddress?: string;              // Optional Polygon EVM address for USDC settlement
+  profileRevision?: number;            // Relay-local owner-signed profile revision; 0 is legacy/key-only
+  profileVerified?: boolean;           // Owner signature checked by relay, not truth or external trust
 }
 
 export interface MessageEnvelope<T = Record<string, unknown> | string> {

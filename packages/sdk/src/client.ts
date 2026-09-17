@@ -5,6 +5,14 @@
 import {
   generateAgentKeyPair,
   deriveAgentId,
+  registrationOrigin,
+  signProfileRegistration,
+  verifyProfileRegistration,
+  registrationDigest,
+  canonicalizeJson,
+  REGISTRATION_MAX_AGE_MS,
+  type RegistrationProfile,
+  type SignedRegistration,
   signEnvelope,
   verifyEnvelope,
   encryptPayloadForRecipient,
@@ -40,6 +48,7 @@ import {
 import { subscribeToSse, type SubscribeOptions } from './sse.js';
 import { readInbox, type InboxOptions, type InboxPage } from './inbox.js';
 import { HookClient, type HookRequestOptions } from './hooks.js';
+import { RegistrationError, registrationObject, registrationRequest } from './registration-http.js';
 import type { HookSpec } from '@openagentforum/protocol';
 export type { SubscribeOptions } from './sse.js';
 
@@ -63,8 +72,12 @@ export class SwarmClient {
   public name: string;
   public capabilities: string[];
   public metadata: Record<string, unknown>;
+  public endpoint?: string;
   private readonly fetchImpl: FetchFn;
   private readonly hooks: HookClient;
+  private pendingRegistration?: SignedRegistration;
+  private blockedRegistration?: RegistrationError;
+  private registering?: Promise<AgentIdentity>;
 
   private constructor(options: {
     hubUrl: string;
@@ -72,6 +85,7 @@ export class SwarmClient {
     name: string;
     capabilities: string[];
     metadata: Record<string, unknown>;
+    endpoint?: string;
     fetch?: FetchFn;
   }) {
     this.hubUrl = options.hubUrl.replace(/\/$/, '');
@@ -80,6 +94,7 @@ export class SwarmClient {
     this.name = options.name;
     this.capabilities = options.capabilities;
     this.metadata = options.metadata;
+    this.endpoint = options.endpoint;
     this.fetchImpl = options.fetch || globalThis.fetch.bind(globalThis);
     this.hooks = new HookClient(this.hubUrl, this.keyPair, this.fetchImpl);
   }
@@ -100,6 +115,7 @@ export class SwarmClient {
       name,
       capabilities,
       metadata,
+      endpoint: options.endpoint,
       fetch: options.fetch,
     });
 
@@ -111,28 +127,100 @@ export class SwarmClient {
   }
 
   /**
-   * Register or update agent identity on the hub
+   * Claim a profile, or return an existing owner-verified profile without rewriting it.
+   * Retries on this instance reuse the exact proof after an uncertain response.
    */
-  async register(): Promise<AgentIdentity> {
-    const res = await this.fetchImpl(`${this.hubUrl}/v1/agents/register`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        name: this.name,
-        publicKey: this.keyPair.signingPublicKey,
-        x25519PublicKey: this.keyPair.encryptionPublicKey,
-        capabilities: this.capabilities,
-        metadata: this.metadata,
-      }),
-    });
+  register(): Promise<AgentIdentity> {
+    if (this.registering) return this.registering;
+    this.registering = this.registerOnce().finally(() => { this.registering = undefined; });
+    return this.registering;
+  }
 
-    if (!res.ok) {
-      const err = await res.text();
-      throw new Error(`Failed to register agent: ${err}`);
+  /** Anonymous, read-only reconciliation. Does not clear, retry or rebase a pending proof. */
+  async registrationState(): Promise<{ revision: number; agent: AgentIdentity | null }> {
+    const hub = registrationOrigin(this.hubUrl);
+    const state = await registrationRequest(this.fetchImpl, `${hub}/v1/agents/${this.agentId}/registration`);
+    if (!registrationObject(state) || state.proofVersion !== 2 || state.hub !== hub ||
+        typeof state.revision !== 'number' || !Number.isSafeInteger(state.revision) || state.revision < 0 ||
+        state.revision >= Number.MAX_SAFE_INTEGER || (state.agent === null ? state.revision !== 0 :
+        (!registrationObject(state.agent) || state.agent.agentId !== this.agentId || state.agent.publicKey !== this.keyPair.signingPublicKey ||
+         state.agent.profileRevision !== state.revision || state.agent.profileVerified !== (state.revision > 0)))) {
+      throw new Error('Invalid or mismatched registration state');
     }
+    return { revision: state.revision, agent: state.agent as AgentIdentity | null };
+  }
 
-    const data = (await res.json()) as { success: boolean; agent: AgentIdentity };
-    return data.agent;
+  private async registerOnce(): Promise<AgentIdentity> {
+    if (this.blockedRegistration) throw this.blockedRegistration;
+    if (!this.pendingRegistration) {
+      const state = await this.registrationState();
+      if (state.agent && state.revision > 0) return state.agent;
+      this.pendingRegistration = await this.signProfile({
+        name: this.name, x25519PublicKey: this.keyPair.encryptionPublicKey,
+        capabilities: this.capabilities, metadata: this.metadata, endpoint: this.endpoint ?? null,
+      }, state.revision);
+    }
+    try {
+      const agent = await this.submitProfileRegistration(this.pendingRegistration);
+      this.pendingRegistration = undefined;
+      return agent;
+    } catch (error) {
+      if (error instanceof RegistrationError && error.recovery === 'reconcile') this.blockedRegistration = error;
+      throw error;
+    }
+  }
+
+  /** Isolated public proof for caller-owned reconciliation/checkpointing; contains no private keys. */
+  getPendingRegistration(): SignedRegistration | undefined {
+    return this.pendingRegistration ? JSON.parse(canonicalizeJson(this.pendingRegistration)) as SignedRegistration : undefined;
+  }
+
+  /** Explicitly abandon local retry state after reconciliation; NOT evidence the old action failed.
+   * Save the proof first. A later register() may authorize a fresh claim if no verified profile exists.
+   */
+  abandonPendingRegistration(expectedProof: SignedRegistration): void {
+    if (this.registering) throw new Error('Registration is in flight');
+    if (!this.pendingRegistration || canonicalizeJson(expectedProof) !== canonicalizeJson(this.pendingRegistration)) {
+      throw new Error('Pending registration changed or is absent');
+    }
+    this.pendingRegistration = undefined;
+    this.blockedRegistration = undefined;
+  }
+
+  private signProfile(profile: RegistrationProfile, expectedRevision: number): Promise<SignedRegistration> {
+    const issuedAt = Date.now();
+    return signProfileRegistration({ proofVersion: 2, action: 'register-profile', hub: registrationOrigin(this.hubUrl),
+      publicKey: this.keyPair.signingPublicKey, expectedRevision, issuedAt,
+      expiresAt: issuedAt + REGISTRATION_MAX_AGE_MS, profile }, this.keyPair.signingPrivateKey);
+  }
+
+  /** Explicit profile change. Persist the returned public proof before sending for restart-safe retries. */
+  async prepareProfileRegistration(profile: RegistrationProfile): Promise<SignedRegistration> {
+    const state = await this.registrationState();
+    return this.signProfile(profile, state.revision);
+  }
+
+  /** Submit/retry exactly this proof. Never refresh its clock, revision or fields automatically. */
+  async submitProfileRegistration(proof: SignedRegistration): Promise<AgentIdentity> {
+    const hub = registrationOrigin(this.hubUrl);
+    // Verification snapshots the document before its first await. All subsequent
+    // I/O and acknowledgment checks use that same immutable-in-flight value.
+    const snapshot = await verifyProfileRegistration(proof, hub);
+    if (!snapshot || snapshot.publicKey !== this.keyPair.signingPublicKey) {
+      throw new RegistrationError('Invalid registration proof or different relay/key', undefined, undefined, 'reconcile');
+    }
+    const digest = await registrationDigest(snapshot);
+    const data = await registrationRequest(this.fetchImpl, `${hub}/v1/agents/register`, JSON.stringify(snapshot));
+    if (!registrationObject(data) || data.success !== true || typeof data.replayed !== 'boolean' ||
+        !registrationObject(data.agent) || data.agent.agentId !== this.agentId || data.agent.publicKey !== snapshot.publicKey ||
+        data.agent.profileVerified !== true || data.agent.profileRevision !== snapshot.expectedRevision + 1 ||
+        !registrationObject(data.receipt) || data.receipt.revision !== snapshot.expectedRevision + 1 ||
+        data.receipt.digest !== digest || data.receipt.historical !== true ||
+        typeof data.receipt.appliedAt !== 'number' || !Number.isSafeInteger(data.receipt.appliedAt) ||
+        data.receipt.appliedAt < 0 || data.receipt.appliedAt < snapshot.issuedAt - 30_000 || data.receipt.appliedAt >= snapshot.expiresAt) {
+      throw new RegistrationError('Invalid registration acknowledgment; retain the exact proof for reconciliation');
+    }
+    return data.agent as unknown as AgentIdentity;
   }
 
   /**

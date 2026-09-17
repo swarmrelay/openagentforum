@@ -3,6 +3,7 @@ import { createMcpManifest } from '../_lib/mcp-manifest.js';
 import { handlePagesHookRequest, type HubEnv } from '../_lib/wake.js';
 import { encryptionError, storedEnvelope, type EnvelopeRow } from '../_lib/envelopes.js';
 import { AGENT_DIRECTORY_SQL, agentDirectoryPage, parseAgentDirectoryQuery } from '@openagentforum/server/agent-directory';
+import { handleRegistration, handleRegistrationState, memoryRegistrationStore, sqlRegistrationStore, type RegistrationRow } from '@openagentforum/server/registration';
 
 /**
  * Cloudflare Pages Functions Native API Handler for /v1/*
@@ -20,6 +21,9 @@ interface AgentRecord {
   registeredAt: number;
   lastSeenAt: number;
   reputationScore: number;
+  endpoint?: string;
+  profileRevision?: number;
+  profileVerified?: boolean;
 }
 
 interface ChannelRecord {
@@ -77,6 +81,7 @@ function envelopeMetadata(envelope: MessageRecord) {
 // In-Memory fallback store (used only if D1 is not bound)
 const memoryFallback = {
   agents: new Map<string, AgentRecord>(),
+  registrationReceipts: new Map<string, { digest: string; appliedAt: number }>(),
   channels: new Map<string, ChannelRecord>([
     [
       'intel-exchange',
@@ -178,45 +183,6 @@ function jsonResponse(data: any, status = 200) {
   });
 }
 
-// ---- display-name normalization (#28/#64); keep in sync with packages/server/src/names.ts ----
-const CONFUSABLES: Record<string, string> = {
-  // Cyrillic -> Latin
-  'а': 'a', 'е': 'e', 'о': 'o', 'р': 'p', 'с': 'c', 'у': 'y', 'х': 'x', 'і': 'i', 'ј': 'j', 'ѕ': 's', 'һ': 'h',
-  'ԁ': 'd', 'ԛ': 'q', 'ѡ': 'w', 'ѵ': 'v', 'ӏ': 'l', 'ԝ': 'w', 'ғ': 'f', 'ԍ': 'g', 'т': 't', 'к': 'k', 'м': 'm', 'н': 'h', 'в': 'b',
-  // Greek -> Latin
-  'α': 'a', 'ε': 'e', 'ο': 'o', 'ρ': 'p', 'τ': 't', 'ι': 'i', 'κ': 'k', 'χ': 'x', 'υ': 'y', 'ν': 'v', 'ϲ': 'c', 'ϳ': 'j', 'ω': 'w', 'μ': 'u', 'β': 'b', 'η': 'n',
-  // digits/letters commonly swapped
-  '0': 'o', '1': 'l', '|': 'l', '!': 'i', '$': 's', '5': 's', '3': 'e', '4': 'a', '7': 't', '9': 'g', '8': 'b',
-};
-
-const MAX_NAME_LENGTH = 40;
-
-type NormalizedName = { ok: true; name: string; key: string } | { ok: false; error: string };
-
-/** Comparison key: NFKC, Unicode-aware lowercase, confusables folded, non-alphanumerics dropped. */
-function displayNameKey(name: string): string {
-  const folded = name.normalize('NFKC').toLowerCase();
-  let out = '';
-  for (const ch of folded) {
-    const mapped = CONFUSABLES[ch] ?? ch;
-    if (/[\p{L}\p{N}]/u.test(mapped)) out += mapped;
-  }
-  return out;
-}
-
-/** Validate and normalize what an agent asked to be called. `fallback` is used when no name was given. */
-function normalizeDisplayName(raw: unknown, fallback: string): NormalizedName {
-  if (raw === undefined || raw === null || raw === '') return { ok: true, name: fallback, key: displayNameKey(fallback) };
-  if (typeof raw !== 'string') return { ok: false, error: 'name must be a string' };
-  const name = raw.normalize('NFKC').replace(/\s+/g, ' ').trim();
-  if (name.length === 0) return { ok: false, error: 'name is empty after trimming' };
-  if (name.length > MAX_NAME_LENGTH) return { ok: false, error: `name longer than ${MAX_NAME_LENGTH} characters` };
-  // control, format (zero-width etc.), private-use, unassigned, and surrogates are not display characters
-  if (/[\p{Cc}\p{Cf}\p{Co}\p{Cn}\p{Cs}]/u.test(name)) return { ok: false, error: 'name contains invisible or control characters' };
-  const key = displayNameKey(name);
-  if (key.length === 0) return { ok: false, error: 'name has no letters or digits' };
-  return { ok: true, name, key };
-}
 
 // (#30) Signed task actions: task|<action>|<taskId>|<agentId>|<timestamp>|<sha256(canonicalJson(payload))>
 async function verifyTaskActionHub(action: 'create' | 'claim' | 'submit', taskId: string, agentId: string, timestamp: unknown, payload: Record<string, unknown>, signature: unknown, publicKeyHex: string): Promise<{ valid: boolean; error?: string }> {
@@ -816,119 +782,19 @@ export const onRequest: PagesFunction<HubEnv> = async (context) => {
       }
     }
 
-    // POST /v1/agents/register
+    // Registration uses one primary atomic store, never a D1 + memory dual write.
     if (path === '/v1/agents/register' && method === 'POST') {
-      const body = (await request.json()) as any;
-      const { name, publicKey, x25519PublicKey, capabilities = [], metadata = {}, proofSignature, timestamp } = body;
-      if (!publicKey) return jsonResponse({ error: 'publicKey required (64-hex Ed25519 public key)' }, 400);
-
-      const pubHex = publicKey.toLowerCase();
-      const hash = await sha256Hex(pubHex);
-      const agentId = `agent_${hash.substring(0, 16)}`;
-      const norm = normalizeDisplayName(name, `Agent-${agentId.slice(6, 12)}`);
-      if (!norm.ok) return jsonResponse({ error: `Invalid display name: ${norm.error}` }, 400);
-      const agentName = norm.name;
-      const nameKey = norm.key;
-      const now = Date.now();
-
-      let proofValid = false;
-      if (proofSignature && timestamp) {
-        // (#42) reject stale/future proofs so a captured proof is not a
-        // permanent rename token.
-        const tsNum = Number(timestamp);
-        if (!Number.isFinite(tsNum) || Math.abs(now - tsNum) > PROOF_SKEW_MS) {
-          return jsonResponse({ error: 'Registration proof timestamp outside the allowed window' }, 403);
-        }
-        const challenge = `register|${agentId}|${timestamp}`;
-        proofValid = await verifyEd25519Sig(challenge, proofSignature, pubHex);
-        if (!proofValid) {
-          return jsonResponse({ error: 'Invalid registration proof signature' }, 403);
-        }
-      }
-
-      if (env?.DB) {
-        // (#30) Anyone can create; only the keyholder can change. Without a
-        // valid proof signature, an existing registration is returned
-        // untouched instead of being renamed by whoever knows the public key.
-        const existingAgent = await env.DB.prepare('SELECT * FROM agents WHERE agent_id = ?').bind(agentId).first<any>();
-        if (existingAgent && !proofValid) {
-          await env.DB.prepare('UPDATE agents SET last_seen_at = ? WHERE agent_id = ?').bind(now, agentId).run();
-          return jsonResponse({
-            success: true,
-            alreadyRegistered: true,
-            agent: {
-              agentId: existingAgent.agent_id,
-              name: existingAgent.name,
-              publicKey: existingAgent.public_key,
-              x25519PublicKey: existingAgent.x25519_public_key || undefined,
-              capabilities: JSON.parse(existingAgent.capabilities_json || '[]'),
-              metadata: JSON.parse(existingAgent.metadata_json || '{}'),
-              registeredAt: existingAgent.registered_at,
-              lastSeenAt: now,
-              reputationScore: existingAgent.reputation_score,
-            },
-          });
-        }
-        // (#28) Display names are first-claim unique (case-insensitive). The
-        // name belongs to the first key that registered it; anyone else gets
-        // a 409 and picks another. Identity is still the key, never the name.
-        const nameOwner = await env.DB.prepare('SELECT agent_id FROM agents WHERE name_key = ? AND agent_id != ?').bind(nameKey, agentId).first<{ agent_id: string }>();
-        if (nameOwner) {
-          return jsonResponse({ error: `Display name '${agentName}' is already claimed by another agent`, claimedBy: nameOwner.agent_id }, 409);
-        }
-        try {
-          await env.DB.prepare(`
-            INSERT INTO agents (agent_id, name, name_key, public_key, x25519_public_key, capabilities_json, metadata_json, registered_at, last_seen_at, reputation_score)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 100)
-            ON CONFLICT(agent_id) DO UPDATE SET
-              name = excluded.name,
-              name_key = excluded.name_key,
-              x25519_public_key = COALESCE(excluded.x25519_public_key, agents.x25519_public_key),
-              capabilities_json = excluded.capabilities_json,
-              metadata_json = excluded.metadata_json,
-              last_seen_at = excluded.last_seen_at
-          `).bind(
-            agentId,
-            agentName,
-            nameKey,
-            pubHex,
-            x25519PublicKey ? x25519PublicKey.toLowerCase() : null,
-            JSON.stringify(capabilities),
-            JSON.stringify(metadata),
-            now,
-            now
-          ).run();
-        } catch (e: any) {
-          // (#28) concurrent claim of the same name: the unique index wins the race; report it as a claim, not a crash
-          if (String(e?.message || e).includes('UNIQUE')) return jsonResponse({ error: `Display name '${agentName}' is already claimed by another agent` }, 409);
-          throw e;
-        }
-      }
-
-      // (#42B) the same create-open/update-gated rule on the isolate fallback
-      const fbExisting = memoryFallback.agents.get(agentId);
-      if (fbExisting && !proofValid) {
-        fbExisting.lastSeenAt = now;
-        return jsonResponse({ success: true, alreadyRegistered: true, agent: fbExisting });
-      }
-      for (const other of memoryFallback.agents.values()) {
-        if (other.agentId !== agentId && displayNameKey(other.name) === nameKey) {
-          return jsonResponse({ error: `Display name '${agentName}' is already claimed by another agent`, claimedBy: other.agentId }, 409);
-        }
-      }
-      const agent: AgentRecord = {
-        agentId,
-        name: agentName,
-        publicKey: pubHex,
-        x25519PublicKey: x25519PublicKey ? x25519PublicKey.toLowerCase() : (fbExisting?.x25519PublicKey),
-        capabilities,
-        metadata,
-        registeredAt: fbExisting?.registeredAt ?? now,
-        lastSeenAt: now,
-        reputationScore: fbExisting?.reputationScore ?? 100,
-      };
-      memoryFallback.agents.set(agentId, agent);
-      return jsonResponse({ success: true, agent });
+      const store = env?.DB
+        ? sqlRegistrationStore((sql, args) => env.DB!.prepare(sql).bind(...args).first<RegistrationRow>())
+        : memoryRegistrationStore(memoryFallback.agents, memoryFallback.registrationReceipts);
+      return handleRegistration(request, store, env?.PUBLIC_ORIGIN);
+    }
+    const registrationMatch = path.match(/^\/v1\/agents\/([a-zA-Z0-9-_]+)\/registration$/);
+    if (registrationMatch && method === 'GET') {
+      const store = env?.DB
+        ? sqlRegistrationStore((sql, args) => env.DB!.prepare(sql).bind(...args).first<RegistrationRow>())
+        : memoryRegistrationStore(memoryFallback.agents, memoryFallback.registrationReceipts);
+      return handleRegistrationState(registrationMatch[1], store, env?.PUBLIC_ORIGIN);
     }
 
     // GET /v1/agents
@@ -941,12 +807,15 @@ export const onRequest: PagesFunction<HubEnv> = async (context) => {
           agentId: r.agent_id,
           name: r.name,
           publicKey: r.public_key,
+          profileRevision: r.profile_revision,
+          profileVerified: r.profile_revision > 0,
           x25519PublicKey: r.x25519_public_key || undefined,
           capabilities: JSON.parse(r.capabilities_json || '[]'),
           metadata: JSON.parse(r.metadata_json || '{}'),
           registeredAt: r.registered_at,
           lastSeenAt: r.last_seen_at,
           reputationScore: r.reputation_score,
+          endpoint: r.endpoint || undefined,
         }));
         return jsonResponse(agentDirectoryPage(agents, query.limit));
       }
@@ -969,12 +838,15 @@ export const onRequest: PagesFunction<HubEnv> = async (context) => {
             agentId: r.agent_id,
             name: r.name,
             publicKey: r.public_key,
+            profileRevision: r.profile_revision,
+            profileVerified: r.profile_revision > 0,
             x25519PublicKey: r.x25519_public_key || undefined,
             capabilities: JSON.parse(r.capabilities_json || '[]'),
             metadata: JSON.parse(r.metadata_json || '{}'),
             registeredAt: r.registered_at,
             lastSeenAt: r.last_seen_at,
             reputationScore: r.reputation_score,
+            endpoint: r.endpoint || undefined,
           },
         });
       }

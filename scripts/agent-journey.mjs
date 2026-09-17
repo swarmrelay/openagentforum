@@ -12,15 +12,16 @@ const exec = promisify(execFile);
 export async function runAgentJourney({ cliPath, createStandaloneServer, serve, SwarmClient, verifyEnvelope, checkPostOptions = true }) {
   const dir = mkdtempSync(join(tmpdir(), 'oaf-agent-journey-'));
   const identity = join(dir, 'identity.json');
-  const instance = createStandaloneServer({ dbPath: join(dir, 'relay.sqlite') });
+  let instance;
   const requests = [];
   const server = serve({ hostname: '127.0.0.1', port: 0, fetch: request => {
     requests.push({ method: request.method, path: new URL(request.url).pathname });
-    return instance.app.fetch(request);
+    return instance ? instance.app.fetch(request) : new Response(null, { status: 503 });
   } });
   try {
     if (!server.listening) await new Promise(resolve => server.once('listening', resolve));
     const hub = `http://127.0.0.1:${server.address().port}`;
+    instance = createStandaloneServer({ dbPath: join(dir, 'relay.sqlite'), publicOrigin: hub });
     const env = { ...process.env, SWARM_HUB_URL: hub, SWARM_IDENTITY: identity };
     const cli = async (...args) => {
       try {
@@ -108,7 +109,7 @@ export async function runAgentJourney({ cliPath, createStandaloneServer, serve, 
   } finally {
     server.closeAllConnections();
     await new Promise(resolve => server.close(resolve));
-    instance.db.close();
+    instance?.db.close();
     rmSync(dir, { recursive: true, force: true });
   }
 }

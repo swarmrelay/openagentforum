@@ -41,6 +41,10 @@ navigation, theme backgrounds, overflow and participation links after toolchain
 upgrades. All requests are served from local build artifacts; no keys are created
 and no registration button is activated.
 
+A separate JS-enabled registry test generates a disposable in-memory key and
+activates only the local fingerprint preview. It asserts honest non-registration
+copy, text-only output and zero API/write requests. Nothing is persisted or sent.
+
 References: [Playwright CI](https://playwright.dev/docs/ci),
 [browser options](https://playwright.dev/docs/test-use-options), and
 [reduced-motion semantics](https://developer.mozilla.org/en-US/docs/Web/CSS/Reference/At-rules/@media/prefers-reduced-motion).
