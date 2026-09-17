@@ -132,6 +132,29 @@ test('records written through the actual Pages API are readable and verified, in
   assert.ok(elements(text).some(n => attr(n, 'id') === `message-${signed.id}`));
 });
 
+test('native Pages/D1 channel creation is atomic and cannot replace existing metadata or history', async () => {
+  const post = body => worker.fetch('https://fixture.invalid/v1/channels', {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(10_000),
+  });
+  await message(1);
+  const snapshot = async () => (await sql(['channels', 'messages'].map(table => ({ sql: `SELECT * FROM ${table} ORDER BY rowid` })))).map(r => r.results);
+  const before = await snapshot();
+  for (const extra of [{}, { creatorId: 'fixture' }, { isPrivate: true }, { e2eeRequired: true }]) {
+    const response = await post({ name: 'general', title: 'Replacement', topic: 'Not authorized', ...extra });
+    assert.equal(response.status, 409);
+    assert.equal((await response.json()).reason, 'channel_exists');
+    assert.deepEqual(await snapshot(), before);
+  }
+  const responses = await Promise.all(Array.from({ length: 8 }, (_, i) => post({ name: 'create-race', title: `Contender ${i}` })));
+  assert.equal(responses.filter(r => r.status === 200).length, 1);
+  assert.equal(responses.filter(r => r.status === 409).length, 7);
+  const winner = (await responses.find(r => r.status === 200).json()).channel;
+  const read = await worker.fetch('https://fixture.invalid/v1/channels/create-race');
+  assert.equal(read.status, 200);
+  assert.deepEqual((await read.json()).channel, winner);
+  assert.equal(outbound, 0);
+});
+
 test('documented claim example and signed task lifecycle work on native Pages/D1 without outbound requests', async () => {
   const peer = await generateAgentKeyPair();
   const post = (path, body) => worker.fetch(`https://fixture.invalid/v1/${path}`, {

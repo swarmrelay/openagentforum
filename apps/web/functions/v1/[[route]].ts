@@ -7,7 +7,7 @@ import { AGENT_DIRECTORY_SQL, agentDirectoryPage, parseAgentDirectoryQuery } fro
 /**
  * Cloudflare Pages Functions Native API Handler for /v1/*
  * Direct D1 Database storage + fallback in-memory store.
- * Zero fake counts, zero silent catch blocks, strict creator authentication.
+ * Public storage adapter; each write route enforces its own admission rules.
  */
 
 interface AgentRecord {
@@ -404,26 +404,20 @@ export const onRequest: PagesFunction<HubEnv> = async (context) => {
         return jsonResponse({ error: 'Cannot turn existing public history into a private channel', reason: 'channel_exists' }, 409);
       }
 
-      const existingChannel = env?.DB
-        ? await env.DB.prepare('SELECT is_private, e2ee_required FROM channels WHERE name = ?').bind(slug).first<{ is_private: number; e2ee_required: number }>()
-        : memoryFallback.channels.has(slug) ? {
-          is_private: Number(memoryFallback.channels.get(slug)!.isPrivate),
-          e2ee_required: Number(memoryFallback.channels.get(slug)!.e2eeRequired),
-        } : null;
-      if (existingChannel && (isPrivate || e2eeRequired || existingChannel.is_private || existingChannel.e2ee_required)) {
-        return jsonResponse({ error: 'Private channel already exists; authenticated updates are not implemented', reason: 'channel_exists' }, 409);
-      }
-
+      // Creation is not an authenticated update. In particular, a caller's
+      // creatorId is metadata, not authority to replace an existing channel.
+      // Enforce uniqueness in the write itself, not a racy SELECT beforehand.
       if (env?.DB) {
         const written = await env.DB.prepare(`
           INSERT INTO channels (name, title, topic, is_private, e2ee_required, creator_id, created_at, message_count)
           VALUES (?, ?, ?, ?, ?, ?, ?, 0)
-          ON CONFLICT(name) DO UPDATE SET title = excluded.title, topic = excluded.topic
-          WHERE channels.is_private = 0 AND channels.e2ee_required = 0
-            AND excluded.is_private = 0 AND excluded.e2ee_required = 0
+          ON CONFLICT(name) DO NOTHING
           RETURNING name
         `).bind(slug, title, topic, isPrivate ? 1 : 0, e2eeRequired ? 1 : 0, creatorId, now).first<{ name: string }>();
-        if (!written) return jsonResponse({ error: 'Private channel already exists', reason: 'channel_exists' }, 409);
+        if (!written) return jsonResponse({ error: 'Channel already exists; authenticated updates are not implemented', reason: 'channel_exists' }, 409);
+      } else if (memoryFallback.channels.has(slug)) {
+        // No await between this check and the memory-only insert below.
+        return jsonResponse({ error: 'Channel already exists; authenticated updates are not implemented', reason: 'channel_exists' }, 409);
       }
 
       const channel: ChannelRecord = {
@@ -436,7 +430,7 @@ export const onRequest: PagesFunction<HubEnv> = async (context) => {
         createdAt: now,
         messageCount: 0,
       };
-      memoryFallback.channels.set(slug, channel);
+      if (!env?.DB) memoryFallback.channels.set(slug, channel);
       return jsonResponse({ success: true, channel });
     }
 
