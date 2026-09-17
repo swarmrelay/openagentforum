@@ -7,6 +7,14 @@ import { DurableObject } from 'cloudflare:workers';
 import type { MessageEnvelope, SwarmEvent } from '@openagentforum/protocol';
 import type { Env } from './env.js';
 
+const CACHE_ROWS = 500;
+// Cache only: not an ingestion/frame limit or a bound on the durable ledger.
+// UTF-8 stored text plus 32 bytes for numeric fields/rowid; excludes SQLite overhead.
+const CACHE_ROW_BYTES = 64 * 1024;
+const CACHE_TEXT_COLUMNS = ['id', 'sender', 'type', 'payload_json', 'signature', 'checksum', 'reply_to_id'];
+const CACHE_ROW_SIZE_SQL = `32 + ${CACHE_TEXT_COLUMNS.map(column => `COALESCE(length(CAST(${column} AS BLOB)), 0)`).join(' + ')}`;
+const utf8 = new TextEncoder();
+
 interface CachedMessage {
   [key: string]: string | number | null;
   id: string;
@@ -47,6 +55,11 @@ export class SwarmChannelDO extends DurableObject<Env> {
         );
         CREATE INDEX IF NOT EXISTS idx_recent_seq ON recent_messages (sequence);
       `);
+      // Repair legacy overfull caches on activation without touching the ledger
+      // or sequence allocator. rowid is local insertion order, never author input.
+      this.trimCache();
+      this.ctx.storage.sql.exec(`DELETE FROM recent_messages WHERE ${CACHE_ROW_SIZE_SQL} > ?`, CACHE_ROW_BYTES);
+      this.channelName = this.ctx.storage.sql.exec<{ value: string }>("SELECT value FROM meta WHERE key = 'name'").toArray()[0]?.value ?? '';
     });
   }
 
@@ -83,29 +96,34 @@ export class SwarmChannelDO extends DurableObject<Env> {
    * Broadcast message envelope to all connected WebSockets and buffer in SQLite
    */
   async broadcastMessage(envelope: MessageEnvelope): Promise<void> {
-    // 1. Buffer in DO SQLite (keep latest 500 messages in fast memory)
-    this.ctx.storage.sql.exec(
-      `INSERT OR REPLACE INTO recent_messages (
+    if (!this.channelName) {
+      this.ctx.storage.sql.exec("INSERT OR REPLACE INTO meta (key, value) VALUES ('name', ?)", envelope.channel);
+      this.channelName = envelope.channel;
+    }
+    // 1. Optional bounded cache; authoritative catch-up reads the durable ledger.
+    const payloadJson = JSON.stringify(envelope.payload);
+    const text = [envelope.id, envelope.sender, envelope.type, payloadJson,
+      envelope.signature, envelope.checksum, envelope.replyToId || ''];
+    const rowBytes = 32 + text.reduce((total, value) => total + utf8.encode(value).byteLength, 0);
+    if (rowBytes <= CACHE_ROW_BYTES) this.ctx.storage.sql.exec(
+      `INSERT INTO recent_messages (
         id, sender, type, sequence, timestamp, payload_json, signature, checksum, reply_to_id, encrypted
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO NOTHING`,
       envelope.id,
       envelope.sender,
       envelope.type,
       envelope.sequence,
       envelope.timestamp,
-      JSON.stringify(envelope.payload),
+      payloadJson,
       envelope.signature,
       envelope.checksum,
       envelope.replyToId || null,
       envelope.encrypted ? 1 : 0
     );
 
-    // Trim old messages to keep memory lean
-    this.ctx.storage.sql.exec(`
-      DELETE FROM recent_messages WHERE sequence NOT IN (
-        SELECT sequence FROM recent_messages ORDER BY sequence DESC LIMIT 500
-      )
-    `);
+    // No await between insertion and eviction. Duplicate IDs do not refresh
+    // their cache position or replace the first cached copy.
+    this.trimCache();
 
     // 2. Broadcast to all active hibernated WebSockets
     const eventPayload: SwarmEvent<MessageEnvelope> = {
@@ -126,6 +144,14 @@ export class SwarmChannelDO extends DurableObject<Env> {
     }
   }
 
+  private trimCache(): void {
+    this.ctx.storage.sql.exec(`
+      DELETE FROM recent_messages WHERE rowid NOT IN (
+        SELECT rowid FROM recent_messages ORDER BY rowid DESC LIMIT ?
+      )
+    `, CACHE_ROWS);
+  }
+
   /**
    * Broadcast arbitrary Swarm event (presence, task updates, heartbeats)
    */
@@ -140,11 +166,14 @@ export class SwarmChannelDO extends DurableObject<Env> {
   }
 
   /**
-   * Fetch recent in-memory messages from SQLite
+   * Fetch recent cached messages in local first-arrival order, not a ledger cursor.
    */
   async getRecentMessages(limit: number = 50): Promise<MessageEnvelope[]> {
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > CACHE_ROWS) {
+      throw new RangeError(`Cache limit must be an integer from 1 to ${CACHE_ROWS}`);
+    }
     const rows = this.ctx.storage.sql.exec<CachedMessage>(`
-      SELECT * FROM recent_messages ORDER BY sequence DESC LIMIT ?
+      SELECT * FROM recent_messages ORDER BY rowid DESC LIMIT ?
     `, limit).toArray();
 
     return rows.reverse().map((r) => ({
