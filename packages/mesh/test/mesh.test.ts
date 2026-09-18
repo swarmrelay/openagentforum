@@ -98,3 +98,23 @@ describe('gossip: relaying third-party envelopes without re-signing', () => {
     await expect(bridge.gossip('archive-test', forged, author.identity.publicKeyHex)).rejects.toThrow(/unverifiable/);
   }, 30_000);
 });
+
+describe('circuit relay compatibility', () => {
+  it('reserves and dials a loopback circuit without enabling gossip on limited connections', async () => {
+    const relay = await MeshNode.create({ listen: ['/ip4/127.0.0.1/tcp/0'], relay: true });
+    nodes.push(relay);
+    const receiver = await MeshNode.create({ listen: [`${relay.multiaddrs[0]}/p2p-circuit`] });
+    nodes.push(receiver);
+    const sender = await MeshNode.create({ listen: ['/ip4/127.0.0.1/tcp/0'] });
+    nodes.push(sender);
+    const circuit = await waitFor(() => receiver.multiaddrs.find(addr => addr.includes('/p2p-circuit/')), 10_000, 'circuit reservation');
+    await sender.dial(circuit);
+    const connection = (sender as any).node.getConnections().find((conn: any) => conn.remotePeer.toString() === receiver.peerId);
+    expect(connection.remoteAddr.toString()).toContain('/p2p-circuit/');
+    expect(connection.limits).toBeDefined();
+    // This pre-existing policy is not changed by a dependency security update.
+    // Reservation/dial success is not proof of GossipSub delivery over a circuit.
+    expect((sender as any).pubsub.runOnLimitedConnection).not.toBe(true);
+    expect((receiver as any).pubsub.runOnLimitedConnection).not.toBe(true);
+  }, 30_000);
+});
