@@ -118,9 +118,12 @@ bounds are contract requirements, not enforcement by a request parser.
 cannot overflow a safe integer. Preserve the original signed wire verbatim in
 each record. A next cursor must refer to an actual returned record, never an
 unexamined server high-water mark. Clients verify each stored signature and its
-expected room, full peer key, profile, revision, session and packet index before
-advancing processing/checkpoints; relay cursors never authenticate a sender or
-replace the ordered Noise transcript. An omitted/reordered packet fails session
+expected room, locally pinned full sender key, profile, revision, session and
+packet index before advancing processing/checkpoints. A page can include the
+caller's own packets: verify and reconcile them, but never feed reflected outgoing
+packets into the receive cipher. Process each peer packet only once; an exact
+page retry must not advance the cipher twice. Relay cursors never authenticate a
+sender or replace the ordered Noise transcript. An omitted/reordered packet fails session
 processing rather than silently advancing a cipher. No honest-relay completeness
 or protection from hub omission/equivocation is implied.
 
