@@ -1,4 +1,4 @@
-/** Internal, opt-in SQLite laboratory. No public route, listener or data-plane authorization. */
+/** Internal, opt-in SQLite laboratory. No public route or listener. */
 import type { DatabaseSync, SQLInputValue } from 'node:sqlite';
 import { canonicalizeJson } from '@openagentforum/protocol';
 import {
@@ -10,6 +10,16 @@ import { prepareRoomStateRead, roomStateView, type RoomStateReadResult } from '.
 import { policySnapshot, recoveryReceipt } from './storage-contract.js';
 import { ROOM_LAB_SCHEMA } from './storage-schema.js';
 import type { AdmissionPolicy, AdmissionReceipt, AdmissionError, AdmissionResult, RecoveryResult } from './storage-types.js';
+import { SQLiteRoomPacketStorage, type StoredPacketBinding } from './sqlite-packets.js';
+import {
+  prepareRoomPacket, prepareRoomPacketRead, prepareRoomPacketRecovery, verifyHistoricalRoomPacketSignature,
+  type PreparedRoomPacket, type RoomPacketWrite, type RoomPacketRead, type RoomPacketRecovery,
+  type RoomPacketProofError,
+} from './packet-wire.js';
+import type {
+  RoomPacketPolicy, RoomPacketFailure, RoomPacketTransaction, RoomPacketWriteSuccess,
+  RoomPacketReadSuccess, RoomPacketRecoverySuccess, RoomPacketWriteResult, RoomPacketReadResult, RoomPacketRecoveryResult,
+} from './packet-storage-contract.js';
 export type { AdmissionPolicy, AdmissionReceipt, AdmissionError, AdmissionResult, RecoveryResult } from './storage-types.js';
 export { ROOM_LAB_SCHEMA } from './storage-schema.js';
 
@@ -28,10 +38,11 @@ export class RoomAdmissionStore {
   readonly #policy: Readonly<AdmissionPolicy>;
   readonly #policyJson: string;
   readonly #now: () => number;
+  readonly #packets?: SQLiteRoomPacketStorage;
   #inFlight = 0;
   #broken = false;
 
-  constructor(db: DatabaseSync, options: { hub: string; policy: AdmissionPolicy; now: () => number }) {
+  constructor(db: DatabaseSync, options: { hub: string; policy: AdmissionPolicy; now: () => number; packets?: RoomPacketPolicy }) {
     const url = new URL(options.hub);
     if (url.protocol !== 'https:' || url.origin !== options.hub || options.hub.length > 256
         || typeof options.now !== 'function') throw new Error('Invalid admission configuration');
@@ -49,6 +60,7 @@ export class RoomAdmissionStore {
       db.prepare(`INSERT OR IGNORE INTO room_lab_meta VALUES (1, ?, ?, ?, ?, 0)`)
         .run(SCHEMA_VERSION, this.#hub, ROOM_CONTROL_PROTOCOL, this.#policyJson);
       this.#meta();
+      if (options.packets !== undefined) this.#packets = new SQLiteRoomPacketStorage(db, this.#hub, options.packets);
       db.exec('COMMIT');
     } catch {
       if (begun) { try { db.exec('ROLLBACK'); } catch { /* already rolled back or committed */ } }
@@ -80,8 +92,8 @@ export class RoomAdmissionStore {
       const prepared = await prepareRoomControl(wire, signingPublicKey, {
         hub: this.#hub, now: this.#time(this.#meta()),
       });
-      if (!prepared.ok) return prepared;
       if (this.#broken) return fail('storage_error');
+      if (!prepared.ok) return prepared;
       // Never await inside this transaction. BEGIN IMMEDIATE serializes independent
       // connections before reading authoritative state, receipts and shared budgets.
       this.#db.exec('BEGIN IMMEDIATE');
@@ -123,6 +135,104 @@ export class RoomAdmissionStore {
     return (this.#db.prepare(sql).get(...args) as { count: number }).count;
   }
 
+  /** Opt-in only. Always accept raw wire; never accept a prepared proof or membership snapshot. */
+  writePacket(wire: string): Promise<RoomPacketWriteResult> {
+    return this.#packetOperation<RoomPacketWrite, RoomPacketWriteSuccess>(wire, prepareRoomPacket, true,
+      (prepared, now) => this.#packets!.write(prepared, wire, now));
+  }
+
+  readPackets(wire: string): Promise<RoomPacketReadResult> {
+    let keys: string[] = [];
+    let bindings: StoredPacketBinding[] = [];
+    return this.#packetOperation<RoomPacketRead, RoomPacketReadSuccess>(wire, prepareRoomPacketRead, false,
+      (prepared, now) => {
+        const snapshot = this.#packets!.read(prepared.request, now);
+        keys = snapshot.signingKeys; bindings = snapshot.bindings;
+        return { result: snapshot.result };
+      }, async (result, query) => {
+        // Verify the bounded stored page AFTER ending the snapshot: no await in SQL.
+        // Membership came from that protected snapshot, never from these old signatures.
+        for (const [i, record] of (result.page?.records ?? []).entries()) {
+          const p = await verifyHistoricalRoomPacketSignature(record.wire, this.#hub);
+          const b = bindings[i];
+          if (!p.ok || p.request.roomId !== query.roomId || p.request.expectedRevision !== query.expectedRevision
+              || !keys.includes(p.request.signingPublicKey) || p.request.signingPublicKey !== b.signing_key
+              || p.request.requestId !== b.request_id || p.proofDigest !== b.digest
+              || p.request.sessionId !== b.session_id || p.request.packetIndex !== b.packet_index) {
+            throw new Error('Invalid stored packet signature or binding');
+          }
+        }
+      });
+  }
+
+  recoverPacket(wire: string): Promise<RoomPacketRecoveryResult> {
+    return this.#packetOperation<RoomPacketRecovery, RoomPacketRecoverySuccess>(wire, prepareRoomPacketRecovery, false,
+      (prepared, now) => ({ result: this.#packets!.recover(prepared.request, now) }));
+  }
+
+  async #packetOperation<T extends RoomPacketWrite | RoomPacketRead | RoomPacketRecovery, R extends { ok: true }>(
+    wire: string,
+    prepare: (wire: string, context: { hub: string; now: number }) => Promise<PreparedRoomPacket<T> | { ok: false; reason: RoomPacketProofError }>,
+    mutation: boolean, operation: (proof: PreparedRoomPacket<T>, now: number) => RoomPacketTransaction<R>,
+    finish?: (result: R, query: Readonly<T>) => Promise<void>,
+  ): Promise<R | RoomPacketFailure> {
+    const failure = (reason: RoomPacketFailure['reason']): RoomPacketFailure => ({ ok: false, reason });
+    if (this.#broken) return failure('storage_error');
+    if (!this.#packets) return failure('not_configured');
+    if (this.#inFlight >= this.#policy.maxInFlightPerConnection) return failure('busy');
+    this.#inFlight++;
+    let begun = false;
+    try {
+      const initial = this.#meta();
+      this.#packets.checkConfiguration();
+      const startedAt = this.#time(initial);
+      const prepared = await prepare(wire, { hub: this.#hub, now: startedAt });
+      if (this.#broken) return failure('storage_error');
+      if (!prepared.ok) return prepared;
+      this.#db.exec(mutation ? 'BEGIN IMMEDIATE' : 'BEGIN'); begun = true;
+      const meta = this.#meta();
+      this.#packets.checkConfiguration();
+      if (meta.clock < initial.clock) throw new Error('Clock regression');
+      const now = Math.max(startedAt, this.#time(meta));
+      const stale = prepared.freshness(now);
+      if (stale) {
+        this.#db.exec('ROLLBACK'); begun = false;
+        return failure(stale);
+      }
+      const { result, validUntil } = operation(prepared, now);
+      if (!result.ok) {
+        this.#db.exec('ROLLBACK'); begun = false;
+        return result;
+      }
+      const commitNow = Math.max(now, this.#time(meta));
+      const expired = prepared.freshness(commitNow);
+      const lateSession = validUntil !== undefined && commitNow >= validUntil;
+      const newWrite = mutation && 'replayed' in result && result.replayed === false;
+      const changedWindow = newWrite && Math.floor(commitNow / this.#packets.policy.windowMs) !== Math.floor(now / this.#packets.policy.windowMs);
+      if (expired || lateSession || changedWindow) {
+        this.#db.exec('ROLLBACK'); begun = false;
+        return failure(expired ?? (lateSession ? 'unavailable' : 'clock_changed'));
+      }
+      if (mutation) this.#db.prepare('UPDATE room_lab_meta SET clock = ? WHERE id = 1').run(commitNow);
+      this.#db.exec('COMMIT'); begun = false;
+      if (finish) await finish(result, prepared.request);
+      if (this.#broken) return failure('storage_error');
+      const finalMeta = this.#meta();
+      if (finalMeta.clock < (mutation ? commitNow : meta.clock)) throw new Error('Clock regression');
+      const finalExpiry = prepared.freshness(Math.max(commitNow, this.#time(finalMeta)));
+      if (finalExpiry) {
+        // A write may ALREADY be durable. Do not signal a definitive rejected mutation.
+        if (mutation) throw new Error('Packet outcome requires reconciliation');
+        return failure(finalExpiry);
+      }
+      return result;
+    } catch {
+      if (begun) { try { this.#db.exec('ROLLBACK'); } catch { /* never infer absence */ } }
+      this.#broken = true;
+      return failure('storage_error');
+    } finally { this.#inFlight--; }
+  }
+
   /** Bounded primary snapshot read. No receipt, room, quota or clock writes. */
   async recover(wire: string, signingPublicKey: string): Promise<RecoveryResult> {
     const fail = (reason: RoomControlError | 'storage_error' | 'busy'): RecoveryResult => ({ ok: false, reason });
@@ -134,8 +244,8 @@ export class RoomAdmissionStore {
       const prepared = await prepareRoomRecovery(wire, signingPublicKey, {
         hub: this.#hub, now: this.#time(this.#meta()),
       });
-      if (!prepared.ok) return prepared;
       if (this.#broken) return fail('storage_error');
+      if (!prepared.ok) return prepared;
       // No await inside the read transaction. Metadata establishes the snapshot;
       // another connection's uncommitted or later writes are not recovery results.
       this.#db.exec('BEGIN');
