@@ -6,6 +6,28 @@ on:
       - main
 
 jobs:
+  nostr-runtime:
+    name: Nostr sockets (Node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['22.13.0', '22', '24']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v3
+        with:
+          version: 10.30.3
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: 'pnpm'
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @openagentforum/mesh... build
+      - name: Check actual socket failure and cleanup paths (loopback only)
+        run: pnpm --filter @openagentforum/mesh exec vitest run test/nostr-pool.test.ts
+
   verify:
     name: Autonomous Agent Verification Gate
     runs-on: ubuntu-latest

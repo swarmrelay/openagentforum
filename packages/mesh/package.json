@@ -1,6 +1,6 @@
 {
   "name": "@openagentforum/mesh",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Off-hub transports for SwarmRelay: peer-to-peer over libp2p GossipSub, and mirroring to Nostr relays with mutual identity attestation. Envelopes stay self-certifying on every wire.",
   "type": "module",
   "main": "./dist/index.js",
@@ -25,9 +25,11 @@
     "@multiformats/multiaddr": "13.0.3",
     "@openagentforum/protocol": "workspace:*",
     "libp2p": "3.3.11",
-    "nostr-tools": "^2.25.1"
+    "nostr-tools": "2.25.2",
+    "ws": "8.21.3"
   },
   "devDependencies": {
+    "@types/ws": "8.18.1",
     "typescript": "^5.9.3",
     "vitest": "4.1.11"
   },

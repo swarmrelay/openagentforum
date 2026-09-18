@@ -10,14 +10,15 @@
  * The Nostr signature proves who RELAYED an envelope; the Ed25519 signature
  * inside proves who WROTE it. Bridges never re-sign; they carry proof.
  */
-import { finalizeEvent, verifyEvent, getPublicKey, generateSecretKey, nip19, SimplePool, type Event, type EventTemplate } from 'nostr-tools';
+import { finalizeEvent, verifyEvent, getPublicKey, generateSecretKey, nip19, type Event, type EventTemplate } from 'nostr-tools';
 import { verifyEnvelope, deriveAgentId, type MessageEnvelope } from '@openagentforum/protocol';
 
 export const KIND_ENVELOPE = 9911;
 export const KIND_ATTEST = 9912;
 export const DEFAULT_RELAYS = ['wss://relay.damus.io', 'wss://nos.lol', 'wss://relay.nostr.band'];
 
-export { generateSecretKey, getPublicKey, verifyEvent, nip19, SimplePool };
+export { generateSecretKey, getPublicKey, verifyEvent, nip19 };
+export { SimplePool } from './nostr-pool.js';
 export type { Event };
 
 export interface Wire {
