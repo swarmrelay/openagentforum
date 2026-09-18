@@ -4,7 +4,9 @@ import { readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { checkLiveOnboarding, checkDeployedOnboarding } from './check-live-onboarding.mjs';
-import { firstVisitSteps, firstVisitTroubleshooting, firstVisitEvidence, renderFirstVisitMarkdown } from '../src/data/first-visit.mjs';
+import { firstVisitCliVersion, firstVisitSteps, firstVisitTroubleshooting, firstVisitEvidence, renderFirstVisitMarkdown } from '../src/data/first-visit.mjs';
+
+const packagePin = `swarmrelay@${firstVisitCliVersion}`;
 
 const escape = text => text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 const start = '<article>' + firstVisitSteps.map(step => `<section id="${step.id}"><h2>${step.title}</h2><p>${step.boundary}</p>${step.paragraphs.map(p => `<p>${escape(p)}</p>`).join('')}<pre><code>${escape(step.code)}</code></pre>${step.note ? `<p>${escape(step.note)}</p>` : ''}</section>`).join('')
@@ -25,13 +27,13 @@ test('checks all five delivered commands and machine text using only fixed anony
   assert.deepEqual(await checkLiveOnboarding(fixture()), { ok: true, checked: 3, errors: [] });
 });
 test('fails if edge email protection rewrites package pins, even when the build was correct', async () => {
-  const result = await checkLiveOnboarding(fixture(html => html.replaceAll('swarmrelay@1.6.0', '<a class="__cf_email__" data-cfemail="00">[email&#160;protected]</a>')));
+  const result = await checkLiveOnboarding(fixture(html => html.replaceAll(packagePin, '<a class="__cf_email__" data-cfemail="00">[email&#160;protected]</a>')));
   assert.equal(result.ok, false);
   assert.equal(result.errors.filter(error => error.includes('command differs')).length, 5);
 });
 test('fails on absent transform protection or a version mismatch', async () => {
   assert.equal((await checkLiveOnboarding(fixture(text => text, 'max-age=0'))).ok, false);
-  assert.equal((await checkLiveOnboarding(fixture(text => text.replaceAll('swarmrelay@1.6.0', 'swarmrelay@0.0.0')))).ok, false);
+  assert.equal((await checkLiveOnboarding(fixture(text => text.replaceAll(packagePin, 'swarmrelay@0.0.0')))).ok, false);
 });
 test('bounds streamed response bodies and cancels oversized streams', async () => {
   let cancelled = 0;
@@ -116,7 +118,7 @@ test('persistent machine-text drift fails after four rounds without logging resp
 });
 for (const [name, bad] of [
   ['missing transform protection', fixture(undefined, 'max-age=0')],
-  ['rewritten command', fixture(html => html.replaceAll('swarmrelay@1.6.0', 'swarmrelay@0.0.0'))],
+  ['rewritten command', fixture(html => html.replaceAll(packagePin, 'swarmrelay@0.0.0'))],
   ['network error', async () => { throw new Error('untrusted network diagnostic'); }],
   ['wrong content type', async () => new Response('untrusted response', { headers: { 'Content-Type': 'application/json' } })],
   ['unsuccessful HTTP status', async () => new Response('untrusted response', { status: 503 })],
@@ -144,7 +146,7 @@ test('retry eligibility requires an isolated mismatch; other failures remain ter
   assert.deepEqual(f.waits, []);
 });
 test('a passing earlier HTML page cannot mask a failed page in the next round', async () => {
-  const f = deploymentFixture([stale(), fixture(html => html.replaceAll('swarmrelay@1.6.0', 'swarmrelay@0.0.0'))]);
+  const f = deploymentFixture([stale(), fixture(html => html.replaceAll(packagePin, 'swarmrelay@0.0.0'))]);
   const result = await checkDeployedOnboarding(f.options);
   assert.equal(result.ok, false);
   assert.equal(result.attempts, 2);

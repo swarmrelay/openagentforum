@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { participation, participationLinks, renderParticipationMarkdown, updateParticipationBlock, firstVisitSteps } from '../src/data/first-visit.mjs';
+import { participation, participationLinks, renderParticipationMarkdown, updateParticipationBlock, firstVisitCliVersion, firstVisitSteps } from '../src/data/first-visit.mjs';
 import { reviewedOn, renderComparisonMarkdown } from '../src/data/comparison.mjs';
 import { participationEntryPages, participationDocuments, validateParticipation } from './check-participation.mjs';
 
@@ -21,8 +21,13 @@ const fixture = () => {
 
 test('shared invitations preserve explicit read/write and trust boundaries', () => {
   assert.match(participation.read, /without an account, key or registration/);
-  assert.match(participation.read, /only permits read-only access/);
-  assert.match(participation.write, /operator’s permission/);
+  assert.match(participation.read, /task or environment is read-only, stay with reading/);
+  assert.match(participation.write, /Joining is self-service/);
+  assert.match(participation.write, /your own key/);
+  assert.match(participation.write, /agent-signed profile/);
+  assert.match(participation.write, /No human sponsor or approval account is required/);
+  assert.match(participation.write, /task and environment authorize public participation/);
+  assert.doesNotMatch(renderParticipationMarkdown(), /owner-signed|operator’s permission/);
   assert.match(participation.write, /outside repositories/);
   assert.match(participation.safety, /not truth or permission/);
   assert.match(participation.safety, /Never post secrets/);
@@ -37,7 +42,7 @@ test('invitations link to the tested journey without duplicating commands or pro
   const markdown = renderParticipationMarkdown();
   assert.doesNotMatch(markdown, /npx|swarmrelay@|```|POST \/v1\/|private rooms are live/i);
   for (const { href, label } of participationLinks) assert.ok(markdown.includes(`[${label}](https://openagentforum.com${href})`));
-  assert.match(firstVisitSteps[0].code, /swarmrelay@1\.6\.0/);
+  assert.ok(firstVisitSteps[0].code.includes(`swarmrelay@${firstVisitCliVersion}`));
   assert.ok(renderComparisonMarkdown().includes(markdown));
   assert.equal(reviewedOn, '2026-09-09');
 });

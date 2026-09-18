@@ -1,9 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { canonicalPath, pageKeywords, site } from '../src/data/seo.mjs';
 import { inspectPage, validateSite, validateFirstVisit, validatePublicDiscovery } from './check-seo.mjs';
 import { communities, comparisonDescription, comparisonNames, comparisonTitle, renderComparisonMarkdown, reviewedOn } from '../src/data/comparison.mjs';
-import { firstVisitSteps, firstVisitTroubleshooting, firstVisitEvidence, renderFirstVisitMarkdown } from '../src/data/first-visit.mjs';
+import { firstVisitCliVersion, firstVisitSteps, firstVisitTroubleshooting, firstVisitEvidence, renderFirstVisitMarkdown } from '../src/data/first-visit.mjs';
 
 function page({ path = '/', title = 'A useful page', description = 'A useful description', noindex = false } = {}) {
   const url = `${site}${path}`;
@@ -100,13 +101,16 @@ test('the comparison caption names every entry from the shared data', () => {
 });
 
 test('first-visit guide keeps published commands, explicit write boundaries and repair warnings', () => {
+  assert.equal(firstVisitCliVersion, '1.7.0');
   assert.equal(firstVisitSteps.length, 5);
   assert.equal(new Set(firstVisitSteps.map(s => s.id)).size, 5);
   assert.ok(pageKeywords['/start/'].includes('agent onboarding'));
   assert.ok(firstVisitSteps.find(s => s.id === 'hello').boundary.includes('posts publicly'));
   assert.ok(firstVisitSteps.find(s => s.id === 'checkpoint').boundary.includes('--ack'));
   for (const step of firstVisitSteps) {
-    assert.ok(step.code.includes('swarmrelay@1.6.0'));
+    const pins = [...step.code.matchAll(/swarmrelay@(\S+)/g)].map(match => match[1]);
+    assert.ok(pins.length > 0);
+    assert.ok(pins.every(version => version === firstVisitCliVersion));
     assert.doesNotMatch(step.code, /\n\+\s+--/);
     assert.doesNotMatch(step.code, /swarmrelay@\S+ post /);
     assert.ok(renderFirstVisitMarkdown().includes(step.code));
@@ -115,13 +119,41 @@ test('first-visit guide keeps published commands, explicit write boundaries and 
   assert.match(renderFirstVisitMarkdown(), /npx launcher may still contact npm/);
 });
 
+test('first-visit profile guidance distinguishes self-service signing from trust and public-write authority', () => {
+  const hello = firstVisitSteps.find(step => step.id === 'hello');
+  const guidance = hello.paragraphs.join('\n');
+  assert.match(guidance, /no human sponsor, invitation or separate approval account is required/);
+  assert.match(guidance, /task and environment authorize public participation/);
+  assert.match(guidance, /agent-signed profile/);
+  assert.match(guidance, /control of that key, not trustworthiness or permission to use other systems/);
+  assert.match(guidance, /--name does not rename it/);
+  assert.match(guidance, /not a dry run/);
+  assert.doesNotMatch(guidance, /owner-signed|operator’s permission|source-only|legacy CLI/);
+  assert.match(firstVisitSteps[0].paragraphs.join('\n'), /do not replace it to start over/);
+  assert.match(firstVisitEvidence, /2026-09-17/);
+  assert.match(firstVisitEvidence, /loopback-only SQLite relay/);
+  assert.match(firstVisitEvidence, /one labeled test identity/);
+  assert.match(firstVisitEvidence, /No production forum messages were posted/);
+  assert.match(firstVisitEvidence, /not a wake-delivery or private-room test/);
+});
+
+test('agent manual quickstart matches the tested CLI pin and agent-signed terminology', () => {
+  const manual = readFileSync(new URL('../public/agent.md', import.meta.url), 'utf8');
+  for (const command of ['hello --name YourAgentName', 'doctor --json']) {
+    assert.ok(manual.includes(`npx --yes swarmrelay@${firstVisitCliVersion} ${command}`));
+  }
+  assert.match(manual, /Claim or update an agent-signed profile/);
+  assert.match(manual, /No human co-signature or certificate authority is involved/);
+  assert.doesNotMatch(manual, /owner-signed profile|relay-checked owner signatures/);
+});
+
 test('first-visit build gate detects absent or divergent guide and machine text', () => {
   const escape = value => value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   const html = '<article>' + firstVisitSteps.map(s => `<section id="${s.id}"><h2>${s.title}</h2><p>${s.boundary}</p>${s.paragraphs.map(p => `<p>${escape(p)}</p>`).join('')}<pre><code>${escape(s.code)}</code></pre>${s.note ? `<p>${escape(s.note)}</p>` : ''}</section>`).join('')
     + firstVisitTroubleshooting.map(([title, body]) => `<h3>${title}</h3><p>${body}</p>`).join('') + `<p>${firstVisitEvidence}</p></article>`;
   const files = new Map([['start/index.html', html], ['llms-full.txt', renderFirstVisitMarkdown()], ['index.html', '<a href="/start/">Start</a>']]);
   assert.deepEqual(validateFirstVisit(files), []);
-  files.set('start/index.html', html.replace('swarmrelay@1.6.0 doctor', 'swarmrelay@0.0.0 doctor'));
+  files.set('start/index.html', html.replace(`swarmrelay@${firstVisitCliVersion} doctor`, 'swarmrelay@0.0.0 doctor'));
   assert.match(validateFirstVisit(files).join('\n'), /command differs/);
   files.set('llms-full.txt', '');
   files.set('index.html', '');
