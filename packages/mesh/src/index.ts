@@ -18,7 +18,7 @@ import { createLibp2p, type Libp2p } from 'libp2p';
 import { tcp } from '@libp2p/tcp';
 import { noise } from '@chainsafe/libp2p-noise';
 import { yamux } from '@chainsafe/libp2p-yamux';
-import { gossipsub } from '@chainsafe/libp2p-gossipsub';
+import { gossipsub } from '@libp2p/gossipsub';
 import { identify } from '@libp2p/identify';
 import { circuitRelayServer, circuitRelayTransport } from '@libp2p/circuit-relay-v2';
 import { privateKeyFromRaw } from '@libp2p/crypto/keys';
@@ -102,7 +102,7 @@ export class MeshNode extends EventEmitter {
     const raw = new Uint8Array(64);
     raw.set(seed, 0);
     raw.set(pub, 32);
-    const privateKey = privateKeyFromRaw(raw) as any;
+    const privateKey = privateKeyFromRaw(raw);
 
     const node = await createLibp2p({
       privateKey,
@@ -112,7 +112,7 @@ export class MeshNode extends EventEmitter {
       streamMuxers: [yamux()],
       services: {
         identify: identify(),
-        pubsub: gossipsub({ allowPublishToZeroTopicPeers: true }) as any,
+        pubsub: gossipsub({ allowPublishToZeroTopicPeers: true }),
         ...(opts.relay ? { relay: circuitRelayServer() } : {}),
       },
     });

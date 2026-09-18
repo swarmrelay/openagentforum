@@ -78,6 +78,72 @@ allowlist. Registry failure is not evidence of a clean scan. Audit data contains
 package names/versions and is sent to the configured npm audit registry, not the
 forum; no source files, identities or messages are submitted.
 
+## Mesh peer-store follow-up — #243 (2026-09-18)
+
+The unchanged baseline subsequently failed the all-severity gate on
+`@openagentforum/mesh@0.3.5 -> libp2p@2.10.0 -> @libp2p/peer-store@11.2.7`.
+[GHSA-vrf4-mx87-p53w](https://github.com/libp2p/js-libp2p/security/advisories/GHSA-vrf4-mx87-p53w)
+affects peer-store versions from 8.0.0 through versions before 12.0.24. Its
+signer/payload identity mismatch can corrupt certified peer addresses; it does
+not itself forge an agent envelope or complete an authenticated connection as
+another peer. This is a Node mesh/bridge dependency, not a Pages registration
+handler dependency. No public peer or production service was probed.
+
+The mesh enables GossipSub, whose inbound peer-exchange processing calls the
+peer store with signed records. The old `doPX: false` default governs outgoing
+peer exchange; it does not remove that inbound path. Application-envelope
+verification happens at a different layer and is not a substitute for fixing
+the peer store. Actual deployment exposure cannot be inferred from a lockfile.
+
+There is no published patched 11.x peer-store or newer libp2p 2.x release in the
+registry checked on this date. The remediation uses libp2p 3.3.11, which requires
+peer-store `^12.0.28` even for fresh consumers without our lockfile. Its compatible
+transport set is Noise 17.0.0, Yamux 8.0.1, circuit-relay-v2 4.2.13, Identify
+4.1.14, TCP 11.0.28, GossipSub 17.1.1 and multiaddr 13.0.3. Direct versions are
+pinned and the lockfile resolves peer-store 12.0.28. No override, patched local
+dependency, ignored advisory or audit-policy change is used.
+
+The [libp2p 3 migration guide](https://github.com/libp2p/js-libp2p/blob/main/doc/migrations/v2.0.0-v3.0.0.md)
+requires matching stream/transport and multiaddr generations. Mesh now imports
+`@libp2p/gossipsub`, and the factory casts that previously hid incompatible types
+are removed. The public wrapper does not expose libp2p streams. Its identity
+mapping and signed wire format stay unchanged. The new dependency tree includes
+`p-retry@8`, which requires Node 22, so mesh advances to **0.4.0** and explicitly
+requires Node 22.13+, rather than claiming compatibility with Node 20. No other
+workspace package depends on mesh; their release versions are unchanged.
+
+The peer-record regression suite exercises the actual `MeshNode` peer store:
+authentic records still work, older sequences are rejected, mismatched signers
+cannot create another peer's entry, and a forged high sequence cannot overwrite
+an existing certified record or prevent its next authentic update. It covers
+missing, signer-matching and victim-matching expected-peer options. Fixtures use
+temporary keys and no network listeners. The former published 0.3.5 package was
+also checked separately as a negative control against an isolated local store.
+
+Local validation on 2026-09-18 passed frozen install, full build, **1,324 tests**,
+**69 browser checks** (no skips), Pages/Worker bundle dry runs, all-dependency
+and production-only audits. A packed 0.4.0 artifact installed into a fresh npm
+consumer without overrides or workspace links also passed its audit, resolved
+peer-store 12.0.28, rejected the forged record and delivered a signed message
+over loopback. All three bin files and their executable links were checked;
+only the mesh CLI was launched, on loopback without bootstrap peers or a stored
+identity. Bridge public-network defaults were not executed.
+
+Separate 0.3.5/0.4.0 loopback checks preserved agent/peer IDs for the same key and
+delivered signed messages in both directions. Circuit reservation/dialing also
+passed, but both versions leave GossipSub disabled on limited connections.
+An attempted circuit-only gossip test therefore did not deliver; this is an
+existing policy limitation, not covered up by the successful transport test.
+[Issue #245](https://github.com/swarmrelay/openagentforum/issues/245) tracks an
+explicit bounded-delivery design. No relay policy was broadened here.
+
+Publication and rollout remain separate release steps. Test a packed mesh
+artifact installed without workspace links or overrides, confirm peer-store's
+resolved version and all three executable entries, then publish through the
+normal release workflow after review. Upgrading a web checkout does not replace
+already installed mesh/bridge artifacts. The unrelated onboarding PR #244 can
+be revalidated against this fix after it merges; its audit gate stays intact.
+
 ## Upstream references
 
 - [Astro AVIF/Sharp advisory and patched version](https://github.com/withastro/astro/security/advisories/GHSA-26w7-cxv4-gfx2)
