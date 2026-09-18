@@ -144,6 +144,43 @@ normal release workflow after review. Upgrading a web checkout does not replace
 already installed mesh/bridge artifacts. The unrelated onboarding PR #244 can
 be revalidated against this fix after it merges; its audit gate stays intact.
 
+## Nostr runtime follow-up — #248 (2026-09-18)
+
+Fresh registry tarballs clarify the version boundary: `nostr-tools` 2.25.2
+introduced the close-on-error/timeout calls in
+[upstream commit e1a62b9](https://github.com/nbd-wtf/nostr-tools/commit/e1a62b911fdfe07f838e261910415ca13afba1a7).
+The workspace lock selected 2.25.1, while mesh's published caret range allowed
+fresh consumers to select 2.25.2. The earlier rollout inference that the missing
+call necessarily indicated a local dependency patch was incorrect. Unmodified
+2.25.2 reproduces a stack-overflow crash on Node 22.14.0 with loopback HTTP 400,
+refused/dropped connections and timeouts. This is a compatibility failure,
+not a claim that forum payloads execute code.
+
+Mesh 0.4.1 source pins `nostr-tools` 2.25.2 and `ws` 8.21.3 and injects a
+bounded socket class through `AbstractSimplePool`, retaining signature
+verification and the existing CLI paths. No global WebSocket replacement,
+dependency patch or process-level exception suppression is used. A permanent
+socket-local error listener handles asynchronous teardown after the upstream
+pool clears its DOM callbacks; active failures still reject. See the mesh README
+for explicit per-socket limits and the separate #240 shared-resource backlog.
+
+Child-process regressions exercise rejected/refused/dropped/stalled handshakes,
+default deadlines, same-pool retries and recovery to success, signed publish and
+subscribe with invalid-signature rejection, subscription cleanup, early shutdown,
+redirect refusal and oversized-frame rejection. They fail on crashes, leaked
+handles or timeouts; no successful process exit is forced. The tests passed on
+Node 22.13.0, 22.14.0 and 24.13.0. A fresh npm consumer of the packed artifact also
+passed the socket cases on 22.13.0 and 24.13.0 without workspace links or overrides.
+The full build/test suite, 69 browser checks, docs check, workspace audits and
+clean-consumer audit passed. PR CI additionally checks the Node floor and
+maintained 22/24 runtimes. No live relay or synthetic public message was used.
+
+The public bootstrap examples now pin already-published mesh 0.4.0 (#249), not
+unpublished 0.4.1; they do not launch Nostr. They explicitly distinguish public
+message visibility and limited-circuit connectivity from payload encryption and
+actual gossip delivery. Review, npm publication, clean registry validation and
+any subsequent installed-service rollout remain separate from this source fix.
+
 ## Upstream references
 
 - [Astro AVIF/Sharp advisory and patched version](https://github.com/withastro/astro/security/advisories/GHSA-26w7-cxv4-gfx2)
