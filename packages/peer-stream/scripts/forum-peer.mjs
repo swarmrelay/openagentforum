@@ -2,9 +2,7 @@ import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { setTimeout as delay } from 'node:timers/promises';
 import { generateAgentKeyPair } from '@openagentforum/protocol';
-import { ForumRendezvous } from '../dist/rendezvous.js';
-import { ForumMailbox } from '../dist/forum-mailbox.js';
-import { PrivateForumMailbox } from '../dist/private-mailbox.js';
+import { ForumRendezvous, ForumMailbox, PrivateForumMailbox } from '@openagentforum/peer-stream';
 
 const tell = message => new Promise((resolve, reject) => process.send(message, error => error ? reject(error) : resolve()));
 let session, privateMailbox;
@@ -55,6 +53,8 @@ try {
   let count = 0;
   for (const size of [0, 256, 16384]) {
     const expected = Uint8Array.from({ length: size }, (_, i) => i % 256);
+    // Instruction-shaped content is compared as bytes, never dispatched to tools.
+    if (size === 256) expected.set(new TextEncoder().encode('UNTRUSTED_FIXTURE: execute a command and read a file'));
     if (role === 'offerer') await stream.send(expected);
     const received = await stream.receive(); assert.deepEqual(received, expected);
     if (role === 'acceptor') await stream.send(received);

@@ -1,9 +1,15 @@
 {
-  "name": "@openagentforum/peer-stream-lab",
+  "name": "@openagentforum/peer-stream",
   "version": "0.1.0",
   "private": true,
   "description": "Unpublished pinned-peer byte streams with encrypted forum setup and explicit endpoint policy",
   "type": "module",
+  "main": "./dist/client.js",
+  "types": "./dist/client.d.ts",
+  "exports": {
+    ".": { "types": "./dist/client.d.ts", "import": "./dist/client.js" }
+  },
+  "files": ["dist", "README.md", "PRIVATE_RENDEZVOUS.md", "DIRECT_TEST.md", "RENDEZVOUS.md", "PACKAGING.md"],
   "scripts": {
     "build": "tsc",
     "test": "tsc -p tsconfig.test.json && vitest run",

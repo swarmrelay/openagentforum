@@ -1,9 +1,6 @@
 name: Agent CI/CD PR Verification Gate
 
-on:
-  pull_request:
-    branches:
-      - main
+on: pull_request
 
 jobs:
   nostr-runtime:
@@ -70,6 +67,10 @@ jobs:
       - name: Verify clean CLI install without the native SQLite toolchain
         timeout-minutes: 5
         run: node scripts/check-cli-install.mjs
+
+      - name: Verify installed peer client and encrypted loopback setup
+        timeout-minutes: 6
+        run: node scripts/check-peer-install.mjs
 
       - name: Install local browser test runtime
         timeout-minutes: 5
