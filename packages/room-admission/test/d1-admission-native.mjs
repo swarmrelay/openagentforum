@@ -11,6 +11,9 @@ import { generateAgentKeyPair, sha256Hex } from '@openagentforum/protocol';
 import { ROOM_CONTROL_PROTOCOL, deriveRoomId, roomControlSignString, signRoomControl } from '../dist/control.js';
 import { ROOM_RECOVERY_PROTOCOL, signRoomRecovery } from '../dist/recovery.js';
 import { ROOM_STATE_PROTOCOL, signRoomState } from '../dist/state-read.js';
+import { createRoomNoiseSession } from '../dist/handshake.js';
+import { ROOM_PACKET_PROTOCOL, ROOM_PACKET_PROFILE, ROOM_PACKET_READ_PROTOCOL, ROOM_PACKET_RECOVERY_PROTOCOL,
+  signRoomPacket, signRoomPacketRead, signRoomPacketRecovery, prepareRoomPacket } from '../dist/packet-wire.js';
 
 let mf, worker, scratch, runtimeConfig;
 let outbound = 0;
@@ -64,11 +67,11 @@ const defaultPolicy = { maxRetainedRooms: 100, maxActiveRooms: 50, maxActiveRoom
   maxPendingInvitesPerRecipient: 10, maxReceipts: 1000, windowMs: 86_400_000,
   createsPerAgent: 20, createsPerHub: 50, invitesPerAgent: 20, invitesPerHub: 50, maxInFlightPerConnection: 8 };
 let sequence = 0;
-async function setup(patch = {}) {
+async function setup(patch = {}, packets) {
   const policy = { ...defaultPolicy, ...patch };
   const call = async (path, body = {}) => {
-    const text = JSON.stringify({ hub, policy, now: Date.now(), ...body });
-    assert.ok(Buffer.byteLength(text) < 16000);
+    const text = JSON.stringify({ hub, policy, packets, now: Date.now(), ...body });
+    assert.ok(Buffer.byteLength(text) < (packets ? 50000 : 16000));
     const response = await worker.fetch(`https://local.invalid/test-only/${path}`, { method: 'POST', body: text, signal: AbortSignal.timeout(10000) });
     assert.equal(response.status, 200); assert.equal(outbound, 0); return response.json();
   };
@@ -258,4 +261,138 @@ test('native D1 overlapping close does not turn a status snapshot into a reusabl
   const invite = await f.action(f.owner, 'invite', state, {
     recipient: f.peer.agentId, recipientSigningPublicKey: f.peer.signingPublicKey, inviteExpiresAt: Date.now() + 120000 });
   assert.equal((await f.submit(invite)).ok, false); // Old status cannot authorize a new mutation.
+});
+
+const packetLimits = () => ({ packets: 1000, bytes: 10000000, sessions: 100, packetsPerWindow: 1000, bytesPerWindow: 10000000, sessionsPerWindow: 100 });
+async function packetSetup(patch = {}) {
+  const packets = { hub: { ...packetLimits(), ...patch }, room: packetLimits(), agent: packetLimits(), windowMs: 86400000 };
+  const f = await setup({}, packets);
+  const create = await f.action(f.owner); assert.equal((await f.submit(create)).ok, true);
+  const invite = await f.action(f.owner, 'invite', await f.state(create.roomId), {
+    recipient: f.peer.agentId, recipientSigningPublicKey: f.peer.signingPublicKey, inviteExpiresAt: Date.now() + 120000 });
+  assert.equal((await f.submit(invite)).ok, true);
+  const invited = await f.state(create.roomId);
+  const accept = await f.action(f.peer, 'accept', invited, { invitationDigest: invited.invitation.digest, encryptionPublicKey: f.peer.encryptionPublicKey });
+  assert.equal((await f.submit(accept, f.peer)).ok, true);
+  const id = () => (++sequence).toString(16).padStart(32, '0'), sessionId = id(), roomId = create.roomId;
+  const packetWire = async (actor = f.owner, patch = {}) => {
+    const now = Date.now();
+    return signRoomPacket({ protocol: ROOM_PACKET_PROTOCOL, hub, roomId, actor: actor.agentId, signingPublicKey: actor.signingPublicKey,
+      issuedAt: now, expiresAt: now + 60000, requestId: id(), expectedRevision: 3, profile: ROOM_PACKET_PROFILE,
+      sessionId, packetIndex: 0, kind: 'handshake', packetHex: 'ab'.repeat(96), ...patch }, actor.signingPrivateKey);
+  };
+  const read = async (actor = f.peer, afterStoredSeq = 0, extra = {}) => {
+    const now = Date.now();
+    const wire = await signRoomPacketRead({ protocol: ROOM_PACKET_READ_PROTOCOL, hub, roomId, actor: actor.agentId,
+      signingPublicKey: actor.signingPublicKey, queryId: id(), issuedAt: now, expiresAt: now + 60000,
+      expectedRevision: 3, afterStoredSeq, limit: 8 }, actor.signingPrivateKey);
+    return f.call('packet-read', { wire, ...extra });
+  };
+  const recovery = async (wire, extra = {}) => {
+    const proof = await prepareRoomPacket(wire, { hub, now: JSON.parse(wire).issuedAt }); assert.equal(proof.ok, true);
+    const now = Date.now();
+    const query = await signRoomPacketRecovery({ protocol: ROOM_PACKET_RECOVERY_PROTOCOL, hub, roomId, actor: f.owner.agentId,
+      signingPublicKey: f.owner.signingPublicKey, requestId: proof.request.requestId, proofDigest: proof.proofDigest,
+      queryId: id(), issuedAt: now, expiresAt: now + 60000 }, f.owner.signingPrivateKey);
+    return f.call('packet-recover', { wire: query, ...extra });
+  };
+  const closeWire = async () => signRoomControl(await f.action(f.peer, 'close', await f.state(roomId), {}), f.peer.signingPrivateKey);
+  const bundle = { create: await signRoomControl(create, f.owner.signingPrivateKey), invite: await signRoomControl(invite, f.owner.signingPrivateKey),
+    accept: await signRoomControl(accept, f.peer.signingPrivateKey) };
+  return { ...f, packetWire, read, recovery, closeWire, bundle, roomId, id };
+}
+
+test('native D1 carries actual Noise handshakes and encrypted data in both directions; closes and excludes outsiders', async () => {
+  const f = await packetSetup(), sessions = [];
+  try {
+    const pins = { hub, roomId: f.roomId, ownerSigningPublicKey: f.owner.signingPublicKey, peerSigningPublicKey: f.peer.signingPublicKey };
+    for (const role of ['owner', 'peer']) sessions.push(await createRoomNoiseSession({ role, bundle: f.bundle, pins,
+      encryptionPrivateKey: f[role].encryptionPrivateKey, now: Date.now }));
+    const [owner, peer] = sessions;
+    const transfer = async (bytes, actor, recipient, kind, packetIndex) => {
+      const wire = await f.packetWire(actor, { kind, packetIndex, packetHex: bytes.toString('hex') });
+      const stored = await f.call('packet-write', { wire }); assert.equal(stored.ok, true);
+      const page = await f.read(recipient, stored.receipt.storedSeq - 1); assert.equal(page.ok, true);
+      assert.equal(page.page.records.length, 1); assert.equal(page.page.records[0].wire, wire);
+      const received = await prepareRoomPacket(page.page.records[0].wire, { hub, now: Date.now() });
+      assert.equal(received.ok, true); assert.equal(received.request.signingPublicKey, actor.signingPublicKey);
+      return Buffer.from(received.request.packetHex, 'hex');
+    };
+    const one = await transfer(owner.start(), f.owner, f.peer, 'handshake', 0);
+    const two = await transfer(peer.receiveHandshake(one), f.peer, f.owner, 'handshake', 0);
+    const three = await transfer(owner.receiveHandshake(two), f.owner, f.peer, 'confirmation', 1);
+    const four = await transfer(peer.receiveHandshake(three), f.peer, f.owner, 'confirmation', 1);
+    assert.equal(owner.receiveHandshake(four), null);
+    const body = Buffer.from('Private conversation; untrusted content, not a remote command.');
+    assert.deepEqual(peer.open(await transfer(owner.seal(body), f.owner, f.peer, 'data', 2)), body);
+    assert.deepEqual(owner.open(await transfer(peer.seal(body), f.peer, f.owner, 'data', 2)), body);
+    assert.equal((await f.read(f.outsider)).page, null);
+    assert.deepEqual(await f.call('packet-write', { wire: await f.packetWire(f.outsider) }), { ok: false, reason: 'unavailable' });
+    assert.equal((await f.call('submit', { wire: await f.closeWire(), key: f.peer.signingPublicKey })).ok, true);
+    assert.equal((await f.read()).page, null);
+    assert.deepEqual(await f.call('packet-write', { wire: await f.packetWire(f.owner, { sessionId: f.id() }) }), { ok: false, reason: 'unavailable' });
+  } finally { sessions.forEach(s => s.close()); }
+});
+
+test('native D1 packet journal survives lost responses and full runtime restart without double charging', async () => {
+  const f = await packetSetup(), wire = await f.packetWire();
+  assert.deepEqual(await f.call('packet-write', { wire, fault: 'lost-response' }), { ok: false, reason: 'storage_error' });
+  const before = await f.inspect(); assert.equal(before.room_lab_packets.length, 1);
+  await mf.dispose(); await startRuntime();
+  assert.deepEqual(await f.inspect(), before);
+  assert.equal((await f.call('packet-write', { wire })).replayed, true);
+  assert.equal((await f.recovery(wire)).receipt.requestId, JSON.parse(wire).requestId);
+  const recovered = await f.inspect();
+  assert.deepEqual(recovered.room_lab_packet_usage, before.room_lab_packet_usage);
+  assert.equal(recovered.room_lab_packets.length, 1);
+  assert.equal((await f.call('submit', { wire: await f.closeWire(), key: f.peer.signingPublicKey })).ok, true);
+  await mf.dispose(); await startRuntime();
+  assert.equal((await f.read()).page, null);
+  assert.equal((await f.recovery(wire)).receipt.storedSeq, 1);
+});
+
+test('native D1 serializes packet retries/positions/hub budgets across independent requests and keeps closure possible', async () => {
+  const f = await packetSetup({ sessions: 2 }), wire = await f.packetWire();
+  const exact = await Promise.all(Array.from({ length: 6 }, () => f.call('packet-write', { wire })));
+  assert.ok(exact.every(r => r.ok)); assert.equal(exact.filter(r => !r.replayed).length, 1);
+  const positions = await Promise.all(Array.from({ length: 4 }, async () => f.call('packet-write', {
+    wire: await f.packetWire(f.peer, { packetHex: 'ab'.repeat(48) }) })));
+  assert.equal(positions.filter(r => r.ok).length, 1);
+  const budgets = await Promise.all(Array.from({ length: 4 }, async () => f.call('packet-write', {
+    wire: await f.packetWire(f.owner, { sessionId: f.id() }) })));
+  assert.equal(budgets.filter(r => r.ok).length, 1);
+  assert.deepEqual((await f.inspect()).room_lab_d1_packet_gate, []);
+  assert.equal((await f.call('submit', { wire: await f.closeWire(), key: f.peer.signingPublicKey })).ok, true);
+});
+
+for (const fault of ['packet-statement', 'packet-missing-guard', 'packet-ignore-budget', 'final-expiry']) {
+  test(`native D1 ${fault} leaves no partial packet, phase, receipt or budget`, async () => {
+    const f = await packetSetup(), wire = await f.packetWire();
+    if (fault !== 'final-expiry') await f.call('fault', { fault });
+    const before = await f.inspect();
+    assert.deepEqual(await f.call('packet-write', { wire, ...(fault === 'final-expiry' ? { fault } : {}) }), { ok: false, reason: 'storage_error' });
+    assert.deepEqual(await f.inspect(), before);
+  });
+}
+
+test('native D1 observes signed closure between packet preflight and batch, but permits a prior read snapshot', async () => {
+  const f = await packetSetup(), wire = await f.packetWire();
+  assert.equal((await f.call('packet-write', { wire })).ok, true);
+  const closeWire = await f.closeWire();
+  assert.equal((await f.read(f.peer, 0, { closeWire, closeKey: f.peer.signingPublicKey })).page.records.length, 1);
+  assert.equal((await f.read()).page, null);
+  const g = await packetSetup();
+  const raced = await g.call('packet-write', { wire: await g.packetWire(), closeWire: await g.closeWire(), closeKey: g.peer.signingPublicKey });
+  assert.deepEqual(raced, { ok: false, reason: 'unavailable' });
+});
+
+test('native D1 read/recovery remain read-only and reject expired asynchronous results', async () => {
+  const f = await packetSetup(), wire = await f.packetWire();
+  assert.equal((await f.call('packet-write', { wire })).ok, true);
+  const before = await f.inspect();
+  assert.equal((await f.read()).page.records.length, 1);
+  assert.equal((await f.recovery(wire)).receipt.storedSeq, 1);
+  assert.deepEqual(await f.read(f.peer, 0, { fault: 'read-expiry' }), { ok: false, reason: 'expired_proof' });
+  assert.deepEqual(await f.recovery(wire, { fault: 'read-expiry' }), { ok: false, reason: 'expired_proof' });
+  assert.deepEqual(await f.inspect(), before);
 });

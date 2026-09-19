@@ -14,7 +14,7 @@ export default {
       return Response.json({ first: result[0].results[0].t, last: result[2].results[0].t });
     }
     const input = await request.json(); // Trusted, bounded local fixture material only.
-    const options = { hub: input.hub, policy: input.policy, now: () => input.now };
+    const options = { hub: input.hub, policy: input.policy, packets: input.packets, now: () => input.now };
     if (path === '/test-only/init') {
       await initializeD1RoomAdmission(env.DB, options);
       return Response.json({ initialized: true });
@@ -25,12 +25,43 @@ export default {
       const budgets = await env.DB.prepare('SELECT * FROM room_lab_budgets ORDER BY scope, kind').all();
       const gate = await env.DB.prepare('SELECT * FROM room_lab_d1_gate').all();
       const meta = await env.DB.prepare('SELECT * FROM room_lab_meta').all();
-      return Response.json({ rooms: rooms.results, receipts: receipts.results, budgets: budgets.results, gate: gate.results, meta: meta.results });
+      const packets = {};
+      if (input.packets) for (const table of ['room_lab_packets', 'room_lab_packet_sessions', 'room_lab_packet_usage', 'room_lab_packet_windows', 'room_lab_d1_packet_gate']) {
+        packets[table] = (await env.DB.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all()).results;
+      }
+      return Response.json({ rooms: rooms.results, receipts: receipts.results, budgets: budgets.results, gate: gate.results, meta: meta.results, ...packets });
     }
     if (path === '/test-only/fault') {
-      if (input.fault === 'missing-guard') await env.DB.prepare('DROP TRIGGER room_lab_d1_finish').run();
+      if (input.fault === 'packet-missing-guard') await env.DB.prepare('DROP TRIGGER room_lab_d1_packet_finish').run();
+      else if (input.fault === 'packet-statement') await env.DB.prepare("CREATE TRIGGER fault BEFORE INSERT ON room_lab_packets BEGIN SELECT RAISE(ABORT, 'fixture fault'); END").run();
+      else if (input.fault === 'packet-ignore-budget') await env.DB.prepare("CREATE TRIGGER fault BEFORE INSERT ON room_lab_packet_usage BEGIN SELECT RAISE(IGNORE); END").run();
+      else if (input.fault === 'missing-guard') await env.DB.prepare('DROP TRIGGER room_lab_d1_finish').run();
       else await env.DB.prepare("CREATE TRIGGER fault BEFORE INSERT ON room_lab_receipts BEGIN SELECT RAISE(ABORT, 'fixture fault'); END").run();
       return Response.json({ installed: true });
+    }
+    if (path === '/test-only/packet-read' || path === '/test-only/packet-recover') {
+      let clock = input.now;
+      const readOnly = { withSession(constraint) {
+        if (constraint !== 'first-primary') throw new Error('Not primary');
+        const session = env.DB.withSession(constraint); let used = false;
+        return { prepare(sql) {
+          if (used || !sql.startsWith('SELECT ')) throw new Error('One read per fresh session');
+          used = true; let statement = session.prepare(sql);
+          const wrapper = { bind(...args) { statement = statement.bind(...args); return wrapper; }, async first() {
+            const result = await statement.first();
+            if (sql.includes('records_json') || sql.includes('old.receipt_json')) {
+              if (input.fault === 'read-expiry') clock = JSON.parse(input.wire).expiresAt;
+              if (input.closeWire) {
+                const result = await new D1RoomAdmissionStore(env.DB, options).submit(input.closeWire, input.closeKey);
+                if (!result.ok) throw new Error('Fixture close failed');
+              }
+            }
+            return result;
+          } }; return wrapper;
+        }, async batch() { throw new Error('Read only'); } };
+      } };
+      const store = new D1RoomAdmissionStore(readOnly, { ...options, now: () => clock });
+      return Response.json(path.endsWith('packet-read') ? await store.readPackets(input.wire) : await store.recoverPacket(input.wire));
     }
     if (path === '/test-only/state') {
       let clock = input.now, queries = 0;
@@ -78,11 +109,15 @@ export default {
     }
     // Model transport uncertainty/delay AFTER using the real D1 binding. Do not
     // add these fault modes or caller clock selection to a production adapter.
-    const db = input.fault ? {
+    const db = input.fault || input.closeWire ? {
       withSession(constraint) {
         const session = env.DB.withSession(constraint);
         return { prepare: session.prepare.bind(session), getBookmark: session.getBookmark.bind(session),
           async batch(statements) {
+            if (input.closeWire) {
+              const closed = await new D1RoomAdmissionStore(env.DB, options).submit(input.closeWire, input.closeKey);
+              if (!closed.ok) throw new Error('Fixture close failed');
+            }
             if (input.fault === 'queued-expiry') await new Promise(resolve => setTimeout(resolve, 75));
             const list = input.fault === 'final-expiry' ? [...statements.slice(0, -1),
               session.prepare('UPDATE room_lab_meta SET clock = ?').bind(JSON.parse(input.wire).expiresAt), statements.at(-1)] : statements;
@@ -94,6 +129,7 @@ export default {
       },
     } : env.DB;
     const store = new D1RoomAdmissionStore(db, options);
+    if (path === '/test-only/packet-write') return Response.json(await store.writePacket(input.wire));
     if (path === '/test-only/submit') return Response.json(await store.submit(input.wire, input.key));
     if (path === '/test-only/recover') return Response.json(await store.recover(input.wire, input.key));
     return new Response(null, { status: 404 });

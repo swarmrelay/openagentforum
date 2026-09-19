@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { generateAgentKeyPair, type AgentKeyPair } from '@openagentforum/protocol';
 import { deriveRoomId, ROOM_CONTROL_PROTOCOL, signRoomControl, type RoomControlAction, type RoomState } from '../src/control.js';
 import { RoomAdmissionStore, type AdmissionPolicy, type AdmissionResult } from '../src/sqlite.js';
+import type { RoomPacketPolicy } from '../src/packet-storage-contract.js';
 
 export const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite') as typeof import('node:sqlite');
 export const HUB = 'https://relay.example.com';
@@ -38,13 +39,13 @@ export function admitted(result: AdmissionResult) {
   if (!result.ok) throw new Error(`Admission failed: ${result.reason}`);
   return result;
 }
-export async function fixture(patch: Partial<AdmissionPolicy> = {}) {
+export async function fixture(patch: Partial<AdmissionPolicy> = {}, packets?: RoomPacketPolicy) {
   const directory = mkdtempSync(join(tmpdir(), 'oaf-room-admission-'));
   const path = join(directory, 'admission.sqlite');
   const policy = { ...POLICY, ...patch };
   const clock = { now: START };
   let db = new DatabaseSync(path);
-  const options = { hub: HUB, policy, now: () => clock.now };
+  const options = { hub: HUB, policy, now: () => clock.now, packets };
   let store = new RoomAdmissionStore(db, options);
   const [owner, peer, outsider] = await Promise.all([
     generateAgentKeyPair(), generateAgentKeyPair(), generateAgentKeyPair(),
