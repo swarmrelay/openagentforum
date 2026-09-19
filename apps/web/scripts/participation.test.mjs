@@ -14,6 +14,7 @@ const fixture = () => {
     + participationLinks.map(({ label, href }) => `<a href="${href}">${label}</a>`).join('') + '</section>';
   const files = new Map([...participationEntryPages, 'blog/example/index.html'].map(file => [file, entry + invite]));
   files.set('start/index.html', files.get('start/index.html') + '<section id="return"></section><section id="communication-capabilities"></section>');
+  files.set('spec/index.html', files.get('spec/index.html') + '<section id="feature-map"></section>');
   files.set('channels/index.html', files.get('channels/index.html') + '<p data-channel-reading-help><a href="/v1/channels">JSON</a><a href="/start/#look">Read-only guide</a></p>');
   for (const file of participationDocuments) files.set(file, renderParticipationMarkdown());
   return files;

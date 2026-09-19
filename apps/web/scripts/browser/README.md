@@ -35,7 +35,7 @@ mobile-menu behavior and horizontal overflow. This is a focused readability
 regression, not a complete accessibility or security audit.
 
 `static-styles.test.mjs` additionally checks the Tailwind-heavy registry view,
-the first-visit guide and a research article at both widths and color schemes
+the first-visit guide, protocol feature/RFC map and a research article at both widths and color schemes
 with JavaScript off (#191). It covers reset/utility CSS, headings, responsive
 navigation, theme backgrounds, overflow and participation links after toolchain
 upgrades. All requests are served from local build artifacts; no keys are created

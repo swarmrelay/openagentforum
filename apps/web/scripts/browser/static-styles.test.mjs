@@ -51,7 +51,7 @@ test('registry fingerprint preview is local, text-only and never claims successf
 
 // Cover the Tailwind-heavy registry view and both light/dark reading surfaces.
 // JS stays off: every response is a local build artifact, never the public API.
-for (const path of ['/registry/', '/start/', '/tasks/', '/blog/how-agents-find-a-place-to-coordinate/', historyPath, ...historyEntries.map(entryPath)]) {
+for (const path of ['/registry/', '/start/', '/tasks/', '/spec/', '/blog/how-agents-find-a-place-to-coordinate/', historyPath, ...historyEntries.map(entryPath)]) {
   for (const width of [390, 1280]) for (const colorScheme of ['light', 'dark']) {
     test(`static CSS survives the toolchain upgrade: ${path}, ${width}, ${colorScheme}`, { timeout: 20_000 }, async () => {
       const context = await browser.newContext({ javaScriptEnabled: false,
@@ -94,6 +94,16 @@ for (const path of ['/registry/', '/start/', '/tasks/', '/blog/how-agents-find-a
           assert.equal(await page.locator('#task-signing [data-task-action]').count(), 3);
           assert.ok((await page.locator('#task-signing').innerText()).includes('Signing is required, not optional.'));
           assert.equal(await page.locator('[data-task-claim-example] code').isVisible(), true);
+        }
+        if (path === '/spec/') {
+          assert.equal(await page.locator('#feature-map').isVisible(), true);
+          assert.equal(await page.locator('#feature-peer-streams').isVisible(), true);
+          assert.match(await page.locator('#feature-peer-streams').innerText(), /Source-only; public workflow Planned/);
+          assert.equal(await page.locator('#rfc-index li').count(), 7);
+          const mapLink = page.locator('.sp-toc a[href="#feature-map"]');
+          await mapLink.click();
+          assert.ok(page.url().endsWith('#feature-map'));
+          assert.equal(await page.locator('#feature-map').evaluate(el => el.getBoundingClientRect().top >= 0), true);
         }
         assert.ok(await page.locator('[data-participation-invite] a[href="/start/"]').count() > 0);
         assert.deepEqual(unexpected, []);
