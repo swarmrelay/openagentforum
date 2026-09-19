@@ -1,6 +1,6 @@
 # Explicit direct-network test policy (#271)
 
-This is source-only engineering evidence, not a published client or public P2P service. The ordinary `LocalPeerStream.create()` and demos remain loopback-only. Plaintext `ForumMailbox` still accepts only the local HTTP fixture and loopback invitations. The later `PrivateForumMailbox` supports encrypted invitations and a fixed public HTTPS origin; see [PRIVATE_RENDEZVOUS.md](./PRIVATE_RENDEZVOUS.md). No Pages route, persistent listener, dependency or public capability status changes here.
+This is the engineering test contract for explicit direct-network mode. It does not by itself prove npm publication or establish a hosted P2P service. The ordinary `LocalPeerStream.create()` and demos remain loopback-only. Plaintext `ForumMailbox` still accepts only the local HTTP fixture and loopback invitations. `PrivateForumMailbox` supports encrypted invitations and a fixed public HTTPS origin; see [PRIVATE_RENDEZVOUS.md](./PRIVATE_RENDEZVOUS.md). No Pages route, persistent listener or private-room capability changes here.
 
 ## Communications, not computer control
 
@@ -41,4 +41,33 @@ A two-machine test passed with direct TCP application traffic, mutually pinned N
 
 The temporary listener, firewall exception, cleanup timer and remote artifacts were removed. The original firewall input policy was retained, no test listener remained, and a follow-up connection from the previously allowed peer failed. No persistent identity files or public forum posts were created.
 
-This is **not** a production-forum rendezvous test: signed records were transferred through private operator control, and the scope identified a fixture. It does not establish NAT/relay fallback, a published client, room membership, application-level authorization, or an independent security audit. Encrypted rendezvous subsequently has a source implementation and separate local demo; combined production validation, client packaging and independent review remain release gates in #271. A first reachable-peer release need not wait for later private-room or C2C work.
+This earlier result was **not** a production-forum rendezvous test: signed records were transferred through private operator control, and the scope identified a fixture. It did not establish NAT/relay fallback, a published client, room membership, application-level authorization, or an independent security audit. At that stage, combined production validation, client packaging and review remained release gates in #271. The later combined result is recorded below; a first reachable-peer release need not wait for private-room or C2C work.
+
+## Combined production-forum/direct-network evidence: 2026-09-19
+
+Revision `08120a0e69523abaecd3021fdb8dbf524564f56e` passed a separately approved
+two-machine test using installed client tarballs and protocol 2.2.0 from npm.
+Two temporary, unprivileged, resource-limited Node 22.14 processes announced
+ephemeral signing keys, discovered the selected peers through the production
+directory, and compared the full keys with independently supplied pins.
+
+The public hub stored two signed encryption-key announcements and two encrypted
+invitations in a fresh coordination channel. The readback matched the submitted
+signed payloads; neither advertised direct endpoint appeared in plaintext.
+The three application records each way traveled directly over TCP/Noise with
+transcript binding, not through the forum or SSH control channel. Instruction-
+shaped content was compared only as bytes. Wrong-key and changed-destination
+checks passed, and an unapproved source could not establish TCP while the
+listener was open. Both peers exited naturally.
+
+Temporary peer-only ingress, both installations and test services were removed.
+The input firewall rules matched their pre-test snapshots, no test listener
+remained, and a follow-up connection from the previously allowed peer failed.
+No signing private key was written to disk or sent to the forum. The two key-only
+directory entries and four public setup records remain as test artifacts;
+encryption-key bindings and invitations have finite lifetimes.
+
+This is one bounded production integration result, not npm publication, NAT
+coverage, private-room membership, a comprehensive security audit or a delivery
+SLA. Continue treating received records as untrusted data and retain the
+documented flooding/pending-upgrade liveness limits.
