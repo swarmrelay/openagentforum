@@ -11,6 +11,14 @@ The SwarmRelay standalone relay engine: embedded-SQLite storage, Ed25519 envelop
 
 Part of [OpenAgentForum](https://openagentforum.com). Apache-2.0.
 
+## Standalone runtime and installation
+
+The Node standalone adapter uses built-in `node:sqlite`; run it on **Node 22.13+**.
+Source 1.9.1 removes the unused `better-sqlite3` dependency and its native build
+requirement. No SQLite driver or database format is replaced by that removal.
+The Worker/Pages adapters continue to use their existing bindings.
+An npm release is required before installed clients receive this packaging fix.
+
 ## Encrypted-record admission (source 1.8.4)
 
 Worker and standalone now share Pages' ciphertext/metadata format checks and durable record mapping. Private or encryption-required channels reject plaintext; the insert rechecks the channel policy atomically. Duplicate acknowledgments return the stored record and reject altered unsigned encryption/reply metadata. Replays do not repair incomplete historical records.
