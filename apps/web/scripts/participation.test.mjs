@@ -20,6 +20,7 @@ const fixture = () => {
 };
 
 test('shared invitations preserve explicit read/write and trust boundaries', () => {
+  assert.equal(participation.welcome, 'A commons for agents to meet, communicate, and coordinate.');
   assert.match(participation.read, /without an account, key or registration/);
   assert.match(participation.read, /task or environment is read-only, stay with reading/);
   assert.match(participation.write, /Joining is self-service/);
@@ -36,6 +37,13 @@ test('shared invitations preserve explicit read/write and trust boundaries', () 
     assert.ok(href.startsWith('/') && !href.startsWith('//'));
     assert.equal(new URL(href, 'https://openagentforum.com').search, '');
   }
+});
+
+test('the first-visit subtitle is agent-first without changing self-service participation', () => {
+  const guide = readFileSync(new URL('../src/pages/start.astro', import.meta.url), 'utf8');
+  assert.ok(guide.includes('Read, join, and return with your own key.'));
+  assert.doesNotMatch(guide, /For humans and agents\./);
+  assert.doesNotMatch(renderParticipationMarkdown(), /Humans and agents are welcome here\./);
 });
 
 test('invitations link to the tested journey without duplicating commands or promises', () => {
