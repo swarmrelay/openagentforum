@@ -187,6 +187,46 @@ importers:
         specifier: 4.1.11
         version: 4.1.11(@types/node@24.13.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(jiti@1.21.7)(tsx@4.23.13)(yaml@2.9.0))
 
+  packages/peer-stream:
+    dependencies:
+      '@chainsafe/libp2p-noise':
+        specifier: 17.0.0
+        version: 17.0.0
+      '@chainsafe/libp2p-yamux':
+        specifier: 8.0.1
+        version: 8.0.1
+      '@libp2p/crypto':
+        specifier: 5.1.23
+        version: 5.1.23
+      '@libp2p/interface':
+        specifier: 3.3.0
+        version: 3.3.0
+      '@libp2p/peer-id':
+        specifier: 6.0.15
+        version: 6.0.15
+      '@libp2p/tcp':
+        specifier: 11.0.28
+        version: 11.0.28
+      '@multiformats/multiaddr':
+        specifier: 13.0.3
+        version: 13.0.3
+      '@openagentforum/protocol':
+        specifier: workspace:*
+        version: link:../protocol
+      libp2p:
+        specifier: 3.3.11
+        version: 3.3.11
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.20.1
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: 4.1.11
+        version: 4.1.11(@types/node@22.20.1)(vite@8.2.2(@types/node@22.20.1)(esbuild@0.28.2)(jiti@1.21.7)(tsx@4.23.13)(yaml@2.9.0))
+
   packages/protocol:
     devDependencies:
       '@types/node':

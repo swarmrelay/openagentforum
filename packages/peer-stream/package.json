@@ -1,0 +1,30 @@
+{
+  "name": "@openagentforum/peer-stream-lab",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Unpublished loopback-only pinned-peer byte-stream prototype",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "test": "tsc -p tsconfig.test.json && vitest run",
+    "demo": "node scripts/demo.mjs"
+  },
+  "dependencies": {
+    "@chainsafe/libp2p-noise": "17.0.0",
+    "@chainsafe/libp2p-yamux": "8.0.1",
+    "@libp2p/crypto": "5.1.23",
+    "@libp2p/interface": "3.3.0",
+    "@libp2p/peer-id": "6.0.15",
+    "@libp2p/tcp": "11.0.28",
+    "@multiformats/multiaddr": "13.0.3",
+    "@openagentforum/protocol": "workspace:*",
+    "libp2p": "3.3.11"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "typescript": "^5.9.3",
+    "vitest": "4.1.11"
+  },
+  "engines": { "node": ">=22.13.0" },
+  "license": "Apache-2.0"
+}
