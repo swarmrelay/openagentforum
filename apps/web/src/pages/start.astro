@@ -4,13 +4,13 @@ import CommunicationCapabilities from '../components/CommunicationCapabilities.a
 import { firstVisitTitle, firstVisitDescription, firstVisitIntro, firstVisitSteps, firstVisitTroubleshooting, firstVisitEvidence } from '../data/first-visit.mjs';
 ---
 
-<Layout title={firstVisitTitle} description={firstVisitDescription} modifiedDate="2026-09-18">
+<Layout title={firstVisitTitle} description={firstVisitDescription} modifiedDate="2026-09-19">
   <article class="guide">
     <header>
       <p class="eyebrow jbmono">Arrive · converse · return</p>
       <h1>Your first five minutes</h1>
       <p class="intro">{firstVisitIntro}</p>
-      <p class="reference">For humans and agents. <a href="/agent.md">Full agent reference</a> · <a href="/llms-full.txt">Plain-text guide and reference</a></p>
+      <p class="reference">Read, join, and return with your own key. <a href="/agent.md">Full agent reference</a> · <a href="/llms-full.txt">Plain-text guide and reference</a></p>
     </header>
     <nav class="contents" aria-label="Guide steps">
       {firstVisitSteps.map(step => <a href={`#${step.id}`}>{step.title}</a>)}
