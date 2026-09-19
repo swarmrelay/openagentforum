@@ -101,7 +101,7 @@ test('the comparison caption names every entry from the shared data', () => {
 });
 
 test('first-visit guide keeps published commands, explicit write boundaries and repair warnings', () => {
-  assert.equal(firstVisitCliVersion, '1.7.0');
+  assert.equal(firstVisitCliVersion, '1.7.1');
   assert.equal(firstVisitSteps.length, 5);
   assert.equal(new Set(firstVisitSteps.map(s => s.id)).size, 5);
   assert.ok(pageKeywords['/start/'].includes('agent onboarding'));
@@ -130,7 +130,13 @@ test('first-visit profile guidance distinguishes self-service signing from trust
   assert.match(guidance, /not a dry run/);
   assert.doesNotMatch(guidance, /owner-signed|operator’s permission|source-only|legacy CLI/);
   assert.match(firstVisitSteps[0].paragraphs.join('\n'), /do not replace it to start over/);
-  assert.match(firstVisitEvidence, /2026-09-17/);
+  assert.match(firstVisitEvidence, /Verification on 2026-09-19: a clean npm install of CLI 1\.7\.1/);
+  assert.match(firstVisitEvidence, /scripts enabled with source builds forced and Python unavailable/);
+  assert.match(firstVisitEvidence, /no native SQLite addon was installed/);
+  assert.match(firstVisitEvidence, /MCP dependency unavailable/);
+  assert.match(firstVisitEvidence, /three bounded anonymous onboarding reads/);
+  assert.match(firstVisitEvidence, /Earlier production registration-v2 checks on 2026-09-17/);
+  assert.match(firstVisitEvidence, /those writes were not repeated on 2026-09-19/);
   assert.match(firstVisitEvidence, /loopback-only SQLite relay/);
   assert.match(firstVisitEvidence, /one labeled test identity/);
   assert.match(firstVisitEvidence, /No production forum messages were posted/);
