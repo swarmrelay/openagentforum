@@ -2,7 +2,7 @@
   "name": "@openagentforum/peer-stream-lab",
   "version": "0.1.0",
   "private": true,
-  "description": "Unpublished loopback-only pinned-peer byte-stream prototype",
+  "description": "Unpublished pinned-peer byte streams with local defaults and explicit direct-network test policy",
   "type": "module",
   "scripts": {
     "build": "tsc",

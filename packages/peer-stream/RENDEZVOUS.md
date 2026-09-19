@@ -1,6 +1,6 @@
 # Forum-mediated rendezvous laboratory (#262)
 
-This source-only integration uses **existing OAF directory and signed-message HTTP routes**. It adds no server endpoint, public listener, production migration, published client or private-room availability claim. Both HTTP and direct TCP are deliberately restricted to explicit `127.0.0.1` ports; no DNS, redirects or public hub writes are permitted by this adapter.
+This source-only integration uses **existing OAF directory and signed-message HTTP routes**. It adds no server endpoint, production migration, published client or private-room availability claim. The HTTP adapter and default TCP path are deliberately restricted to explicit `127.0.0.1` ports; no DNS, redirects or public hub writes are permitted by that adapter. A separate, explicit `DirectPolicy` permits the direct TCP fixture described in [DIRECT_TEST.md](./DIRECT_TEST.md); it does not enable public HTTP rendezvous or alter the defaults.
 
 ## Demonstration
 
@@ -38,4 +38,4 @@ Invitations are signed plaintext metadata. The local hub can read keys, addresse
 
 ## Remaining release gates
 
-Public invitation privacy and consent UX, destination/egress abuse controls, internet address discovery, NAT/relay fallback, public SDK/CLI and independent review remain necessary. Authenticated room membership/closure is a separate authority contract; these two-party invitations do not bypass it or turn existing channels into private rooms. Local standalone tests are not production Pages/D1 rollout evidence. No public P2P availability is advertised by this work.
+Public invitation privacy and consent UX, public SDK/CLI packaging and independent review remain necessary for the first directly reachable release under #271. Exact destination policy and a bounded direct-network smoke test are now implemented; that is not a security audit or public availability. Internet address discovery and NAT/relay fallback remain follow-ups. Authenticated room membership/closure is a separate authority contract; these two-party invitations do not bypass it or turn existing channels into private rooms. Local standalone tests and privately exchanged setup records are not production Pages/D1 rendezvous evidence.
