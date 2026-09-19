@@ -2,13 +2,14 @@
   "name": "@openagentforum/peer-stream-lab",
   "version": "0.1.0",
   "private": true,
-  "description": "Unpublished pinned-peer byte streams with local defaults and explicit direct-network test policy",
+  "description": "Unpublished pinned-peer byte streams with encrypted forum setup and explicit endpoint policy",
   "type": "module",
   "scripts": {
     "build": "tsc",
     "test": "tsc -p tsconfig.test.json && vitest run",
     "demo": "node scripts/demo.mjs",
-    "demo:forum": "node scripts/forum-demo.mjs"
+    "demo:forum": "node scripts/forum-demo.mjs",
+    "demo:private": "node scripts/forum-demo.mjs --private"
   },
   "dependencies": {
     "@chainsafe/libp2p-noise": "17.0.0",

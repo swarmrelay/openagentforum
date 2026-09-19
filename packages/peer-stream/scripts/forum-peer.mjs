@@ -4,11 +4,12 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { generateAgentKeyPair } from '@openagentforum/protocol';
 import { ForumRendezvous } from '../dist/rendezvous.js';
 import { ForumMailbox } from '../dist/forum-mailbox.js';
+import { PrivateForumMailbox } from '../dist/private-mailbox.js';
 
 const tell = message => new Promise((resolve, reject) => process.send(message, error => error ? reject(error) : resolve()));
-let session;
+let session, privateMailbox;
 try {
-  const [role, hub, channel] = process.argv.slice(2);
+  const [role, hub, channel, mode] = process.argv.slice(2);
   assert.ok(role === 'offerer' || role === 'acceptor');
   const identity = await generateAgentKeyPair(), mailbox = new ForumMailbox(hub, channel);
   await mailbox.announce(identity.signingPublicKey);
@@ -20,24 +21,35 @@ try {
   // requires its own local trust/consent policy; directory labels are not authority.
   const peer = await mailbox.discover(config.agentId);
   session = new ForumRendezvous(identity, peer, mailbox.scope);
-  const find = async kind => {
+  const poll = async read => {
     const deadline = performance.now() + 8000;
     for (let i = 0; i < 40 && performance.now() < deadline; i++) {
-      const raw = await mailbox.find(kind, peer, identity.signingPublicKey);
+      const raw = await read();
       if (raw) return raw;
       await delay(100);
     }
     throw new Error();
   };
+  if (mode === '--private') {
+    privateMailbox = await PrivateForumMailbox.create(identity, peer, mailbox.scope);
+    await privateMailbox.post(await privateMailbox.prepareKey(await privateMailbox.nextSequence()));
+    await poll(() => privateMailbox.findPeerKey());
+  }
+  const find = kind => poll(() => privateMailbox ? privateMailbox.find(kind) : mailbox.find(kind, peer, identity.signingPublicKey));
+  const sequence = () => privateMailbox ? privateMailbox.nextSequence() : mailbox.nextSequence(identity.signingPublicKey);
+  const post = async (raw, kind, seq) => {
+    if (privateMailbox) await privateMailbox.post(await privateMailbox.prepare(raw, kind, seq));
+    else await mailbox.post(raw, identity.signingPublicKey, peer, kind);
+  };
   let stream;
   if (role === 'offerer') {
-    const offer = await session.offer(await mailbox.nextSequence(identity.signingPublicKey));
-    await mailbox.post(offer, identity.signingPublicKey, peer, 'offer');
+    const seq = await sequence(), offer = await session.offer(seq);
+    await post(offer, 'offer', seq);
     stream = await session.wait(await find('accept'));
   } else {
     const offer = await find('offer');
-    const acceptance = await session.accept(offer, await mailbox.nextSequence(identity.signingPublicKey));
-    await mailbox.post(acceptance, identity.signingPublicKey, peer, 'accept');
+    const seq = await sequence(), acceptance = await session.accept(offer, seq);
+    await post(acceptance, 'accept', seq);
     stream = await session.connect();
   }
   let count = 0;
@@ -57,4 +69,4 @@ try {
   process.exitCode = 1;
   await session?.close().catch(() => {});
   process.stderr.write('Forum rendezvous demo peer failed\n');
-} finally { if (process.connected) process.disconnect(); }
+} finally { privateMailbox?.close(); if (process.connected) process.disconnect(); }
