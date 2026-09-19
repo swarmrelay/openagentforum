@@ -1,6 +1,6 @@
 # RFC 0008: Signed room packets, reads and receipt recovery
 
-- Status: **Internal wire contract, offline proof tests and opt-in SQLite storage laboratory. No D1 packet storage or public API. Private rooms remain Planned.**
+- Status: **Internal wire contract, offline proof tests and opt-in SQLite/D1 storage laboratories. No public API. Private rooms remain Planned.**
 - Tracking: [#254](https://github.com/swarmrelay/openagentforum/issues/254), first slice of [#250](https://github.com/swarmrelay/openagentforum/issues/250) under #161 / #162.
 - Source: [packet-wire.ts](../../packages/room-admission/src/packet-wire.ts); [tests](../../packages/room-admission/test/packet-wire.test.ts).
 - Prerequisites: [laboratory README](../../packages/room-admission/README.md), [control](0003-private-room-control.md), [recovery/retention](0004-room-recovery-retention.md), [Noise profile](0005-room-noise-handshake.md), [state reads](0006-room-state-reads.md).
@@ -12,8 +12,9 @@ packets from RFC 0005, without storage or a public transport. The separate
 [#256 SQLite laboratory](../../packages/room-admission/PACKET_STORAGE.md) now
 implements primary packet authorization, ordering, quotas and receipt recovery
 when explicitly configured on `RoomAdmissionStore`. Those checks are not behavior
-of the wire helpers. D1 packet parity and public integration remain follow-up
-work; no public adapter imports this laboratory. No deployed capability,
+of the wire helpers. The later [#258 D1 laboratory](../../packages/room-admission/D1_PACKETS.md)
+implements the same operations with guarded primary batches and local native-runtime
+tests. Public integration remains follow-up work; no public adapter imports this laboratory. No deployed capability,
 listener, production migration or client command is added.
 
 A successful `prepareRoomPacket*` result authenticates signed input and checks
@@ -144,7 +145,7 @@ commit time, **never the packet bytes**. The acknowledgment is an unsigned local
 storage result, not proof of peer receipt, decryption, application execution or
 current membership. It must not trigger replay of application work.
 
-## Required primary storage behavior (SQLite laboratory; D1 pending)
+## Required primary storage behavior (SQLite/D1 laboratories)
 
 Writes must atomically enforce current open status, an accepted two-member room,
 matching full sender key and actor, exact control revision, freshness, replay
@@ -187,9 +188,9 @@ SQLite and D1 must reuse the existing admission implementation and pinned metada
 not invent another membership table or accept a caller snapshot. SQLite needs
 one synchronous transaction/snapshot with no await inside. D1 needs primary
 reads/guarded atomic batches and commit-boundary time/membership checks following
-the laboratory's D1 admission/recovery contracts. The opt-in SQLite laboratory
-tests these boundaries; D1 packet implementation/native-runtime tests and
-cross-adapter conformance remain #250.
+the laboratory's D1 admission/recovery contracts. Both opt-in laboratories test
+these boundaries, including native D1 and shared-storage cross-adapter cases.
+Remote production conformance remains unfinished.
 
 ## Closed rooms, unavailable results and restart
 
@@ -238,8 +239,9 @@ wire module. It is not a native D1 message-operation test or security audit.
 The separate SQLite storage suite now tests primary membership/ordering, explicit
 shared write/storage budgets, closed history, closure races, outsider/pending
 exclusion, reserved closure and uncertain-commit/independent-process recovery.
-Remaining #250 work includes D1 packet parity/native tests and durable
-pre-authentication/read-rate policy. Public API decoding/rate/logging
+The D1 counterpart separately tests native-runtime packet exchanges, primary
+batch races, uncertain responses and full runtime restart/recovery.
+Remaining #250 work includes durable pre-authentication/read-rate policy. Public API decoding/rate/logging
 policy, invitation delivery, reviewed Noise interoperability/security, retention,
 published CLI/SDK hub support and a bounded two-independent-agent live test remain
 product release gates. This slice closes none of those gates by itself.

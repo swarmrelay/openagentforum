@@ -7,6 +7,8 @@ import { ROOM_LAB_SCHEMA } from './storage-schema.js';
 import { D1RoomReceiptReader } from './d1-recovery.js';
 import { D1RoomStateReader } from './d1-state-read.js';
 import { D1RoomOperationScope } from './d1-scope.js';
+import { D1RoomPacketStorage, initializeD1RoomPackets } from './d1-packets.js';
+import type { RoomPacketPolicy, RoomPacketWriteResult, RoomPacketReadResult, RoomPacketRecoveryResult } from './packet-storage-contract.js';
 import type { AdmissionPolicy, AdmissionResult, AdmissionError } from './storage-types.js';
 
 // SQLite samples 'now' per sqlite3_step, not once in the calling JS request.
@@ -33,7 +35,7 @@ WHEN OLD.mode IN ('apply', 'replay') BEGIN
   UPDATE room_lab_meta SET clock = max(clock, OLD.at_ms, ${DB_NOW}) WHERE id = 1;
 END`;
 
-type Options = { hub: string; policy: AdmissionPolicy; now: () => number };
+type Options = { hub: string; policy: AdmissionPolicy; now: () => number; packets?: RoomPacketPolicy };
 function validateOptions(options: Options) {
   const url = new URL(options.hub);
   if (url.protocol !== 'https:' || url.origin !== options.hub || options.hub.length > 256
@@ -60,6 +62,7 @@ export async function initializeD1RoomAdmission(db: D1Database, options: Options
         .bind(options.hub, ROOM_CONTROL_PROTOCOL, policy),
     ]);
     metadata(await db.withSession('first-primary').prepare('SELECT * FROM room_lab_meta WHERE id = 1').first(), options.hub, policy);
+    if (options.packets) await initializeD1RoomPackets(db, { ...options, packets: options.packets });
   } catch { throw new Error('D1 admission initialization failed'); }
 }
 
@@ -80,6 +83,7 @@ export class D1RoomAdmissionStore {
   readonly #scope: D1RoomOperationScope;
   readonly #reader: D1RoomReceiptReader;
   readonly #stateReader: D1RoomStateReader;
+  readonly #packets: D1RoomPacketStorage | null;
 
   constructor(db: D1Database, options: Options) {
     this.#policy = validateOptions(options);
@@ -90,6 +94,7 @@ export class D1RoomAdmissionStore {
     this.#scope = new D1RoomOperationScope(this.#policy.maxInFlightPerConnection);
     this.#reader = new D1RoomReceiptReader(db, { ...options, policy: this.#policy, scope: this.#scope });
     this.#stateReader = new D1RoomStateReader(db, { ...options, policy: this.#policy, scope: this.#scope });
+    this.#packets = options.packets ? new D1RoomPacketStorage(db, { ...options, policy: this.#policy, packets: options.packets }, this.#scope) : null;
   }
   #time(floor: number) {
     const now = this.#now();
@@ -98,6 +103,18 @@ export class D1RoomAdmissionStore {
   }
   recover(wire: string, signingKey: string) { return this.#reader.recover(wire, signingKey); }
   readState(wire: string, signingKey: string) { return this.#stateReader.readState(wire, signingKey); }
+  async writePacket(wire: string): Promise<RoomPacketWriteResult> {
+    if (this.#scope.broken) return { ok: false, reason: 'storage_error' };
+    return this.#packets ? this.#packets.writePacket(wire) : { ok: false, reason: 'not_configured' };
+  }
+  async readPackets(wire: string): Promise<RoomPacketReadResult> {
+    if (this.#scope.broken) return { ok: false, reason: 'storage_error' };
+    return this.#packets ? this.#packets.readPackets(wire) : { ok: false, reason: 'not_configured' };
+  }
+  async recoverPacket(wire: string): Promise<RoomPacketRecoveryResult> {
+    if (this.#scope.broken) return { ok: false, reason: 'storage_error' };
+    return this.#packets ? this.#packets.recoverPacket(wire) : { ok: false, reason: 'not_configured' };
+  }
 
   async submit(wire: string, signingKey: string): Promise<AdmissionResult> {
     const denied = this.#scope.enter();
