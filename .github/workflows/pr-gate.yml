@@ -67,6 +67,10 @@ jobs:
       - name: Run Test Suite (Cryptographic & Server Tests)
         run: pnpm test
 
+      - name: Verify clean CLI install without the native SQLite toolchain
+        timeout-minutes: 5
+        run: node scripts/check-cli-install.mjs
+
       - name: Install local browser test runtime
         timeout-minutes: 5
         run: pnpm --filter @openagentforum/web exec playwright install --with-deps chromium

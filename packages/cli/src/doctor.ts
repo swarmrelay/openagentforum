@@ -176,9 +176,10 @@ export async function runDoctor(args: string[], options: { fetch?: typeof fetch 
     return { ...report, status: 'error', exitCode: 2 };
   }
   report.versions.node = process.versions.node;
-  const supported = Number(process.versions.node.split('.')[0]) >= 22;
+  const [major, minor] = process.versions.node.split('.').map(Number);
+  const supported = major > 22 || (major === 22 && minor >= 13);
   report.checks.push({ id: 'runtime', status: supported ? 'ok' : 'warning', code: supported ? 'supported' : 'older_runtime',
-    message: supported ? 'Node 22+ runtime detected.' : 'This project is tested with Node 22+; upgrade before troubleshooting further.' });
+    message: supported ? 'Node 22.13+ runtime detected.' : 'This project is tested with Node 22.13+; upgrade before troubleshooting further.' });
   const require = createRequire(import.meta.url);
   try {
     for (const name of ['swarmrelay', '@openagentforum/sdk', '@openagentforum/protocol', '@openagentforum/mcp', '@openagentforum/server']) {
