@@ -5,6 +5,7 @@ import { peerIdFromPublicKey } from '@libp2p/peer-id';
 import { canonicalizeJson, deriveAgentId, sha256Hex, signEnvelope, verifyEnvelope, type MessageEnvelope } from '@openagentforum/protocol';
 import { LocalPeerStream, STREAM_PROTOCOL } from './index.js';
 import { StreamFailure, type FramedStream } from './framing.js';
+import { directPolicy, directOfferAddress, type DirectPolicy } from './direct-policy.js';
 
 export const RENDEZVOUS_LIMITS = Object.freeze({ envelopeBytes: 8192, lifetimeMs: 30_000, futureSkewMs: 2000 });
 export type RendezvousIdentity = { signingPrivateKey: string; signingPublicKey: string };
@@ -29,8 +30,9 @@ export function peerIdFor(publicKey: string): string {
   if (!hex(publicKey, 64)) throw new StreamFailure('invalid_input');
   return peerIdFromPublicKey(publicKeyFromRaw(Buffer.from(publicKey, 'hex'))).toString();
 }
-function validAddress(address: unknown, publicKey: string): boolean {
+function validAddress(address: unknown, publicKey: string, network: DirectPolicy | null): boolean {
   if (typeof address !== 'string' || address.length > 180) return false;
+  if (network) return address === directOfferAddress(network, peerIdFor(publicKey));
   const match = /^\/ip4\/127\.0\.0\.1\/tcp\/([1-9][0-9]{0,4})\/p2p\/([^/]+)$/.exec(address);
   return !!match && Number(match[1]) <= 65535 && match[2] === peerIdFor(publicKey);
 }
@@ -44,7 +46,8 @@ function fresh(envelope: Envelope): void {
 }
 /** Snapshot only signed fields; unsigned relay cursors/flags/replyTo are never authority. */
 export async function readRendezvous(raw: string, scope: RendezvousScope, from: string, to: string,
-  kind: 'offer' | 'accept'): Promise<Envelope> {
+  kind: 'offer' | 'accept', policy?: DirectPolicy): Promise<Envelope> {
+  const network = policy === undefined ? null : directPolicy(policy);
   scope = rendezvousScope(scope.hub, scope.channel);
   if (typeof raw !== 'string' || Buffer.byteLength(raw) > RENDEZVOUS_LIMITS.envelopeBytes) fail();
   let value;
@@ -58,7 +61,7 @@ export async function readRendezvous(raw: string, scope: RendezvousScope, from: 
   if (payload.kind !== (kind === 'offer' ? offerKind : acceptKind) || payload.hub !== scope.hub
       || payload.from !== from || payload.to !== to || from === to || !hex(from, 64) || !hex(to, 64)
       || !hex(payload.sessionId, 64) || payload.protocol !== STREAM_PROTOCOL) fail();
-  if (kind === 'offer' ? !validAddress(payload.address, from) : typeof payload.offerId !== 'string' || !hex(payload.offerHash, 64)) fail();
+  if (kind === 'offer' ? !validAddress(payload.address, from, network) : typeof payload.offerId !== 'string' || !hex(payload.offerHash, 64)) fail();
   const envelope: Envelope = { id, channel, sender, type, sequence, timestamp, payload, signature, checksum };
   fresh(envelope);
   if (!(await verifyEnvelope(envelope, from)).valid) fail();
@@ -71,15 +74,17 @@ export class ForumRendezvous {
   readonly #identity: RendezvousIdentity;
   readonly #peer: string;
   readonly #scope: RendezvousScope;
+  readonly #network: DirectPolicy | undefined;
   #state: SessionState = 'new';
   #node: LocalPeerStream | null = null;
   #offer: Envelope | null = null;
   #acceptance: Envelope | null = null;
-  constructor(identity: RendezvousIdentity, peerPublicKey: string, scope: RendezvousScope) {
+  constructor(identity: RendezvousIdentity, peerPublicKey: string, scope: RendezvousScope, policy?: DirectPolicy) {
     peerIdFor(identity.signingPublicKey); peerIdFor(peerPublicKey);
     if (identity.signingPublicKey === peerPublicKey) throw new StreamFailure('invalid_input');
     this.#identity = { signingPrivateKey: identity.signingPrivateKey, signingPublicKey: identity.signingPublicKey }; this.#peer = peerPublicKey;
     this.#scope = rendezvousScope(scope.hub, scope.channel);
+    this.#network = policy === undefined ? undefined : directPolicy(policy);
   }
   #begin(expected: SessionState) {
     if (this.#state !== expected) throw new StreamFailure('closed');
@@ -94,12 +99,14 @@ export class ForumRendezvous {
   async offer(sequence: number): Promise<string> {
     this.#begin('new');
     try {
-      this.#node = await LocalPeerStream.create(this.#identity, this.#peer);
+      if (this.#network?.role === 'dial') fail();
+      this.#node = this.#network ? await LocalPeerStream.createDirect(this.#identity, this.#peer, this.#network)
+        : await LocalPeerStream.create(this.#identity, this.#peer);
       this.#checkOpen();
       const raw = await this.#sign({ kind: offerKind, hub: this.#scope.hub, sessionId: randomBytes(32).toString('hex'),
         from: this.#identity.signingPublicKey, to: this.#peer, expiresAt: Date.now() + RENDEZVOUS_LIMITS.lifetimeMs,
         protocol: STREAM_PROTOCOL, address: this.#node.address }, sequence);
-      this.#offer = await readRendezvous(raw, this.#scope, this.#identity.signingPublicKey, this.#peer, 'offer');
+      this.#offer = await readRendezvous(raw, this.#scope, this.#identity.signingPublicKey, this.#peer, 'offer', this.#network);
       this.#checkOpen();
       this.#state = 'offered'; return raw;
     } catch { await this.close(); throw new StreamFailure('protocol'); }
@@ -108,13 +115,15 @@ export class ForumRendezvous {
   async accept(raw: string, sequence: number): Promise<string> {
     this.#begin('new');
     try {
-      this.#offer = await readRendezvous(raw, this.#scope, this.#peer, this.#identity.signingPublicKey, 'offer');
-      this.#node = await LocalPeerStream.create(this.#identity, this.#peer);
+      if (this.#network?.role === 'listen') fail();
+      this.#offer = await readRendezvous(raw, this.#scope, this.#peer, this.#identity.signingPublicKey, 'offer', this.#network);
+      this.#node = this.#network ? await LocalPeerStream.createDirect(this.#identity, this.#peer, this.#network)
+        : await LocalPeerStream.create(this.#identity, this.#peer);
       const offer = this.#offer;
       const reply = await this.#sign({ kind: acceptKind, hub: this.#scope.hub, sessionId: offer.payload.sessionId,
         from: this.#identity.signingPublicKey, to: this.#peer, expiresAt: offer.payload.expiresAt,
         protocol: STREAM_PROTOCOL, offerId: offer.id, offerHash: offer.checksum }, sequence);
-      this.#acceptance = await readRendezvous(reply, this.#scope, this.#identity.signingPublicKey, this.#peer, 'accept');
+      this.#acceptance = await readRendezvous(reply, this.#scope, this.#identity.signingPublicKey, this.#peer, 'accept', this.#network);
       fresh(offer);
       this.#checkOpen();
       this.#state = 'accepted'; return reply;
@@ -124,7 +133,7 @@ export class ForumRendezvous {
   async wait(rawAcceptance: string): Promise<FramedStream> {
     this.#begin('offered');
     try {
-      this.#acceptance = await readRendezvous(rawAcceptance, this.#scope, this.#peer, this.#identity.signingPublicKey, 'accept');
+      this.#acceptance = await readRendezvous(rawAcceptance, this.#scope, this.#peer, this.#identity.signingPublicKey, 'accept', this.#network);
       const p = this.#acceptance.payload, offer = this.#offer!;
       if (p.offerId !== offer.id || p.offerHash !== offer.checksum || p.sessionId !== offer.payload.sessionId || p.expiresAt !== offer.payload.expiresAt) fail();
       fresh(offer);

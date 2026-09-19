@@ -1,4 +1,4 @@
-/** Unpublished local prototype. Import does nothing; explicit creation binds LOOPBACK ONLY. */
+/** Unpublished prototype. Local defaults; direct networking requires explicit local policy. */
 import { createPrivateKey } from 'node:crypto';
 import { createLibp2p, type Libp2p } from 'libp2p';
 import { noise } from '@chainsafe/libp2p-noise';
@@ -10,6 +10,8 @@ import { multiaddr } from '@multiformats/multiaddr';
 import { deriveAgentId } from '@openagentforum/protocol';
 import type { Stream } from '@libp2p/interface';
 import { FramedStream, STREAM_LIMITS, StreamFailure, withDeadline } from './framing.js';
+import { directPolicy, directOfferAddress, directDialAllowed, directInboundAllowed, type DirectPolicy } from './direct-policy.js';
+export type { DirectPolicy } from './direct-policy.js';
 export { STREAM_LIMITS, StreamFailure } from './framing.js';
 export type { FramedStream } from './framing.js';
 
@@ -42,23 +44,33 @@ export class LocalPeerStream {
   #waiter: { resolve: (stream: FramedStream) => void; reject: (error: Error) => void } | null = null;
   #stopPromise: Promise<void> | null = null;
   readonly #node: Libp2p;
+  readonly #network: DirectPolicy | null;
   private constructor(readonly agentId: string, readonly peerAgentId: string,
-    readonly peerId: string, readonly expectedPeerId: string, node: Libp2p) {
+    readonly peerId: string, readonly expectedPeerId: string, node: Libp2p, network: DirectPolicy | null) {
     this.#node = node;
+    this.#network = network;
     this.#timer = setTimeout(() => { void this.stop().catch(() => {}); }, STREAM_LIMITS.sessionMs);
     this.#timer.unref();
   }
   static async create(identity: Identity, peerSigningPublicKey: string): Promise<LocalPeerStream> {
+    return this.#create(identity, peerSigningPublicKey, null);
+  }
+  /** Explicit test/embedding API. A peer's advertised endpoint is NOT local consent. */
+  static async createDirect(identity: Identity, peerSigningPublicKey: string, policy: DirectPolicy): Promise<LocalPeerStream> {
+    return this.#create(identity, peerSigningPublicKey, directPolicy(policy));
+  }
+  static async #create(identity: Identity, peerSigningPublicKey: string, network: DirectPolicy | null): Promise<LocalPeerStream> {
     const privateKey = localKey(identity);
     const ownPublic = identity.signingPublicKey;
     const peerKey = publicKeyFromRaw(publicBytes(peerSigningPublicKey));
     if (peerSigningPublicKey === ownPublic) throw new StreamFailure('invalid_input');
     const expected = peerIdFromPublicKey(peerKey).toString();
+    const allowDial = (address: string) => network ? directDialAllowed(network, address, expected) : LocalPeerStream.#address(address, expected);
     let node: Libp2p | undefined;
     let local: LocalPeerStream | undefined;
     try {
       node = await createLibp2p({ start: false, privateKey,
-        addresses: { listen: ['/ip4/127.0.0.1/tcp/0'] },
+        addresses: { listen: network ? (network.role === 'listen' ? [`/ip4/${network.localIp}/tcp/${network.port}`] : []) : ['/ip4/127.0.0.1/tcp/0'] },
         transports: [tcp({ maxConnections: 2, backlog: 2, inboundSocketInactivityTimeout: STREAM_LIMITS.operationMs,
           outboundSocketInactivityTimeout: STREAM_LIMITS.operationMs })],
         connectionEncrypters: [noise()],
@@ -71,17 +83,18 @@ export class LocalPeerStream {
           inboundStreamProtocolNegotiationTimeout: STREAM_LIMITS.operationMs, outboundStreamProtocolNegotiationTimeout: STREAM_LIMITS.operationMs,
           maxIncomingPendingConnections: 2, inboundConnectionThreshold: 4, reconnectRetries: 0, connectionCloseTimeout: STREAM_LIMITS.closeMs },
         connectionGater: {
-          denyDialPeer: peer => peer.toString() !== expected,
-          denyDialMultiaddr: addr => !LocalPeerStream.#address(addr.toString(), expected),
+          denyDialPeer: peer => network?.role === 'listen' || peer.toString() !== expected,
+          denyDialMultiaddr: addr => !allowDial(addr.toString()),
+          denyInboundConnection: connection => network !== null && !directInboundAllowed(network, connection.remoteAddr.toString()),
           denyInboundEncryptedConnection: peer => peer.toString() !== expected,
           denyOutboundEncryptedConnection: peer => peer.toString() !== expected,
-          filterMultiaddrForPeer: (peer, addr) => peer.toString() === expected && LocalPeerStream.#address(addr.toString(), expected),
+          filterMultiaddrForPeer: (peer, addr) => peer.toString() === expected && allowDial(addr.toString()),
         },
       });
-      local = new LocalPeerStream(await deriveAgentId(ownPublic), await deriveAgentId(peerSigningPublicKey), node.peerId.toString(), expected, node);
+      local = new LocalPeerStream(await deriveAgentId(ownPublic), await deriveAgentId(peerSigningPublicKey), node.peerId.toString(), expected, node, network);
       const instance = local;
       await node.handle(STREAM_PROTOCOL, (stream, connection) => {
-        if (instance.#stopped || instance.#taken || instance.#dialing || connection.remotePeer.toString() !== expected || connection.limits) {
+        if (network?.role === 'dial' || instance.#stopped || instance.#taken || instance.#dialing || connection.remotePeer.toString() !== expected || connection.limits) {
           stream.abort(new StreamFailure('peer')); return;
         }
         instance.#capture(stream);
@@ -97,7 +110,10 @@ export class LocalPeerStream {
     const match = /^\/ip4\/127\.0\.0\.1\/tcp\/([1-9][0-9]{0,4})\/p2p\/([^/]+)$/.exec(address);
     return !!match && Number(match[1]) <= 65535 && match[2] === expected;
   }
-  get address(): string { return this.#node.getMultiaddrs()[0]?.toString() ?? ''; }
+  get address(): string {
+    return this.#network ? (this.#network.role === 'listen' ? directOfferAddress(this.#network, this.peerId) : '')
+      : this.#node.getMultiaddrs()[0]?.toString() ?? '';
+  }
   #capture(stream: Stream): FramedStream {
     this.#taken = true;
     this.#stream = new FramedStream(stream);
@@ -107,7 +123,8 @@ export class LocalPeerStream {
   async connect(address: string): Promise<FramedStream> {
     if (this.#stopped || this.#taken) throw new StreamFailure('closed');
     if (this.#dialing || this.#waiter) throw new StreamFailure('busy');
-    if (!LocalPeerStream.#address(address, this.expectedPeerId)) throw new StreamFailure('peer');
+    if (!(this.#network ? directDialAllowed(this.#network, address, this.expectedPeerId)
+      : LocalPeerStream.#address(address, this.expectedPeerId))) throw new StreamFailure('peer');
     this.#dialing = true;
     try {
       const stream = await withDeadline(signal => this.#node.dialProtocol(multiaddr(address), STREAM_PROTOCOL, { signal }), STREAM_LIMITS.operationMs);
@@ -119,6 +136,7 @@ export class LocalPeerStream {
     } finally { this.#dialing = false; }
   }
   async accept(): Promise<FramedStream> {
+    if (this.#network?.role === 'dial') throw new StreamFailure('invalid_input');
     if (this.#stopped) throw new StreamFailure('closed');
     if (this.#waiter || this.#dialing) throw new StreamFailure('busy');
     if (this.#stream) return this.#stream;
