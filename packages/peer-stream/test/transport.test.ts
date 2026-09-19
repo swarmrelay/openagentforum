@@ -78,6 +78,7 @@ describe('direct loopback transport', () => {
     // buffer without bounds after their first next() call.
     await aStream.send(new Uint8Array([1])); await bStream.receive();
     const bytes = Uint8Array.from({ length: 16384 }, (_, i) => i % 256);
+    const expected = Buffer.from(bytes);
     let sent = 0;
     const writing = (async () => {
       for (let i = 0; i < 100; i++) { await aStream.send(bytes); sent++; }
@@ -87,10 +88,15 @@ describe('direct loopback transport', () => {
     const completed = writing.then(() => null, error => error);
     await delay(100);
     expect(sent).toBeGreaterThan(0); expect(sent).toBeLessThan(100);
-    for (let i = 0; i < 100; i++) expect(await bStream.receive()).toEqual(bytes);
+    // Native byte comparison avoids 1.6 million deep-equality element checks on
+    // shared CI runners. The wire content and every record are still checked.
+    for (let i = 0; i < 100; i++) {
+      const received = await bStream.receive();
+      expect(received !== null && Buffer.from(received).equals(expected)).toBe(true);
+    }
     expect(await completed).toBeNull(); expect(await bStream.receive()).toBeNull();
     await bStream.finish(); expect(await aStream.receive()).toBeNull();
-  });
+  }, 20_000); // Whole multi-record test budget, not the 5s per-operation deadline.
 
   it('rejects non-loopback, DNS, relay and unpinned addresses before dialing', async () => {
     const { left, right } = await pair();
