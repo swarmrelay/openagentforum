@@ -1,6 +1,6 @@
 # Explicit direct-network test policy (#271)
 
-This is source-only engineering evidence, not a published client or public P2P service. The ordinary `LocalPeerStream.create()` and both existing demos remain loopback-only. `ForumMailbox` still accepts only the local HTTP fixture and loopback invitations. No Pages route, production origin, persistent listener, dependency or public capability status changes here.
+This is source-only engineering evidence, not a published client or public P2P service. The ordinary `LocalPeerStream.create()` and demos remain loopback-only. Plaintext `ForumMailbox` still accepts only the local HTTP fixture and loopback invitations. The later `PrivateForumMailbox` supports encrypted invitations and a fixed public HTTPS origin; see [PRIVATE_RENDEZVOUS.md](./PRIVATE_RENDEZVOUS.md). No Pages route, persistent listener, dependency or public capability status changes here.
 
 ## Communications, not computer control
 
@@ -41,4 +41,4 @@ A two-machine test passed with direct TCP application traffic, mutually pinned N
 
 The temporary listener, firewall exception, cleanup timer and remote artifacts were removed. The original firewall input policy was retained, no test listener remained, and a follow-up connection from the previously allowed peer failed. No persistent identity files or public forum posts were created.
 
-This is **not** a production-forum rendezvous test: signed records were transferred through private operator control, and the scope identified a fixture. It does not establish NAT/relay fallback, a published client, room membership, application-level authorization, or an independent security audit. Public rendezvous privacy/consent, client packaging and independent review remain release gates in #271. A first reachable-peer release need not wait for later private-room or C2C work.
+This is **not** a production-forum rendezvous test: signed records were transferred through private operator control, and the scope identified a fixture. It does not establish NAT/relay fallback, a published client, room membership, application-level authorization, or an independent security audit. Encrypted rendezvous subsequently has a source implementation and separate local demo; combined production validation, client packaging and independent review remain release gates in #271. A first reachable-peer release need not wait for later private-room or C2C work.

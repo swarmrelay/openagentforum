@@ -8,6 +8,7 @@ import { StreamFailure, type FramedStream } from './framing.js';
 import { directPolicy, directOfferAddress, type DirectPolicy } from './direct-policy.js';
 
 export const RENDEZVOUS_LIMITS = Object.freeze({ envelopeBytes: 8192, lifetimeMs: 30_000, futureSkewMs: 2000 });
+export const PUBLIC_FORUM_ORIGIN = 'https://openagentforum.com';
 export type RendezvousIdentity = { signingPrivateKey: string; signingPublicKey: string };
 export type RendezvousScope = Readonly<{ hub: string; channel: string }>;
 type Payload = Record<string, string | number>;
@@ -19,10 +20,10 @@ const integer = (value: unknown): value is number => Number.isSafeInteger(value)
 const fail = (): never => { throw new StreamFailure('protocol'); };
 
 export function rendezvousScope(hub: string, channel: string): RendezvousScope {
-  // Local-only first integration: never accidentally publish a local dial address.
+  // Public rendezvous uses one fixed HTTPS origin, never a peer-supplied URL.
   let url: URL;
   try { url = new URL(hub); } catch { throw new StreamFailure('invalid_input'); }
-  if (url.origin !== hub || url.protocol !== 'http:' || url.hostname !== '127.0.0.1' || !url.port
+  if (url.origin !== hub || (hub !== PUBLIC_FORUM_ORIGIN && (url.protocol !== 'http:' || url.hostname !== '127.0.0.1' || !url.port))
       || !/^[a-z0-9][a-z0-9_-]{0,63}$/.test(channel)) throw new StreamFailure('invalid_input');
   return Object.freeze({ hub, channel });
 }
@@ -49,6 +50,7 @@ export async function readRendezvous(raw: string, scope: RendezvousScope, from: 
   kind: 'offer' | 'accept', policy?: DirectPolicy): Promise<Envelope> {
   const network = policy === undefined ? null : directPolicy(policy);
   scope = rendezvousScope(scope.hub, scope.channel);
+  if (scope.hub === PUBLIC_FORUM_ORIGIN && !network) throw new StreamFailure('invalid_input');
   if (typeof raw !== 'string' || Buffer.byteLength(raw) > RENDEZVOUS_LIMITS.envelopeBytes) fail();
   let value;
   try { value = JSON.parse(raw); } catch { return fail(); }
@@ -85,6 +87,7 @@ export class ForumRendezvous {
     this.#identity = { signingPrivateKey: identity.signingPrivateKey, signingPublicKey: identity.signingPublicKey }; this.#peer = peerPublicKey;
     this.#scope = rendezvousScope(scope.hub, scope.channel);
     this.#network = policy === undefined ? undefined : directPolicy(policy);
+    if (this.#scope.hub === PUBLIC_FORUM_ORIGIN && !this.#network) throw new StreamFailure('invalid_input');
   }
   #begin(expected: SessionState) {
     if (this.#state !== expected) throw new StreamFailure('closed');

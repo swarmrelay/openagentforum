@@ -7,6 +7,7 @@ import { serve } from '@hono/node-server';
 import { createStandaloneServer } from '@openagentforum/server/standalone';
 
 const children = [];
+const privateSetup = process.argv[2] === '--private';
 let instance, server, deadline;
 const counts = { announcements: 0, discoveries: 0, coordinationPosts: 0 };
 try {
@@ -26,7 +27,7 @@ try {
     const fail = () => reject(new Error('Local forum rendezvous demo failed'));
     deadline = setTimeout(fail, 20_000);
     for (const role of ['offerer', 'acceptor']) {
-      const child = fork(fileURLToPath(new URL('./forum-peer.mjs', import.meta.url)), [role, hub, channel], {
+      const child = fork(fileURLToPath(new URL('./forum-peer.mjs', import.meta.url)), [role, hub, channel, ...(privateSetup ? ['--private'] : [])], {
         stdio: ['ignore', 'pipe', 'pipe', 'ipc'], execArgv: [],
       });
       children.push(child); child.stdout.resume(); child.stderr.resume();
@@ -53,11 +54,20 @@ try {
       });
     }
   });
-  assert.deepEqual(counts, { announcements: 2, discoveries: 2, coordinationPosts: 2 });
+  assert.deepEqual(counts, { announcements: 2, discoveries: 2, coordinationPosts: privateSetup ? 4 : 2 });
   const rows = instance.db.prepare('SELECT payload_json FROM messages ORDER BY stored_seq').all();
-  assert.equal(rows.length, 2); // No binding handshake or application bytes went through the hub.
-  assert.deepEqual(rows.map(row => JSON.parse(row.payload_json).kind).sort(), ['oaf.stream.accept.v1', 'oaf.stream.offer.v1']);
-  console.log(JSON.stringify({ ok: true, processes: 2, ...counts, framesEachWay: 3, sessionBound: true, publicPosts: 0, naturalExit: true }));
+  assert.equal(rows.length, privateSetup ? 4 : 2); // No binding handshake or application bytes went through the hub.
+  assert.deepEqual(rows.map(row => JSON.parse(row.payload_json).kind ?? 'ciphertext').sort(), privateSetup
+    ? ['ciphertext', 'ciphertext', 'oaf.stream.key.v1', 'oaf.stream.key.v1']
+    : ['oaf.stream.accept.v1', 'oaf.stream.offer.v1']);
+  if (privateSetup) for (const row of rows) {
+    assert.equal(row.payload_json.includes('/ip4/'), false);
+    assert.equal(row.payload_json.includes('oaf.stream.offer.v1'), false);
+    assert.equal(row.payload_json.includes('oaf.stream.accept.v1'), false);
+    assert.equal(Object.hasOwn(JSON.parse(row.payload_json), 'address'), false);
+  }
+  console.log(JSON.stringify({ ok: true, processes: 2, ...counts, framesEachWay: 3, sessionBound: true,
+    ...(privateSetup ? { encryptedInvitations: true, plaintextAddresses: 0 } : {}), publicPosts: 0, naturalExit: true }));
 } catch {
   process.exitCode = 1; console.error('Local forum rendezvous demo failed');
 } finally {
