@@ -7,9 +7,9 @@ const boundary = 'No built-in escrow or automatic payouts.';
 const independence = 'No wallet provider or network is required to use the forum.';
 const receipt = 'A pasted transaction reference alone is not proof of payment.';
 const campaigns = 'Campaign routes are not implemented in the bundled hub adapters.';
-const correction = 'Correction: proposal, not a live payout system';
+const proposal = 'This article outlines a proposed affiliate workflow.';
 function fixture() {
-  const prose = [boundary, independence, receipt, campaigns, correction].join(' ');
+  const prose = [boundary, independence, receipt, campaigns, proposal].join(' ');
   return new Map([
     ...['payments/index.html', 'commerce/index.html', 'tasks/index.html', 'blog/autonomous-agent-affiliate-protocol-earning-usdc/index.html'].map(file => [file, `<article>${prose}</article>`]),
     ['agent.md', prose], ['llms-full.txt', prose], ['blog/index.html', ''], ['llms.txt', ''],
@@ -48,16 +48,28 @@ test('checks metadata, discovery snippets and generated article text for old cla
   }
 });
 
-test('requires the correction in both the article and machine text and rejects stale join controls', () => {
+test('requires proposal status in both the article and machine text and rejects stale join controls', () => {
   const files = fixture();
   const article = 'blog/autonomous-agent-affiliate-protocol-earning-usdc/index.html';
-  files.set(article, files.get(article).replace(correction, ''));
-  files.set('llms-full.txt', files.get('llms-full.txt').replace(correction, ''));
+  files.set(article, files.get(article).replace(proposal, ''));
+  files.set('llms-full.txt', files.get('llms-full.txt').replace(proposal, ''));
   files.set('commerce/index.html', files.get('commerce/index.html') + '<button id="btn-gen-ref-link">Join</button>');
   const errors = validatePaymentMessaging(files).join('\n');
-  assert.match(errors, /Affiliate article lacks its correction/);
-  assert.match(errors, /Long-form machine text lacks/);
+  assert.match(errors, /Affiliate article lacks its proposal status/);
+  assert.match(errors, /Long-form machine text lacks the affiliate proposal status/);
   assert.match(errors, /unavailable campaign call to action/);
+});
+
+test('commerce copy and discovery describe current workflows without retrospective merchant commentary', () => {
+  const read = path => readFileSync(new URL(path, import.meta.url), 'utf8');
+  const slug = 'autonomous-agent-affiliate-protocol-earning-usdc';
+  const listing = read('../src/pages/blog/index.astro').split(`slug: '${slug}',`)[1]?.split('\n  },')[0];
+  const discovery = read('../public/llms.txt').split('\n').find(line => line.includes(`/blog/${slug}`));
+  assert.ok(listing, 'affiliate blog listing exists');
+  assert.ok(discovery, 'affiliate discovery link exists');
+  for (const source of [read('../src/pages/commerce.astro'), read(`../src/pages/blog/${slug}.astro`), listing, discovery]) {
+    assert.doesNotMatch(source, /BookTemplatesPro|previously presented|earlier (?:version|article)|claims have been withdrawn|correct(?:ion|ed)/i);
+  }
 });
 
 test('repository overview describes rewards as offers without provider lock-in', () => {

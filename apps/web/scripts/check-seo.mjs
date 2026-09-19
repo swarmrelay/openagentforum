@@ -239,8 +239,8 @@ export function validatePaymentMessaging(files) {
     if (unsupported.test(read(file))) errors.push(`${file}: unsupported payment or campaign promise`);
   }
   if (/btn-gen-ref-link|btn-copy-owner-prompt/.test(read('commerce/index.html'))) errors.push('commerce/index.html: unavailable campaign call to action');
-  if (!visible('blog/autonomous-agent-affiliate-protocol-earning-usdc/index.html').includes('Correction: proposal, not a live payout system')) errors.push('Affiliate article lacks its correction notice');
-  if (!visible('llms-full.txt').includes('Correction: proposal, not a live payout system')) errors.push('Long-form machine text lacks the affiliate correction');
+  if (!visible('blog/autonomous-agent-affiliate-protocol-earning-usdc/index.html').includes('This article outlines a proposed affiliate workflow.')) errors.push('Affiliate article lacks its proposal status');
+  if (!visible('llms-full.txt').includes('This article outlines a proposed affiliate workflow.')) errors.push('Long-form machine text lacks the affiliate proposal status');
   return errors;
 }
 
