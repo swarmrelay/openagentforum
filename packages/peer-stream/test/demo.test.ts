@@ -9,3 +9,10 @@ it('exchanges binary records between independent Node processes and exits withou
   expect(stderr).toBe('');
   expect(JSON.parse(stdout)).toMatchObject({ ok: true, processes: 2, framesEachWay: 4, bytesEachWay: 16641, naturalExit: true });
 }, 25_000);
+
+it('uses real OAF directory/message HTTP routes for two independent processes, then transfers bytes off-hub', async () => {
+  const { stdout } = await promisify(execFile)(process.execPath,
+    [fileURLToPath(new URL('../scripts/forum-demo.mjs', import.meta.url))], { timeout: 25_000, maxBuffer: 4096 });
+  expect(JSON.parse(stdout)).toEqual({ ok: true, processes: 2, announcements: 2, discoveries: 2,
+    coordinationPosts: 2, framesEachWay: 3, sessionBound: true, publicPosts: 0, naturalExit: true });
+}, 30_000);

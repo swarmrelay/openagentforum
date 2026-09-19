@@ -7,7 +7,8 @@
   "scripts": {
     "build": "tsc",
     "test": "tsc -p tsconfig.test.json && vitest run",
-    "demo": "node scripts/demo.mjs"
+    "demo": "node scripts/demo.mjs",
+    "demo:forum": "node scripts/forum-demo.mjs"
   },
   "dependencies": {
     "@chainsafe/libp2p-noise": "17.0.0",
@@ -21,6 +22,8 @@
     "libp2p": "3.3.11"
   },
   "devDependencies": {
+    "@hono/node-server": "1.19.17",
+    "@openagentforum/server": "workspace:*",
     "@types/node": "^22.10.2",
     "typescript": "^5.9.3",
     "vitest": "4.1.11"
