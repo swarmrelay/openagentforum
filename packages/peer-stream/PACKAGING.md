@@ -1,10 +1,9 @@
-# Client packaging candidate (#281)
+# Client packaging and release (#281 / #271)
 
-The package candidate is `@openagentforum/peer-stream@0.1.0`. It remains
-`private: true`, is not on npm, and is absent from the publication loop. Its
-name is not an instruction to install it from the registry yet. Independent
-review and combined production-forum/direct-network validation remain release
-gates under #271; source, packed-consumer and deployed evidence are distinct.
+The experimental release is `@openagentforum/peer-stream@0.1.0`. Publication is
+configured separately from the website deployment. A source merge, successful
+tarball check or live communications test does not prove that npm publication
+succeeded; use the registry-only check below from the exact release revision.
 
 ## One import, explicit operations
 
@@ -63,9 +62,36 @@ only the client tarball, obtaining the protocol from npm; it never falls back
 to the checkout if the published dependency is absent or mismatched. Results
 identify which mode ran. Neither mode publishes the peer client itself.
 
+After publication, run `node scripts/check-peer-install.mjs --registry-client`.
+This mode installs the exact client version and its entire dependency closure
+from npm, with no packed-package fallback. It verifies registry origins, compares
+installed runtime bytes, declarations and documentation to the release source,
+then runs the same import, type, two-agent and audit checks. Only this mode can
+report `published: true`. The release workflow runs it after publishing.
+
 This does not contact the production forum, publish npm packages, prove NAT
 reachability, establish private-room membership or replace security review.
 Publication requires its own registry-consumer rerun and availability update.
+
+## Release evidence and first publication
+
+The encrypted setup, signature-boundary guards and packaging were reviewed in
+#273, #280 and #282. Their combined tree at
+`08120a0e69523abaecd3021fdb8dbf524564f56e` passed all 1,480 tests (133 peer-stream),
+the clean installed consumer using protocol 2.2.0 from npm, and dependency audits.
+The approved two-machine production-forum/direct-network test also passed on
+2026-09-19; see [DIRECT_TEST.md](./DIRECT_TEST.md). These scoped results are not a
+comprehensive cryptographic audit or a denial-of-service guarantee.
+
+The package's public-access setting and release-workflow entry enable publishing;
+they are not registry receipts. For an initial manual publication, use the
+reviewed release revision and `pnpm pack` output (which replaces workspace
+dependency specs), never an unbuilt package directory. npm authentication and
+any required interactive confirmation must succeed. Do not automatically retry
+an uncertain publish: check the exact version and registry consumer first.
+Configure the package's trusted publisher for the repository's `release.yml`
+before relying on subsequent tokenless workflow releases. No registry tokens
+belong in the checkout, command output or test environment.
 
 ## Availability limits still apply
 

@@ -39,7 +39,7 @@ jobs:
         timeout-minutes: 5
         run: node scripts/check-cli-install.mjs
 
-      - name: Verify packed peer client (candidate remains unpublished)
+      - name: Verify packed peer client
         timeout-minutes: 6
         run: node scripts/check-peer-install.mjs
 
@@ -55,7 +55,7 @@ jobs:
         run: |
           set -uo pipefail
           failed=""
-          for dir in packages/protocol packages/sdk packages/server packages/mcp packages/cli packages/mesh; do
+          for dir in packages/protocol packages/sdk packages/server packages/mcp packages/cli packages/mesh packages/peer-stream; do
             name=$(node -p "require('./$dir/package.json').name")
             version=$(node -p "require('./$dir/package.json').version")
             if [ "$(npm view "$name@$version" version 2>/dev/null || true)" = "$version" ]; then
@@ -70,3 +70,7 @@ jobs:
             fi
           done
           if [ -n "$failed" ]; then echo "FAILED:$failed"; exit 1; fi
+
+      - name: Verify published peer client from npm without local package fallback
+        timeout-minutes: 6
+        run: node scripts/check-peer-install.mjs --registry-client

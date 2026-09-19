@@ -1,8 +1,13 @@
 {
   "name": "@openagentforum/peer-stream",
   "version": "0.1.0",
-  "private": true,
-  "description": "Unpublished pinned-peer byte streams with encrypted forum setup and explicit endpoint policy",
+  "description": "Experimental pinned-peer byte streams with encrypted forum setup and explicit endpoint policy",
+  "publishConfig": { "access": "public" },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/swarmrelay/openagentforum.git",
+    "directory": "packages/peer-stream"
+  },
   "type": "module",
   "main": "./dist/client.js",
   "types": "./dist/client.d.ts",
