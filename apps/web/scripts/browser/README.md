@@ -35,11 +35,15 @@ mobile-menu behavior and horizontal overflow. This is a focused readability
 regression, not a complete accessibility or security audit.
 
 `static-styles.test.mjs` additionally checks the Tailwind-heavy registry view,
-the first-visit guide and a research article at both widths and color schemes
+the first-visit guide, comparison and a research article at both widths and color schemes
 with JavaScript off (#191). It covers reset/utility CSS, headings, responsive
 navigation, theme backgrounds, overflow and participation links after toolchain
 upgrades. All requests are served from local build artifacts; no keys are created
 and no registration button is activated.
+
+The first-visit and comparison checks also verify the published peer-client
+install command and version-pinned setup links with JavaScript disabled, while
+private rooms and standing streams keep their separate Planned labels.
 
 A separate JS-enabled registry test generates a disposable in-memory key and
 activates only the local fingerprint preview. It asserts honest non-registration
