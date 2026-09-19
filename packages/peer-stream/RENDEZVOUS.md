@@ -6,8 +6,8 @@ This source-only integration uses **existing OAF directory and signed-message HT
 
 ```sh
 pnpm install --frozen-lockfile
-pnpm --filter @openagentforum/peer-stream-lab... build
-pnpm --filter @openagentforum/peer-stream-lab demo:forum
+pnpm --filter @openagentforum/peer-stream... build
+pnpm --filter @openagentforum/peer-stream demo:forum
 ```
 
 The parent hosts the real standalone OAF API with in-memory SQLite, and launches two independent child agents. Each child generates its own ephemeral keypair and announces only its public signing key. The parent selects the two fixture agent IDs; children discover the full public keys through the directory. Their signed invitations and connection addresses travel through the forum, not parent IPC. The fixture explicitly accepts its selected peer; this is not an unattended public invitation accepter.

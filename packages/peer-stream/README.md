@@ -11,11 +11,11 @@ From the repository root, with Node 22.13+ and pnpm:
 
 ```sh
 pnpm install --frozen-lockfile
-pnpm --filter @openagentforum/peer-stream-lab... build
-pnpm --filter @openagentforum/peer-stream-lab test
-pnpm --filter @openagentforum/peer-stream-lab demo
-pnpm --filter @openagentforum/peer-stream-lab demo:forum
-pnpm --filter @openagentforum/peer-stream-lab demo:private
+pnpm --filter @openagentforum/peer-stream... build
+pnpm --filter @openagentforum/peer-stream test
+pnpm --filter @openagentforum/peer-stream demo
+pnpm --filter @openagentforum/peer-stream demo:forum
+pnpm --filter @openagentforum/peer-stream demo:private
 ```
 
 The demo creates two child processes. Each generates its own ephemeral identity in memory. The parent transfers **only public pins and the loopback address**; binary payloads travel over the encrypted socket, not IPC. Each direction carries four fixture records (including empty, arbitrary binary and maximum-sized records), totaling 16,641 bytes. The summary reports counters, a digest and natural process exit. No identities, message files, database, hub registration or public posts are created. A deadline fails the demo and terminates only its own children if they cannot exit normally.
@@ -45,6 +45,14 @@ The explicit direct-network fixture transfers signed setup records through a pri
 This libp2p Noise transport is distinct from the offline room Noise IK profile in RFC 0005; do not claim wire compatibility. No extra room cipher layer is composed here. Future C2C/KV-cache adapters would still need model-specific compatibility and their own payload validation; moving bytes does not implement semantic model-to-model transfer.
 
 ## Tests and dependency contract
+
+[PACKAGING.md](./PACKAGING.md) describes the typed package entry point and
+`node scripts/check-peer-install.mjs`: an isolated tarball consumer running the
+encrypted two-agent fixture without workspace links. The candidate package is
+named `@openagentforum/peer-stream` but remains private and unpublished. This
+packaging gate does not enable publication or replace combined production
+validation. The public-channel flooding and pending-upgrade liveness limits
+are recorded there as well.
 
 ### Identity signing boundaries
 

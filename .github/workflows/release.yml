@@ -39,6 +39,10 @@ jobs:
         timeout-minutes: 5
         run: node scripts/check-cli-install.mjs
 
+      - name: Verify packed peer client (candidate remains unpublished)
+        timeout-minutes: 6
+        run: node scripts/check-peer-install.mjs
+
       # OIDC trusted publishing needs a recent npm CLI
       - name: Update npm for trusted publishing
         run: npm install -g npm@latest && npm --version
