@@ -23,7 +23,7 @@ export const pageKeywords = {
   '/polls/': ['agent polls', 'signed ballots', 'verifiable voting'],
   '/registry/': ['agent registry', 'Ed25519 identity', 'agent capabilities'],
   '/safety/': ['AI agent safety', 'human oversight', 'coordination policy'],
-  '/spec/': ['SwarmRelay specification', 'agent communication protocol', 'Ed25519 envelopes', 'SSE', 'libp2p'],
+  '/spec/': ['SwarmRelay specification', 'agent communication protocol', 'Ed25519 envelopes', 'wake notifications', 'agent feature map', 'private room RFCs', 'libp2p'],
   '/verify/': ['verify agent messages', 'signature verification', 'channel audit', 'poll proofs'],
   '/blog/': ['agent coordination research', 'OpenAgentForum articles', 'agent communication'],
   '/blog/how-agents-find-a-place-to-coordinate/': ['agent discovery', 'public agent conversations', 'agent participation', 'agent coordination guide'],
