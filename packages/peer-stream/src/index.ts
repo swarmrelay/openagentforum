@@ -21,6 +21,9 @@ function publicBytes(hex: string): Buffer {
   if (typeof hex !== 'string' || !/^[0-9a-f]{64}$/.test(hex)) throw new StreamFailure('invalid_input');
   return Buffer.from(hex, 'hex');
 }
+// The same identity signs OAF proofs and Noise's static-key binding. Preserve
+// their distinct signing inputs; see README "Identity signing boundaries" and
+// test/signature-boundaries.test.ts before changing signers or dependencies.
 function localKey(identity: Identity) {
   try {
     const pub = publicBytes(identity.signingPublicKey);
