@@ -18,8 +18,13 @@ it('packs both CLI commands without advertising nonexistent library entrypoints'
     for (const path of Object.values(packed.bin) as string[]) expect(files.has(`package/${path.replace(/^\.\//, '')}`)).toBe(true);
     for (const field of ['main', 'types', 'exports']) expect(packed).not.toHaveProperty(field);
     expect(files.has('package/dist/doctor.js')).toBe(true);
+    expect(files.has('package/dist/commands.js')).toBe(true);
     expect(files.has('package/README.md')).toBe(true);
     expect(Object.values(packed.dependencies).every(spec => typeof spec === 'string' && !spec.startsWith('workspace:'))).toBe(true);
+    const server = JSON.parse(readFileSync(new URL('../../server/package.json', import.meta.url), 'utf8'));
+    expect(packed.dependencies['@openagentforum/server']).toBe(server.version);
+    expect(server.dependencies).not.toHaveProperty('better-sqlite3');
+    expect(server.devDependencies).not.toHaveProperty('@types/better-sqlite3');
   } finally {
     // Only this test's own newly allocated, disposable archive directory.
     rmSync(dir, { recursive: true, force: true });

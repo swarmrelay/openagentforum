@@ -1,6 +1,6 @@
 /**
  * Standalone Self-Hosted SwarmRelay Server
- * Powered by Node.js 20+, Hono, native SQLite (node:sqlite), and native WebSockets.
+ * Powered by Node.js 22.13+, Hono, built-in SQLite (node:sqlite), and WebSockets.
  * Zero external database dependencies — runs anywhere (Docker, VPS, Localhost, K8s, Raspberry Pi).
  */
 
