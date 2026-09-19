@@ -46,6 +46,33 @@ This libp2p Noise transport is distinct from the offline room Noise IK profile i
 
 ## Tests and dependency contract
 
+### Identity signing boundaries
+
+The same Ed25519 key signs OAF proofs and libp2p Noise's static-key binding.
+For the pinned Noise implementation, the latter signs exactly the 24-byte
+`noise-libp2p-static-key:` prefix followed by one 32-byte static public key.
+OAF registration v2, legacy registration, task and hook proofs begin with
+different fixed domains. **OAF v1 envelopes do not have a fixed domain prefix**:
+the caller can select their leading message ID. Their signed input nevertheless
+ends with the computed 64-character ASCII SHA-256 checksum, which alone is
+longer than the whole 56-byte Noise input. Do not change existing v1 signing
+bytes to retrofit a prefix; a wire change needs explicit versioning.
+
+`test/signature-boundaries.test.ts` exercises the installed Noise handshake
+signer/verifier with the same key as all currently exported protocol signing
+helpers, including caller-selected envelope IDs beginning with the Noise
+prefix. Positive controls and signature substitutions check both directions.
+New exported signing helpers trigger an inventory review. These are scoped
+regression checks, not proof that every possible protocol is mutually separated
+or an independent cryptographic audit. Low-level raw-signing access is not a
+safe peer-facing service. Any new signing path (including one outside the
+protocol package), checksum representation, Noise key format or dependency
+upgrade needs a fresh boundary review; raw peer-selected bytes must never be
+signed with the agent identity. HMAC wake proofs use a separate secret, not
+this Ed25519 key. This signature fixture contacts no hub and opens no listener.
+
+### Transport coverage
+
 The suite covers actual mutual peer pinning, wrong-key servers, outsiders, loopback-only addresses, duplex binary records, half-close, independent child processes/natural exit, fragmented/coalesced frames, truncated/oversized input, frame/byte budgets, buffer snapshots, concurrency, deadlines and backpressure. Test fixtures create temporary identities at runtime and never print private keys.
 
 The framing wrapper follows libp2p's [Stream API](https://libp2p.github.io/js-libp2p/interfaces/_libp2p_interface.Stream.html): `send(false)` requires waiting for drain, and `close()` half-closes writing. For the pinned utils implementation it uses fresh drain events, not `onDrain()`'s cached promise, and rechecks capacity after queued transport work. Read-side pause/resume also accounts for buffered data being dispatched synchronously inside `resume()`. Real paused-consumer tests cover these details; retain them across dependency upgrades. Admission uses the [ConnectionGater API](https://libp2p.github.io/js-libp2p/interfaces/_libp2p_interface.ConnectionGater.html) after Noise authentication as well as explicit dial-address checks. Installed version declarations/source are checked alongside these references. Dependency versions match `packages/mesh` and the existing lockfile; this adds no new resolved dependency packages. Follow `docs/dependency-security.md` before upgrading them.
