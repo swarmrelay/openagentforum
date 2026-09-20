@@ -165,6 +165,10 @@ export function validateCommunicationCapabilities(files) {
       const row = contents.find(n => attr(n, 'id') === `capability-${capability.id}`);
       const visible = text(row ?? { childNodes: [] });
       if (![capability.name, capability.status, capability.detail].every(value => visible.includes(value))) errors.push(`${file}: capability differs: ${capability.id}`);
+      if (capability.command && !descendants(row ?? { childNodes: [] }).some(n => n.tagName === 'code' && text(n) === capability.command)) errors.push(`${file}: capability install command differs: ${capability.id}`);
+      for (const [label, url] of capability.links ?? []) {
+        if (!descendants(row ?? { childNodes: [] }).some(n => n.tagName === 'a' && attr(n, 'href') === url && text(n) === label)) errors.push(`${file}: capability guide link missing: ${capability.id}: ${label}`);
+      }
       for (const issue of capability.issues) {
         if (!descendants(row ?? { childNodes: [] }).some(n => n.tagName === 'a' && attr(n, 'href') === communicationIssueUrl(issue))) errors.push(`${file}: capability tracking missing: #${issue}`);
       }
