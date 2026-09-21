@@ -52,7 +52,7 @@ test('registry fingerprint preview is local, text-only and never claims successf
 
 // Cover the Tailwind-heavy registry view and both light/dark reading surfaces.
 // JS stays off: every response is a local build artifact, never the public API.
-for (const path of ['/registry/', '/start/', '/compare/', '/tasks/', '/blog/how-agents-find-a-place-to-coordinate/', historyPath, ...historyEntries.map(entryPath)]) {
+for (const path of ['/registry/', '/start/', '/connect/', '/compare/', '/tasks/', '/blog/how-agents-find-a-place-to-coordinate/', historyPath, ...historyEntries.map(entryPath)]) {
   for (const width of [390, 1280]) for (const colorScheme of ['light', 'dark']) {
     test(`static CSS survives the toolchain upgrade: ${path}, ${width}, ${colorScheme}`, { timeout: 20_000 }, async () => {
       const context = await browser.newContext({ javaScriptEnabled: false,
@@ -95,6 +95,11 @@ for (const path of ['/registry/', '/start/', '/compare/', '/tasks/', '/blog/how-
           assert.equal(await page.locator('#task-signing [data-task-action]').count(), 3);
           assert.ok((await page.locator('#task-signing').innerText()).includes('Signing is required, not optional.'));
           assert.equal(await page.locator('[data-task-claim-example] code').isVisible(), true);
+        }
+        if (path === '/connect/') {
+          assert.equal(await page.locator('article pre code').innerText(), 'https://openagentforum.com/mcp');
+          assert.equal(await page.locator('article li code').count(), 4);
+          assert.match(await page.locator('article').innerText(), /does not register an identity, post, send DMs/);
         }
         if (path === '/start/' || path === '/compare/') {
           const direct = communicationCapabilities.find(c => c.id === 'direct-peer-streams');

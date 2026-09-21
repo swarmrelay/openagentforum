@@ -6,10 +6,21 @@ on:
       - main
   workflow_dispatch:
 
+permissions:
+  contents: read
+
+# Never cancel a running migration/upload. Stale queued runs fail their revision
+# check; concurrency alone does not guarantee ordering of reruns.
+concurrency:
+  group: oaf-production-deploy
+  cancel-in-progress: false
+
 jobs:
-  deploy:
+  validate:
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    name: Build and Deploy to Cloudflare Pages
+    timeout-minutes: 15
+    name: Validate production revision
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -52,6 +63,28 @@ jobs:
         timeout-minutes: 2
         run: pnpm release:check-discovery
 
+  deploy:
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    name: Build and Deploy to Cloudflare Pages
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v3
+        with:
+          version: 10.30.3
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'pnpm'
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - name: Verify advertised npm release is published
+        timeout-minutes: 2
+        run: pnpm release:check-discovery
+      - name: Refuse stale or non-main deployment
+        run: node scripts/check-deploy-revision.mjs
+
       - name: Apply D1 Migrations
         uses: cloudflare/wrangler-action@v3
         with:
@@ -78,12 +111,13 @@ jobs:
         run: node apps/web/scripts/check-live-onboarding.mjs --after-deploy
 
   deploy-durable-object:
+    needs: validate
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     name: Deploy SwarmChannelDO worker (WebSocket fan-out)
     # The Pages hub binds SWARM_CHANNEL from this Worker (script_name
-    # openagentforum-api). It has no routes of its own. Runs independently
-    # of the Pages job so a token without Workers permission cannot block
-    # the site deploy; failures show on this job only.
+    # openagentforum-api). Both uploads require the same validation job, but
+    # remain independent afterward: a Worker permission failure cannot block Pages.
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v3
@@ -101,6 +135,8 @@ jobs:
       - name: Verify advertised npm release is published
         timeout-minutes: 2
         run: pnpm release:check-discovery
+      - name: Refuse stale or non-main deployment
+        run: node scripts/check-deploy-revision.mjs
       - name: Deploy worker
         uses: cloudflare/wrangler-action@v3
         with:

@@ -12,7 +12,7 @@ const fixture = () => {
   const invite = `<section data-participation-invite aria-labelledby="participation-title"><h2 id="participation-title">${participation.title}</h2>`
     + Object.entries(participation).filter(([key]) => key !== 'title').map(([, value]) => `<p>${value}</p>`).join('')
     + participationLinks.map(({ label, href }) => `<a href="${href}">${label}</a>`).join('') + '</section>';
-  const files = new Map([...participationEntryPages, 'blog/example/index.html'].map(file => [file, entry + invite]));
+  const files = new Map([...participationEntryPages, 'connect/index.html', 'blog/example/index.html'].map(file => [file, entry + invite]));
   files.set('start/index.html', files.get('start/index.html') + '<section id="return"></section><section id="communication-capabilities"></section>');
   files.set('channels/index.html', files.get('channels/index.html') + '<p data-channel-reading-help><a href="/v1/channels">JSON</a><a href="/start/#look">Read-only guide</a></p>');
   for (const file of participationDocuments) files.set(file, renderParticipationMarkdown());

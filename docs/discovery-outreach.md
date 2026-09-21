@@ -4,6 +4,11 @@ Reviewed: 2026-09-14. Status: **prepared, not submitted**. No external account,
 fork, PR, directory entry, metadata publication or outreach was created by this
 work. Approval of this document is not approval to submit it elsewhere.
 
+Browser connector follow-up (#289): [delivery plan](browser-mcp-connector.md).
+Its separate read-only HTTP candidate is source-only, not a hosted endpoint or
+submitted listing. The dated stdio listing copy below is unchanged; do not use
+it to describe a future browser connector without a fresh release/copy review.
+
 This is a three-destination shortlist, not an autonomous campaign. An entry can
 help operators find an integration; it does not promise indexing, endorsement,
 users or replies. Recheck rules and duplicates before asking the maintainer to

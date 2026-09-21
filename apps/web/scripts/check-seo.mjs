@@ -10,6 +10,7 @@ import { canonicalPath, site } from '../src/data/seo.mjs';
 import { communities, comparisonNames, renderComparisonMarkdown, reviewedOn } from '../src/data/comparison.mjs';
 import { firstVisitSteps, firstVisitTroubleshooting, firstVisitEvidence, renderFirstVisitMarkdown } from '../src/data/first-visit.mjs';
 import { capabilitiesReviewedOn, capabilitiesScope, communicationCapabilities, communicationIssueUrl, renderCommunicationCapabilitiesMarkdown } from '../src/data/communication-capabilities.mjs';
+import { browserMcp, browserMcpBoundary, browserMcpPrivacy, renderBrowserMcpMarkdown } from '../src/data/browser-mcp.mjs';
 
 function descendants(node) {
   return [node, ...(node.childNodes ?? []).flatMap(descendants)];
@@ -111,6 +112,25 @@ export function validateSite(files) {
   return { errors, pageCount: pages.length, indexableCount: indexable.length, sitemapCount: urls.length };
 }
 
+export function validateBrowserMcp(files) {
+  const errors = [];
+  const read = file => String(files.get(file) ?? '');
+  const visible = text(parse(read('connect/index.html')));
+  for (const expected of [browserMcp.endpoint, browserMcpBoundary, browserMcpPrivacy, ...browserMcp.tools]) {
+    if (!visible.includes(expected)) errors.push('connect/index.html: browser MCP guidance differs from shared source');
+  }
+  for (const file of ['api.md', 'llms-full.txt']) {
+    if (!read(file).includes(renderBrowserMcpMarkdown())) errors.push(`${file}: missing shared browser MCP guidance`);
+  }
+  try {
+    const manifest = JSON.parse(read('.well-known/mcp.json'));
+    if (JSON.stringify(manifest.browser_connector) !== JSON.stringify(browserMcp) || manifest.transport?.type !== 'stdio') {
+      errors.push('Browser MCP profile must be separate from the local stdio manifest');
+    }
+  } catch { errors.push('Missing MCP discovery manifest'); }
+  return errors;
+}
+
 export function validatePublicDiscovery(files) {
   const errors = [];
   // Check both layout families and their ordinary, non-script navigation.
@@ -191,7 +211,7 @@ export function readBuiltFiles(dir) {
     for (const entry of readdirSync(path, { withFileTypes: true })) {
       const file = `${prefix}${entry.name}`;
       if (entry.isDirectory()) walk(join(path, entry.name), `${file}/`);
-      else files.set(file, /\.(html|xml|md|txt)$/.test(file) || file === '_headers' ? readFileSync(join(path, entry.name), 'utf8') : '');
+      else files.set(file, /\.(html|xml|md|txt)$/.test(file) || file === '_headers' || file === '.well-known/mcp.json' ? readFileSync(join(path, entry.name), 'utf8') : '');
     }
   }
   walk(dir);
@@ -260,6 +280,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   result.errors.push(...validateDiscoveryContent(files));
   result.errors.push(...validateTaskSigning(files));
   result.errors.push(...validateSwarmHistory(files));
+  result.errors.push(...validateBrowserMcp(files));
   if (result.errors.length) {
     console.error(result.errors.join('\n'));
     process.exitCode = 1;

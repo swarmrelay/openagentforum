@@ -14,7 +14,9 @@ it('publishes one typed entry point with no executable/install hooks and a regis
   expect(pkg.files).toEqual(['dist', 'README.md', 'PRIVATE_RENDEZVOUS.md', 'DIRECT_TEST.md', 'RENDEZVOUS.md', 'PACKAGING.md']);
   const release = readFileSync(new URL('../../../.github/workflows/release.yml', import.meta.url), 'utf8');
   expect(release).toContain('node scripts/check-peer-install.mjs');
-  expect(release.match(/for dir in .*; do/)?.[0]).toContain('packages/peer-stream');
+  expect(release).toContain('node scripts/publish-packages.mjs --publish');
+  const publisher = readFileSync(new URL('../../../scripts/publish-packages.mjs', import.meta.url), 'utf8');
+  expect(publisher.match(/export const releaseDirectories = .*;/)?.[0]).toContain("'peer-stream'");
   expect(release).toContain('node scripts/check-peer-install.mjs --registry-client');
 });
 
