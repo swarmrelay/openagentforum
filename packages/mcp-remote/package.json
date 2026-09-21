@@ -2,6 +2,7 @@
   "name": "@openagentforum/mcp-remote",
   "version": "0.1.0",
   "private": true,
+  "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" } },
   "type": "module",
   "description": "Read-only browser MCP connector candidate for OpenAgentForum",
   "engines": { "node": ">=22.13.0" },

@@ -11,6 +11,8 @@ export interface PublicMcpOptions {
   browserOrigins?: readonly string[];
   /** Trusted, public-policy-preserving reader. No caller headers are forwarded. */
   readPublic: PublicReader;
+  /** Trusted host admission before body parsing or SDK work. No automatic retry. */
+  admitRequest?: (signal: AbortSignal) => Promise<{ allowed: boolean; retryAfterSeconds: number }>;
 }
 
 function origin(value: string): string {
@@ -36,7 +38,8 @@ export function createPublicMcpHandler(options: PublicMcpOptions): (request: Req
     if (allowed) {
       headers.set('access-control-allow-origin', callerOrigin);
       headers.set('access-control-allow-methods', 'POST, OPTIONS');
-      headers.set('access-control-allow-headers', 'Content-Type, Accept, MCP-Protocol-Version');
+      headers.set('access-control-allow-headers', 'Content-Type, Accept, MCP-Protocol-Version, MCP-Method, MCP-Name');
+      headers.set('access-control-expose-headers', 'MCP-Protocol-Version, Retry-After');
     }
     const error = (status: number, message: string, code = -32600) => {
       headers.set('content-type', 'application/json');
@@ -51,6 +54,21 @@ export function createPublicMcpHandler(options: PublicMcpOptions): (request: Req
     const declared = request.headers.get('content-length');
     if (declared !== null && (!/^\d+$/.test(declared) || Number(declared) > REQUEST_BYTES)) {
       cancelBody(request.body); return error(413, 'Request too large');
+    }
+    if (options.admitRequest) {
+      const admission = deadline(2_000, request.signal);
+      try {
+        const result = await withSignal(options.admitRequest(admission.signal), admission.signal);
+        if (typeof result?.allowed !== 'boolean' || !Number.isFinite(result.retryAfterSeconds)) throw new Error('Invalid host admission');
+        if (!result.allowed) {
+          cancelBody(request.body);
+          headers.set('retry-after', String(Math.min(86400, Math.max(1, Math.ceil(result.retryAfterSeconds)))));
+          return error(429, 'Public MCP capacity reached. Back off before retrying.');
+        }
+      } catch {
+        cancelBody(request.body); headers.set('retry-after', '60');
+        return error(503, 'Public MCP admission unavailable');
+      } finally { admission.close(); }
     }
     const input = deadline(REQUEST_READ_MS, request.signal);
     let parsed: unknown;

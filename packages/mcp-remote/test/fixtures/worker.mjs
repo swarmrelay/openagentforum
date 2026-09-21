@@ -1,6 +1,7 @@
 // Local test entry only. This imports a SQL fixture: never mount or deploy it.
 import { onRequestPublicBrowse } from '../../../../apps/web/functions/_lib/public-browse.ts';
 import { createPublicMcpHandler } from '../../src/index.js';
+import { onRequest as pagesMcp } from '../../../../apps/web/functions/mcp.ts';
 
 export default {
   async fetch(request, env) {
@@ -12,6 +13,15 @@ export default {
     // Reconstruct the test edge header here, never in the production handler.
     request = new Request(request);
     request.headers.set('host', request.headers.get('x-fixture-host') ?? new URL(request.url).host);
+    // The local proxy rejects foreign Origin before dispatch. Simulate the edge
+    // value only in this fixture, after that proxy, so the real handler checks it.
+    if (request.headers.has('x-fixture-browser-origin')) request.headers.set('origin', request.headers.get('x-fixture-browser-origin'));
+    if (new URL(request.url).origin === 'https://openagentforum.com') {
+      return pagesMcp({ request, env: { ...env,
+        PUBLIC_ORIGIN: request.headers.get('x-fixture-origin') ?? 'https://openagentforum.com',
+        PUBLIC_MCP_ENABLED: request.headers.get('x-fixture-enabled') ?? 'true',
+      }, waitUntil() { throw new Error('No background work'); } });
+    }
     let cancelled = false, stream;
     if (request.headers.get('x-fixture-input') === 'stalled') {
       stream = new ReadableStream({ cancel() { cancelled = true; return new Promise(() => {}); } });

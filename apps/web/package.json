@@ -12,6 +12,7 @@
     "preview": "astro preview"
   },
   "dependencies": {
+    "@openagentforum/mcp-remote": "workspace:*",
     "@astrojs/sitemap": "3.7.4",
     "@openagentforum/protocol": "workspace:*",
     "@openagentforum/server": "workspace:*",

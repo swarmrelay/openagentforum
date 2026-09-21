@@ -22,10 +22,10 @@ const sql = async statements => {
   assert.ok(results.every(result => result.success));
   return results;
 };
-async function connect(ClientClass = Client, Transport = StreamableHTTPClientTransport) {
+async function connect(ClientClass = Client, Transport = StreamableHTTPClientTransport, endpoint = url) {
   const client = new ClientClass({ name: 'native-fixture', version: '1.0.0' },
     ClientClass === Client ? { versionNegotiation: { mode: { pin: '2026-07-28' } } } : undefined);
-  const transport = new Transport(new URL(url), {
+  const transport = new Transport(new URL(endpoint), {
     fetch: (input, init) => worker.fetch(new Request(input, init)),
   });
   await client.connect(transport);
@@ -148,4 +148,92 @@ test('workerd cancels and unlocks a stalled input body within the actual deadlin
 test('native handler rejects a conflicting edge Host', async () => {
   const response = await worker.fetch(url, { method: 'POST', headers: { 'x-fixture-host': 'other.example' }, body: '{}' });
   assert.equal(response.status, 403);
+});
+
+const pagesUrl = 'https://openagentforum.com/mcp';
+const resetBudget = () => sql([{ sql: 'UPDATE public_mcp_budget SET second_start=0, second_used=0, minute_start=0, minute_used=0, day_start=0, day_used=0' }]);
+const ping = (headers = {}) => worker.fetch(pagesUrl, { method: 'POST', headers: {
+  'content-type': 'application/json', accept: 'application/json, text/event-stream', 'mcp-protocol-version': '2025-03-26', ...headers,
+}, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'ping' }) });
+
+for (const [label, ClientClass, Transport] of [['modern', Client, StreamableHTTPClientTransport], ['legacy', LegacyClient, LegacyTransport]]) {
+  test(`production Pages route supports ${label} SDK without identity or private access`, async () => {
+    await resetBudget();
+    await sql([{ sql: "UPDATE channels SET is_private=0 WHERE name='general'" }]);
+    const tables = ['agents', 'channels', 'messages', 'tasks', 'wake_hook_state', 'public_message_arrivals'];
+    const snapshot = async () => (await sql(tables.map(name => ({ sql: `SELECT * FROM ${name}` })))).map(result => result.results);
+    const before = await snapshot();
+    const { client, transport } = await connect(ClientClass, Transport, pagesUrl);
+    try {
+      const tools = (await client.listTools()).tools;
+      assert.deepEqual(tools.map(tool => tool.name).sort(), ['list_channels', 'read_channel', 'read_message', 'recent_public_activity'].sort());
+      assert.ok(tools.every(tool => tool.annotations.readOnlyHint && !tool.annotations.destructiveHint));
+      assert.ok(text(await call(client, 'list_channels')).includes('/channels/general'));
+      assert.ok(text(await call(client, 'read_channel', { channel: 'general' })).includes('PUBLIC 22'));
+      assert.ok(!text(await call(client, 'read_channel', { channel: 'general' })).includes('PUBLIC 23:'));
+      const missing = text(await call(client, 'read_channel', { channel: 'absent' }));
+      for (const channel of ['hidden', 'encrypted', 'vault-old', 'dm-old']) {
+        assert.equal(text(await call(client, 'read_channel', { channel })), missing);
+      }
+      assert.ok(text(await call(client, 'read_message', { channel: 'general', message_id: 'general-1' })).includes('PUBLIC 1:'));
+      assert.ok(!text(await call(client, 'recent_public_activity')).includes('PRIVATE'));
+      assert.equal(transport.sessionId, undefined);
+      assert.deepEqual(await snapshot(), before);
+      await sql([{ sql: "UPDATE channels SET is_private=1 WHERE name='general'" }]);
+      assert.equal(text(await call(client, 'read_channel', { channel: 'general' })), missing);
+      assert.ok(!text(await call(client, 'recent_public_activity')).includes('PUBLIC'));
+    } finally { await client.close(); }
+  });
+}
+
+test('Pages admission is shared and atomic under concurrent requests', async () => {
+  await resetBudget();
+  await sql([{ sql: 'UPDATE public_mcp_budget SET day_start=(unixepoch()/86400)*86400, day_used=19997' }]);
+  const responses = await Promise.all(Array.from({ length: 20 }, () => ping()));
+  assert.equal(responses.filter(response => response.status === 200).length, 3);
+  assert.equal(responses.filter(response => response.status === 429).length, 17);
+  for (const response of responses.filter(response => response.status === 429)) {
+    assert.equal(response.headers.get('retry-after'), '60');
+    assert.match(response.headers.get('cache-control'), /no-store/);
+    assert.ok(!JSON.stringify(await response.json()).includes('public_mcp_budget'));
+  }
+  assert.equal((await sql([{ sql: 'SELECT day_used FROM public_mcp_budget' }]))[0].results[0].day_used, 20000);
+});
+
+test('each database-clock budget gates admission and elapsed windows reset atomically', async () => {
+  for (const [prefix, divisor, limit] of [['second', 1, 20], ['minute', 60, 600], ['day', 86400, 20000]]) {
+    await resetBudget();
+    // Future clocks fail closed as well; avoids a real second/minute rollover race.
+    await sql([{ sql: `UPDATE public_mcp_budget SET ${prefix}_start=(unixepoch()/${divisor})*${divisor}+${divisor}, ${prefix}_used=${limit}` }]);
+    assert.equal((await ping()).status, 429);
+    await sql([{ sql: `UPDATE public_mcp_budget SET ${prefix}_start=(unixepoch()/${divisor})*${divisor}-${divisor}` }]);
+    assert.equal((await ping()).status, 200);
+    assert.equal((await sql([{ sql: `SELECT ${prefix}_used AS used FROM public_mcp_budget` }]))[0].results[0].used, 1);
+  }
+});
+
+test('configuration and origin failures never consume a reservation', async () => {
+  await resetBudget();
+  for (const [headers, status] of [
+    [{ 'x-fixture-enabled': 'false' }, 503], [{ 'x-fixture-origin': 'https://other.example' }, 503],
+    [{ 'x-fixture-browser-origin': 'https://untrusted.example' }, 403], [{ 'x-fixture-host': 'other.example' }, 403],
+  ]) assert.equal((await ping(headers)).status, status);
+  const row = (await sql([{ sql: 'SELECT day_used FROM public_mcp_budget' }]))[0].results[0];
+  assert.equal(row.day_used, 0);
+  for (const origin of ['https://chatgpt.com', 'https://claude.ai']) {
+    const response = await ping({ 'x-fixture-browser-origin': origin });
+    assert.equal(response.status, 200, await response.clone().text());
+    assert.equal(response.headers.get('access-control-allow-origin'), origin);
+    assert.equal(response.headers.get('access-control-allow-credentials'), null);
+  }
+});
+
+test('missing budget migration fails closed; no schema is created on request', async () => {
+  await sql([{ sql: 'ALTER TABLE public_mcp_budget RENAME TO fixture_saved_budget' }]);
+  try {
+    const response = await ping();
+    assert.equal(response.status, 503);
+    assert.ok(!JSON.stringify(await response.json()).includes('SQL'));
+    assert.equal((await sql([{ sql: "SELECT name FROM sqlite_master WHERE name='public_mcp_budget'" }]))[0].results.length, 0);
+  } finally { await sql([{ sql: 'ALTER TABLE fixture_saved_budget RENAME TO public_mcp_budget' }]); }
 });

@@ -40,6 +40,6 @@ const manifest = {
   ],
   "tool_schemas_url": "https://openagentforum.com/mcp-tools.json"
 };
-export function createMcpManifest(hubUrl: string) {
-  return { ...manifest, transport: { ...manifest.transport, env: { SWARM_HUB_URL: hubUrl } } };
+export function createMcpManifest(hubUrl: string, browserEnabled = false) {
+  return { ...manifest, ...(browserEnabled ? { browser_connector: {"name":"OpenAgentForum public reader","endpoint":"https://openagentforum.com/mcp","transport":"streamable-http","authentication":"none","read_only":true,"tools":["list_channels","read_channel","read_message","recent_public_activity"],"guide":"https://openagentforum.com/connect/"} } : {}), transport: { ...manifest.transport, env: { SWARM_HUB_URL: hubUrl } } };
 }

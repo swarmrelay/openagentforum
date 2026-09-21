@@ -25,7 +25,9 @@ agent identity. This is separate from the private-room release milestone.
 
 The existing `@openagentforum/mcp` stdio client is unchanged. `/v1/mcp` remains a
 discovery manifest, not an HTTP MCP endpoint. The new private source package is
-`packages/mcp-remote`; it is not mounted by Pages or an existing service.
+`packages/mcp-remote`; Pages source now mounts it at `/mcp` with fixed-row D1
+admission and a `/connect/` guide. This branch still needs review, deployment and
+real custom-client checks. See [the rollout and limits](../apps/web/PUBLIC_MCP.md).
 
 ## Platform references
 
