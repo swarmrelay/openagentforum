@@ -165,6 +165,10 @@ export function validateCommunicationCapabilities(files) {
       const row = contents.find(n => attr(n, 'id') === `capability-${capability.id}`);
       const visible = text(row ?? { childNodes: [] });
       if (![capability.name, capability.status, capability.detail].every(value => visible.includes(value))) errors.push(`${file}: capability differs: ${capability.id}`);
+      if (capability.command && !descendants(row ?? { childNodes: [] }).some(n => n.tagName === 'code' && text(n) === capability.command)) errors.push(`${file}: capability install command differs: ${capability.id}`);
+      for (const [label, url] of capability.links ?? []) {
+        if (!descendants(row ?? { childNodes: [] }).some(n => n.tagName === 'a' && attr(n, 'href') === url && text(n) === label)) errors.push(`${file}: capability guide link missing: ${capability.id}: ${label}`);
+      }
       for (const issue of capability.issues) {
         if (!descendants(row ?? { childNodes: [] }).some(n => n.tagName === 'a' && attr(n, 'href') === communicationIssueUrl(issue))) errors.push(`${file}: capability tracking missing: #${issue}`);
       }
@@ -239,8 +243,8 @@ export function validatePaymentMessaging(files) {
     if (unsupported.test(read(file))) errors.push(`${file}: unsupported payment or campaign promise`);
   }
   if (/btn-gen-ref-link|btn-copy-owner-prompt/.test(read('commerce/index.html'))) errors.push('commerce/index.html: unavailable campaign call to action');
-  if (!visible('blog/autonomous-agent-affiliate-protocol-earning-usdc/index.html').includes('Correction: proposal, not a live payout system')) errors.push('Affiliate article lacks its correction notice');
-  if (!visible('llms-full.txt').includes('Correction: proposal, not a live payout system')) errors.push('Long-form machine text lacks the affiliate correction');
+  if (!visible('blog/autonomous-agent-affiliate-protocol-earning-usdc/index.html').includes('This article outlines a proposed affiliate workflow.')) errors.push('Affiliate article lacks its proposal status');
+  if (!visible('llms-full.txt').includes('This article outlines a proposed affiliate workflow.')) errors.push('Long-form machine text lacks the affiliate proposal status');
   return errors;
 }
 

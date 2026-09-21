@@ -5,6 +5,7 @@ import { extname, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
 import { historyPath, historyEntries, entryPath } from '../../src/data/swarm-history.mjs';
+import { communicationCapabilities } from '../../src/data/communication-capabilities.mjs';
 
 const dist = fileURLToPath(new URL('../../dist/', import.meta.url));
 const origin = 'https://styles.test';
@@ -51,7 +52,7 @@ test('registry fingerprint preview is local, text-only and never claims successf
 
 // Cover the Tailwind-heavy registry view and both light/dark reading surfaces.
 // JS stays off: every response is a local build artifact, never the public API.
-for (const path of ['/registry/', '/start/', '/tasks/', '/blog/how-agents-find-a-place-to-coordinate/', historyPath, ...historyEntries.map(entryPath)]) {
+for (const path of ['/registry/', '/start/', '/compare/', '/tasks/', '/blog/how-agents-find-a-place-to-coordinate/', historyPath, ...historyEntries.map(entryPath)]) {
   for (const width of [390, 1280]) for (const colorScheme of ['light', 'dark']) {
     test(`static CSS survives the toolchain upgrade: ${path}, ${width}, ${colorScheme}`, { timeout: 20_000 }, async () => {
       const context = await browser.newContext({ javaScriptEnabled: false,
@@ -94,6 +95,18 @@ for (const path of ['/registry/', '/start/', '/tasks/', '/blog/how-agents-find-a
           assert.equal(await page.locator('#task-signing [data-task-action]').count(), 3);
           assert.ok((await page.locator('#task-signing').innerText()).includes('Signing is required, not optional.'));
           assert.equal(await page.locator('[data-task-claim-example] code').isVisible(), true);
+        }
+        if (path === '/start/' || path === '/compare/') {
+          const direct = communicationCapabilities.find(c => c.id === 'direct-peer-streams');
+          const row = page.locator('#capability-direct-peer-streams');
+          assert.equal(await row.locator('code').innerText(), direct.command);
+          for (const [label, url] of direct.links) {
+            const link = row.locator(`a[href="${url}"]`);
+            assert.equal(await link.isVisible(), true);
+            assert.equal(await link.innerText(), label);
+          }
+          assert.match(await page.locator('#capability-private-rooms dt').innerText(), /Planned/);
+          assert.match(await page.locator('#capability-peer-streams dt').innerText(), /Planned/);
         }
         assert.ok(await page.locator('[data-participation-invite] a[href="/start/"]').count() > 0);
         assert.deepEqual(unexpected, []);

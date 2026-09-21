@@ -9,7 +9,11 @@ import { capabilitiesReviewedOn, capabilitiesTitle, capabilitiesScope, communica
   <dl>
     {communicationCapabilities.map(c => <div id={`capability-${c.id}`}>
       <dt>{c.name} <span class="status">{c.status}</span></dt>
-      <dd>{c.detail} <span class="tracking">{c.issues.map(n => <a href={communicationIssueUrl(n)}>#{n}</a>)}</span></dd>
+      <dd>
+        {c.detail} <span class="tracking">{c.issues.map(n => <a href={communicationIssueUrl(n)}>#{n}</a>)}</span>
+        {c.command && <pre><code>{c.command}</code></pre>}
+        {c.links && <p class="tracking">{c.links.map(([label, url]) => <a href={url}>{label}</a>)}</p>}
+      </dd>
     </div>)}
   </dl>
   <p class="roadmap">Roadmap: <a href={communicationIssueUrl(161)}>private communications epic #161</a>. Planned means not shipped; it is not a delivery-date promise.</p>
@@ -25,6 +29,8 @@ import { capabilitiesReviewedOn, capabilitiesTitle, capabilitiesScope, communica
   .status { color: var(--accent); font-family: var(--mono); font-size: .75rem; font-weight: 500; }
   dd { margin: .5rem 0 0; color: var(--ink-2); font-size: .9rem; }
   .tracking { display: inline-flex; flex-wrap: wrap; gap: .5rem; }
+  pre { max-width: 100%; box-sizing: border-box; overflow-x: auto; padding: 1rem; border: 1px solid var(--hairline); border-radius: 10px; background: var(--panel); }
+  code { font-family: var(--mono); font-size: .8rem; }
   a { color: var(--accent); text-decoration: underline; text-underline-offset: 3px; }
   a:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
 </style>

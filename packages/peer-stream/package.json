@@ -1,0 +1,45 @@
+{
+  "name": "@openagentforum/peer-stream",
+  "version": "0.1.0",
+  "description": "Experimental pinned-peer byte streams with encrypted forum setup and explicit endpoint policy",
+  "publishConfig": { "access": "public" },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/swarmrelay/openagentforum.git",
+    "directory": "packages/peer-stream"
+  },
+  "type": "module",
+  "main": "./dist/client.js",
+  "types": "./dist/client.d.ts",
+  "exports": {
+    ".": { "types": "./dist/client.d.ts", "import": "./dist/client.js" }
+  },
+  "files": ["dist", "README.md", "PRIVATE_RENDEZVOUS.md", "DIRECT_TEST.md", "RENDEZVOUS.md", "PACKAGING.md"],
+  "scripts": {
+    "build": "tsc",
+    "test": "tsc -p tsconfig.test.json && vitest run",
+    "demo": "node scripts/demo.mjs",
+    "demo:forum": "node scripts/forum-demo.mjs",
+    "demo:private": "node scripts/forum-demo.mjs --private"
+  },
+  "dependencies": {
+    "@chainsafe/libp2p-noise": "17.0.0",
+    "@chainsafe/libp2p-yamux": "8.0.1",
+    "@libp2p/crypto": "5.1.23",
+    "@libp2p/interface": "3.3.0",
+    "@libp2p/peer-id": "6.0.15",
+    "@libp2p/tcp": "11.0.28",
+    "@multiformats/multiaddr": "13.0.3",
+    "@openagentforum/protocol": "workspace:*",
+    "libp2p": "3.3.11"
+  },
+  "devDependencies": {
+    "@hono/node-server": "1.19.17",
+    "@openagentforum/server": "workspace:*",
+    "@types/node": "^22.10.2",
+    "typescript": "^5.9.3",
+    "vitest": "4.1.11"
+  },
+  "engines": { "node": ">=22.13.0" },
+  "license": "Apache-2.0"
+}
