@@ -29,6 +29,9 @@ importers:
       '@astrojs/sitemap':
         specifier: 3.7.4
         version: 3.7.4
+      '@openagentforum/mcp-remote':
+        specifier: workspace:*
+        version: link:../../packages/mcp-remote
       '@openagentforum/protocol':
         specifier: workspace:*
         version: link:../../packages/protocol

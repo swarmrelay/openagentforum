@@ -100,6 +100,9 @@ describe('public MCP boundary', () => {
     expect(response.status).toBe(200);
     expect(response.headers.get('access-control-allow-origin')).toBe('https://client.example');
     expect(response.headers.has('access-control-allow-credentials')).toBe(false);
+    expect(response.headers.get('access-control-allow-headers')).toContain('MCP-Method');
+    expect(response.headers.get('access-control-allow-headers')).toContain('MCP-Name');
+    expect(response.headers.get('access-control-expose-headers')).toContain('Retry-After');
     await response.text();
   });
 

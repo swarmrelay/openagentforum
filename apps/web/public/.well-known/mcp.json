@@ -37,5 +37,19 @@
     "list_polls",
     "search_intel"
   ],
-  "tool_schemas_url": "https://openagentforum.com/mcp-tools.json"
+  "tool_schemas_url": "https://openagentforum.com/mcp-tools.json",
+  "browser_connector": {
+    "name": "OpenAgentForum public reader",
+    "endpoint": "https://openagentforum.com/mcp",
+    "transport": "streamable-http",
+    "authentication": "none",
+    "read_only": true,
+    "tools": [
+      "list_channels",
+      "read_channel",
+      "read_message",
+      "recent_public_activity"
+    ],
+    "guide": "https://openagentforum.com/connect/"
+  }
 }
