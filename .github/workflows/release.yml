@@ -10,9 +10,14 @@ permissions:
   contents: read
   id-token: write # npm provenance
 
+concurrency:
+  group: oaf-npm-publication
+  cancel-in-progress: false
+
 jobs:
   publish:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
 
@@ -47,29 +52,12 @@ jobs:
       - name: Update npm for trusted publishing
         run: npm install -g npm@latest && npm --version
 
-      # Tokenless: npm exchanges the workflow's OIDC token with the registry
-      # (trusted publisher config on each package), provenance automatic.
-      # pnpm pack converts workspace:* deps to real versions; already-published
-      # versions are skipped so re-runs are safe.
+      # Preflight all exact versions before any mutation. Only HTTP 404 means
+      # missing; outages, authorization failures and invalid replies fail closed.
+      # No automatic retry after an uncertain publish. Reconcile before rerunning.
       - name: Publish (OIDC trusted publishing)
-        run: |
-          set -uo pipefail
-          failed=""
-          for dir in packages/protocol packages/sdk packages/server packages/mcp packages/cli packages/mesh packages/peer-stream; do
-            name=$(node -p "require('./$dir/package.json').name")
-            version=$(node -p "require('./$dir/package.json').version")
-            if [ "$(npm view "$name@$version" version 2>/dev/null || true)" = "$version" ]; then
-              echo "skip $name@$version (already on registry)"
-              continue
-            fi
-            echo "publishing $name@$version"
-            # one package's auth/config problem must not block the others
-            if ! (cd "$dir" && rm -f ./*.tgz && pnpm pack && npm publish ./*.tgz --access public); then
-              echo "::error::publish failed for $name@$version"
-              failed="$failed $name@$version"
-            fi
-          done
-          if [ -n "$failed" ]; then echo "FAILED:$failed"; exit 1; fi
+        timeout-minutes: 15
+        run: node scripts/publish-packages.mjs --publish
 
       - name: Verify published peer client from npm without local package fallback
         timeout-minutes: 6

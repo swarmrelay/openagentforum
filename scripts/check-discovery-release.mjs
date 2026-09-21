@@ -38,7 +38,7 @@ export function discoveryReleasePlan(manifest, packages) {
   return [...plan.values()].sort((a, b) => a.name.localeCompare(b.name));
 }
 
-async function registryVersion(entry, fetchImpl) {
+export async function registryVersion(entry, fetchImpl, { allowMissing = false } = {}) {
   const controller = new AbortController();
   let timer;
   let reader;
@@ -52,6 +52,10 @@ async function registryVersion(entry, fetchImpl) {
       headers: { Accept: 'application/json' }, signal: controller.signal,
     }), deadline]);
     reader = response.body?.getReader();
+    if (response.redirected) throw new Error();
+    // Only the explicitly opted-in publication planner accepts a definitive 404.
+    // Discovery remains strict: missing packages must never be advertised.
+    if (allowMissing && response.status === 404) return null;
     if (response.status !== 200) { failure = `registry returned HTTP ${response.status}`; throw new Error(); }
     failure = 'invalid registry response';
     if (response.redirected || !reader || response.headers.get('content-type')?.split(';')[0].trim().toLowerCase() !== 'application/json') throw new Error();
