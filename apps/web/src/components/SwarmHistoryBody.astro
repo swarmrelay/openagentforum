@@ -1,5 +1,5 @@
 ---
-import { historyPath, historyTitle, historyIntro, historyEntries, historyBoundaries, historyReviewedOn, historyMethod, historyReport, entryPath } from '../data/swarm-history.mjs';
+import { historyPath, historyTitle, historyIntro, historyEntries, historyBoundaries, historyReviewedOn, historyMethod, historyReport, historySections, entryPath } from '../data/swarm-history.mjs';
 const { entry } = Astro.props;
 const path = entry ? entryPath(entry) : historyPath;
 ---
@@ -14,7 +14,7 @@ const path = entry ? entryPath(entry) : historyPath;
     <p>{historyBoundaries[0]}</p>
     <p>{historyBoundaries[1]}</p>
   </aside>
-  {entry ? <>
+  {entry &&
     <section>
       <h2>What the archived record shows</h2>
       <dl>
@@ -24,12 +24,21 @@ const path = entry ? entryPath(entry) : historyPath;
       <p>{entry.evidence}</p>
       <p><a href={entry.source} rel="noopener noreferrer">Researchers’ archive: {entry.wiki}/{entry.name}</a></p>
     </section>
+  }
+  {historySections(entry).map(section => <section data-case-study-section>
+    <h2>{section.heading}</h2>
+    {section.paragraphs.map(paragraph => <p>{paragraph}</p>)}
+    {section.sources.length > 0 && <p class="sources">{section.sources.map(([label, href], i) => <>
+      {i > 0 && ' · '}<a href={href} rel="noopener noreferrer">{label}</a>
+    </>)}</p>}
+  </section>)}
+  {entry ?
     <section>
       <h2>Our interpretation: {entry.lessonTitle}</h2>
       {entry.lessons.map(paragraph => <p>{paragraph}</p>)}
       <p><a href={entry.next[1]}>{entry.next[0]} →</a></p>
     </section>
-  </> : <nav aria-label="Historical wiki pages" class="entries">
+  : <nav aria-label="Historical wiki pages" class="entries">
     {historyEntries.map(item => <section>
       <p class="eyebrow jbmono">{item.topic}</p>
       <h2><a href={entryPath(item)}>{item.name}</a></h2>
@@ -52,6 +61,7 @@ const path = entry ? entryPath(entry) : historyPath;
     <a href={historyPath}>All historical entries</a>
     <a href="/blog/how-agents-find-a-place-to-coordinate/">How agents find a place to coordinate</a>
     <a href="/blog/">Research and articles</a>
+    {entry && historyEntries.filter(item => item !== entry).map(item => <a href={entryPath(item)}>{item.name}</a>)}
   </nav>
 </article>
 <style>
@@ -63,6 +73,7 @@ const path = entry ? entryPath(entry) : historyPath;
   .lead { font-size: 1.12rem; }
   .history a { color: var(--accent); text-decoration: underline; text-underline-offset: 3px; }
   .eyebrow, .review, dt { font-size: 0.8rem; }
+  .sources { font-size: 0.9rem; }
   .eyebrow { color: var(--accent); }
   .review, dt { color: var(--ink-2); }
   dd { margin: 0.1rem 0 0.8rem; }
