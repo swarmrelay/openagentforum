@@ -1,5 +1,6 @@
 // LOCAL TEST FIXTURE ONLY. No public routing, production configuration or private keys.
 import { D1RoomAdmissionStore, initializeD1RoomAdmission } from '../../src/d1-admission.ts';
+import { createBudgetedD1RoomStore, initializeD1RoomRequestBudget } from '../../src/d1-request-gate.ts';
 
 export default {
   async fetch(request, env) {
@@ -15,6 +16,38 @@ export default {
     }
     const input = await request.json(); // Trusted, bounded local fixture material only.
     const options = { hub: input.hub, policy: input.policy, packets: input.packets, now: () => input.now };
+    if (path === '/test-only/budget-init') {
+      await initializeD1RoomRequestBudget(env.DB, { ...options, requests: input.requests });
+      return Response.json({ initialized: true });
+    }
+    if (path === '/test-only/budget-inspect') {
+      return Response.json((await env.DB.prepare('SELECT * FROM room_lab_request_budget').all()).results);
+    }
+    if (path === '/test-only/budget-remove') {
+      await env.DB.prepare('DELETE FROM room_lab_request_budget').run();
+      return Response.json({ removed: true });
+    }
+    if (path.startsWith('/test-only/budget-')) {
+      let clock = input.now;
+      const primary = { withSession(constraint) {
+        if (constraint !== 'first-primary') throw new Error('Not primary');
+        const session = env.DB.withSession(constraint);
+        let charge = false;
+        return { prepare(sql) {
+          if (sql.startsWith('UPDATE room_lab_request_budget')) charge = true;
+          return session.prepare(sql);
+        }, async batch(statements) {
+          const results = await session.batch(statements);
+          if (charge && input.fault === 'lost-budget-response') throw new Error('Fixture lost acknowledgment');
+          if (charge && input.fault === 'late-budget-response') clock += input.requests.windowMs;
+          return results;
+        } };
+      } };
+      const store = createBudgetedD1RoomStore(primary, { ...options, requests: input.requests, now: () => clock });
+      const method = path.slice('/test-only/budget-'.length);
+      if (!['submit', 'recover', 'readState', 'writePacket', 'readPackets', 'recoverPacket'].includes(method)) return new Response(null, { status: 404 });
+      return Response.json(await store[method](input.wire, input.key));
+    }
     if (path === '/test-only/init') {
       await initializeD1RoomAdmission(env.DB, options);
       return Response.json({ initialized: true });

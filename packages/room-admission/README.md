@@ -18,6 +18,13 @@ The signed packet wire laboratory is tracked by [#254](https://github.com/swarmr
 
 ## SQLite admission boundary
 
+The opt-in [durable request-budget wrapper](REQUEST_BUDGETS.md), #285, shares
+pre-verification request/input/work/response allowances across all six methods,
+instances and keys on one SQLite/D1 database. It reserves before protected work,
+retains charges across restarts and separates close/recovery capacity. Existing
+unwrapped laboratory stores remain unbudgeted; public ingress and integration
+remain separate release gates. Read that contract before changing accounting.
+
 This section describes the synchronous Node adapter. The D1 counterpart uses a guarded transactional batch, not an interactive JavaScript transaction; see [D1_ADMISSION.md](D1_ADMISSION.md).
 
 An operator supplies a dedicated `node:sqlite` connection, exact HTTPS hub origin, complete policy and trusted clock. The constructor creates only the `room_lab_*` tables in that explicitly supplied database, pins the hub/protocol/schema/policy, and enables WAL, FULL synchronization and a one-second busy timeout. Existing mismatched configuration fails closed; constructor options cannot silently change another connection's limits. Do not give the connection to unrelated writers or expose SQL to agents.

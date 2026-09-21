@@ -67,15 +67,16 @@ const defaultPolicy = { maxRetainedRooms: 100, maxActiveRooms: 50, maxActiveRoom
   maxPendingInvitesPerRecipient: 10, maxReceipts: 1000, windowMs: 86_400_000,
   createsPerAgent: 20, createsPerHub: 50, invitesPerAgent: 20, invitesPerHub: 50, maxInFlightPerConnection: 8 };
 let sequence = 0;
-async function setup(patch = {}, packets) {
+async function setup(patch = {}, packets, requests) {
   const policy = { ...defaultPolicy, ...patch };
   const call = async (path, body = {}) => {
-    const text = JSON.stringify({ hub, policy, packets, now: Date.now(), ...body });
+    const text = JSON.stringify({ hub, policy, packets, requests, now: Date.now(), ...body });
     assert.ok(Buffer.byteLength(text) < (packets ? 50000 : 16000));
     const response = await worker.fetch(`https://local.invalid/test-only/${path}`, { method: 'POST', body: text, signal: AbortSignal.timeout(10000) });
     assert.equal(response.status, 200); assert.equal(outbound, 0); return response.json();
   };
   await call('init');
+  if (requests) await call('budget-init');
   const [owner, peer, outsider] = await Promise.all([generateAgentKeyPair(), generateAgentKeyPair(), generateAgentKeyPair()]);
   const action = async (actor, kind = 'create', state = null, payload = { encryptionPublicKey: actor.encryptionPublicKey }) => {
     const requestId = (++sequence).toString(16).padStart(32, '0');
@@ -264,9 +265,9 @@ test('native D1 overlapping close does not turn a status snapshot into a reusabl
 });
 
 const packetLimits = () => ({ packets: 1000, bytes: 10000000, sessions: 100, packetsPerWindow: 1000, bytesPerWindow: 10000000, sessionsPerWindow: 100 });
-async function packetSetup(patch = {}) {
+async function packetSetup(patch = {}, requests) {
   const packets = { hub: { ...packetLimits(), ...patch }, room: packetLimits(), agent: packetLimits(), windowMs: 86400000 };
-  const f = await setup({}, packets);
+  const f = await setup({}, packets, requests);
   const create = await f.action(f.owner); assert.equal((await f.submit(create)).ok, true);
   const invite = await f.action(f.owner, 'invite', await f.state(create.roomId), {
     recipient: f.peer.agentId, recipientSigningPublicKey: f.peer.signingPublicKey, inviteExpiresAt: Date.now() + 120000 });
@@ -286,7 +287,7 @@ async function packetSetup(patch = {}) {
     const wire = await signRoomPacketRead({ protocol: ROOM_PACKET_READ_PROTOCOL, hub, roomId, actor: actor.agentId,
       signingPublicKey: actor.signingPublicKey, queryId: id(), issuedAt: now, expiresAt: now + 60000,
       expectedRevision: 3, afterStoredSeq, limit: 8 }, actor.signingPrivateKey);
-    return f.call('packet-read', { wire, ...extra });
+    return f.call(requests ? 'budget-readPackets' : 'packet-read', { wire, ...extra });
   };
   const recovery = async (wire, extra = {}) => {
     const proof = await prepareRoomPacket(wire, { hub, now: JSON.parse(wire).issuedAt }); assert.equal(proof.ok, true);
@@ -294,7 +295,7 @@ async function packetSetup(patch = {}) {
     const query = await signRoomPacketRecovery({ protocol: ROOM_PACKET_RECOVERY_PROTOCOL, hub, roomId, actor: f.owner.agentId,
       signingPublicKey: f.owner.signingPublicKey, requestId: proof.request.requestId, proofDigest: proof.proofDigest,
       queryId: id(), issuedAt: now, expiresAt: now + 60000 }, f.owner.signingPrivateKey);
-    return f.call('packet-recover', { wire: query, ...extra });
+    return f.call(requests ? 'budget-recoverPacket' : 'packet-recover', { wire: query, ...extra });
   };
   const closeWire = async () => signRoomControl(await f.action(f.peer, 'close', await f.state(roomId), {}), f.peer.signingPrivateKey);
   const bundle = { create: await signRoomControl(create, f.owner.signingPrivateKey), invite: await signRoomControl(invite, f.owner.signingPrivateKey),
@@ -395,4 +396,121 @@ test('native D1 read/recovery remain read-only and reject expired asynchronous r
   assert.deepEqual(await f.read(f.peer, 0, { fault: 'read-expiry' }), { ok: false, reason: 'expired_proof' });
   assert.deepEqual(await f.recovery(wire, { fault: 'read-expiry' }), { ok: false, reason: 'expired_proof' });
   assert.deepEqual(await f.inspect(), before);
+});
+
+const requestLimits = () => ({ requests: 20, inputBytes: 1000000, verifications: 200, responseBytes: 20000000 });
+const requestPolicy = () => ({ windowMs: 86400000, ordinary: requestLimits(), read: requestLimits(),
+  close: requestLimits(), recovery: requestLimits() });
+async function requestState(f) {
+  const rows = await f.call('budget-inspect'); assert.equal(rows.length, 1);
+  return JSON.parse(rows[0].state_json);
+}
+
+test('native D1 charges all six methods before proof parsing across independent requests', async () => {
+  const requests = requestPolicy(), f = await setup({}, undefined, requests);
+  const before = await f.inspect();
+  for (const method of ['submit', 'writePacket', 'readState', 'readPackets', 'recover', 'recoverPacket']) {
+    const result = await f.call(`budget-${method}`, { wire: '{}', key: f.owner.signingPublicKey });
+    assert.equal(result.ok, false); assert.notEqual(result.reason, 'storage_error');
+  }
+  const { lanes } = await requestState(f);
+  for (const lane of ['ordinary', 'read', 'recovery']) assert.equal(lanes[lane].requests, 2);
+  assert.equal(lanes.read.verifications, 10); assert.equal(lanes.read.responseBytes, 331776);
+  assert.deepEqual(await f.inspect(), before);
+});
+
+test('native D1 new keys and concurrent requests cannot oversubscribe one shared allowance', async () => {
+  const requests = requestPolicy(); requests.ordinary.requests = 1;
+  const f = await setup({}, undefined, requests);
+  const keys = [f.owner, f.peer, f.outsider];
+  const proofs = await Promise.all(keys.map(async key => ({ key: key.signingPublicKey,
+    wire: await signRoomControl(await f.action(key), key.signingPrivateKey) })));
+  const results = await Promise.all(proofs.map(proof => f.call('budget-submit', proof)));
+  assert.equal(results.filter(r => r.ok).length, 1);
+  assert.ok(results.filter(r => !r.ok).every(r => ['busy', 'rate_limited'].includes(r.reason)));
+  assert.equal((await requestState(f)).lanes.ordinary.requests, 1);
+  assert.equal((await f.inspect()).rooms.length, 1);
+  assert.equal((await f.call('budget-submit', proofs[0])).reason, 'rate_limited');
+});
+
+test('native D1 request allowances persist across full runtime restart and exact retries', async () => {
+  const requests = requestPolicy(); requests.ordinary.requests = 2;
+  const f = await setup({}, undefined, requests);
+  const proof = { wire: await signRoomControl(await f.action(f.owner), f.owner.signingPrivateKey), key: f.owner.signingPublicKey };
+  assert.equal((await f.call('budget-submit', proof)).ok, true);
+  const before = await requestState(f);
+  await mf.dispose(); await startRuntime();
+  assert.deepEqual(await requestState(f), before);
+  assert.equal((await f.call('budget-submit', proof)).replayed, true);
+  assert.equal((await f.call('budget-submit', proof)).reason, 'rate_limited');
+  assert.equal((await f.inspect()).receipts.length, 1);
+  await f.call('budget-init'); // explicit re-open validates, never refills
+  assert.equal((await requestState(f)).lanes.ordinary.requests, 2);
+});
+
+for (const fault of ['lost-budget-response', 'late-budget-response']) {
+  test(`native D1 ${fault} never starts protected work or refunds its charge`, async () => {
+    const requests = requestPolicy(); requests.ordinary.requests = 1;
+    const f = await setup({}, undefined, requests);
+    const proof = { wire: await signRoomControl(await f.action(f.owner), f.owner.signingPrivateKey), key: f.owner.signingPublicKey };
+    assert.deepEqual(await f.call('budget-submit', { ...proof, fault }),
+      { ok: false, reason: fault === 'lost-budget-response' ? 'storage_error' : 'busy' });
+    assert.equal((await f.inspect()).rooms.length, 0);
+    assert.equal((await requestState(f)).lanes.ordinary.requests, 1);
+    assert.equal((await f.call('budget-submit', proof)).reason, 'rate_limited');
+  });
+}
+
+test('native D1 packet reads keep protected data read-only and leave separate closure/recovery allowance', async () => {
+  const requests = requestPolicy(); requests.ordinary.requests = 1; requests.read.requests = 1;
+  const f = await packetSetup({}, requests), wire = await f.packetWire();
+  assert.equal((await f.call('budget-writePacket', { wire })).ok, true);
+  assert.equal((await f.call('budget-writePacket', { wire })).reason, 'rate_limited');
+  const before = await f.inspect();
+  assert.equal((await f.read()).page.records.length, 1);
+  assert.equal((await f.read()).reason, 'rate_limited');
+  assert.deepEqual(await f.inspect(), before);
+  assert.equal((await f.call('budget-submit', { wire: await f.closeWire(), key: f.peer.signingPublicKey })).ok, true);
+  assert.equal((await f.recovery(wire)).receipt.storedSeq, 1);
+  const { lanes } = await requestState(f);
+  for (const lane of ['ordinary', 'read', 'close', 'recovery']) assert.equal(lanes[lane].requests, 1);
+  assert.equal((await f.state(f.roomId)).status, 'closed');
+});
+
+test('native D1 missing request authority fails closed on new instances without replacing the row', async () => {
+  const f = await setup({}, undefined, requestPolicy());
+  await f.call('budget-remove');
+  for (const method of ['writePacket', 'readPackets', 'recoverPacket'])
+    assert.deepEqual(await f.call(`budget-${method}`, { wire: '{}' }), { ok: false, reason: 'storage_error' });
+  assert.deepEqual(await f.call('budget-inspect'), []);
+  assert.equal((await f.inspect()).rooms.length, 0);
+});
+
+test('native D1 request windows roll forward and retained time prevents rollback refills', async () => {
+  const requests = requestPolicy(); requests.ordinary.requests = 1;
+  const f = await setup({}, undefined, requests);
+  const now = (Math.floor(Date.now() / requests.windowMs) + 2) * requests.windowMs;
+  const attempt = time => f.call('budget-writePacket', { wire: '{}', now: time });
+  assert.equal((await attempt(now)).reason, 'not_configured');
+  assert.equal((await attempt(now + requests.windowMs)).reason, 'not_configured');
+  const before = await requestState(f);
+  assert.equal((await attempt(now)).reason, 'rate_limited');
+  assert.deepEqual(await requestState(f), before);
+  assert.equal((await attempt(now + 2 * requests.windowMs)).reason, 'not_configured');
+  const after = await requestState(f);
+  assert.equal(after.clock, now + 2 * requests.windowMs);
+  assert.equal(after.lanes.ordinary.requests, 1);
+});
+
+test('native D1 request configuration mismatch never changes shared authority or refills counters', async () => {
+  const requests = requestPolicy(); requests.ordinary.requests = 1;
+  const f = await setup({}, undefined, requests);
+  assert.equal((await f.call('budget-writePacket', { wire: '{}' })).reason, 'not_configured');
+  const before = await f.call('budget-inspect');
+  for (const patch of [{ hub: 'https://other.example.com' },
+    { requests: { ...requests, ordinary: { ...requests.ordinary, requests: 2 } } }]) {
+    assert.deepEqual(await f.call('budget-writePacket', { wire: '{}', ...patch }), { ok: false, reason: 'storage_error' });
+    assert.deepEqual(await f.call('budget-inspect'), before);
+  }
+  assert.equal((await f.call('budget-writePacket', { wire: '{}' })).reason, 'rate_limited');
 });

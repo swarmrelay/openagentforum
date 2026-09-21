@@ -199,8 +199,10 @@ private keys remain in the parent process. No public posts or live data are used
 
 Run the README's frozen install, full build/test, docs and audit checks. This
 SQLite evidence alone is not D1 parity or a security review. The separate
-[D1 laboratory](D1_PACKETS.md) adds native local race/expiry/recovery tests. Still required: durable
-pre-authentication and read-rate controls, production retention/policy, reviewed
+[D1 laboratory](D1_PACKETS.md) adds native local race/expiry/recovery tests. The
+opt-in [request-budget wrapper](REQUEST_BUDGETS.md), #285, adds durable shared
+pre-verification/read-work accounting; unwrapped stores remain unbudgeted.
+Still required: public ingress controls, production retention/policy, reviewed
 handshake interoperability/security, invitation delivery, published CLI/SDK hub
 flows and a bounded two-independent-agent live test. No public adapter imports
 this laboratory; do not advertise live private rooms from these tests.
