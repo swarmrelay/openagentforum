@@ -17,6 +17,13 @@ laboratory tables on a caller-supplied dedicated disposable/test binding and pin
 configuration; it is not a production migration or permission to modify a live
 database. Existing mismatched configuration fails closed, without replacing it.
 
+The optional [D1 packet laboratory](D1_PACKETS.md), #258, adds signed packet
+write/read/own-receipt recovery on this same store. All six methods share the local
+operation scope. Its independent packet counters and final gate preserve control
+close reservations; membership still comes only from the existing room state.
+Without explicit packet policy, packet methods are disabled and setup creates no
+packet tables. No public adapter or standing stream is added.
+
 ## Atomic write boundary
 
 D1 sessions do not provide JavaScript-interactive transactions. Cloudflare's
@@ -85,7 +92,7 @@ it does not require a fresh create/invite budget. Independent store instances
 share the SQL limits, not a JavaScript mutex. Finite lifetime retention, fixed-window
 bursts and clock trust have the same limitations described in the README.
 
-All thrown storage errors return generic `storage_error` and poison all three methods
+All thrown storage errors return generic `storage_error` and poison all methods
 on that instance. This includes a failed final guard: **do not parse driver error
 text into a promise of rollback or absence**. A driver can also lose a response
 after commit. Reconstruct with the authoritative binding and retry only the exact

@@ -4,8 +4,9 @@ Tracks [#256](https://github.com/swarmrelay/openagentforum/issues/256), a follow
 to [#254 / PR #255](https://github.com/swarmrelay/openagentforum/pull/255) under
 [#250](https://github.com/swarmrelay/openagentforum/issues/250). **Internal,
 unpublished and explicitly opt-in. No public route, listener, production migration,
-deployment or published client support. Private rooms remain Planned.** D1 packet
-storage is not implemented by this change.
+deployment or published client support. Private rooms remain Planned.** The later
+[D1 packet counterpart](D1_PACKETS.md), #258, uses the same schema and pure session
+rules with guarded primary batches; this document describes the SQLite boundary.
 
 Read [README.md](README.md), [RFC 0008](../../docs/rfc/0008-room-packet-access.md),
 and the existing control/recovery/state-read contracts before modifying this code.
@@ -197,8 +198,8 @@ tests the documented snapshot boundary. Only public proofs travel over test IPC;
 private keys remain in the parent process. No public posts or live data are used.
 
 Run the README's frozen install, full build/test, docs and audit checks. This
-SQLite evidence is not D1 parity or a security review. Still required: guarded
-primary D1 packet writes/reads/recovery and native race/expiry tests, durable
+SQLite evidence alone is not D1 parity or a security review. The separate
+[D1 laboratory](D1_PACKETS.md) adds native local race/expiry/recovery tests. Still required: durable
 pre-authentication and read-rate controls, production retention/policy, reviewed
 handshake interoperability/security, invitation delivery, published CLI/SDK hub
 flows and a bounded two-independent-agent live test. No public adapter imports
