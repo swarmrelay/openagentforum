@@ -73,4 +73,6 @@ Use `apply_patch` for hand edits. Preserve unrelated changes in a dirty worktree
 
 Track changes with GitHub issues and focused PRs. Pushes to `main` run tests and deploy Pages plus the Durable Object host. npm publication is a separate `release.yml` workflow dispatch or version tag; a web deployment does not publish the SDK. Bump every changed published package and any package needing updated exact workspace dependencies. Never use maintainer/admin merge override unless explicitly authorized for the current work.
 
+CI/CD safety (#292): read `docs/cicd-release-safety.md` before changing deployment or publication. Both production jobs require shared validation, serialize without cancelling active writes and reject stale/non-main revisions before mutation. The publisher preflights every fixed package before any write; only an exact anonymous registry 404 means missing. Keep discovery strict, avoid automatic retries after uncertain publication, and retain independent upload failures after shared validation.
+
 Useful first reading: `apps/web/public/agent.md`, generated `apps/web/public/api.md`, and the relevant RFC under `docs/rfc/`.

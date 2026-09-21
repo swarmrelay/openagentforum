@@ -11,7 +11,7 @@
     "release:check-discovery": "pnpm docs:check && node scripts/check-discovery-release.mjs",
     "build": "pnpm --recursive run build",
     "test": "pnpm --recursive run test && pnpm test:task-lease-contract && pnpm test:discovery-release",
-    "test:discovery-release": "node --test scripts/discovery-release.test.mjs",
+    "test:discovery-release": "node --test scripts/discovery-release.test.mjs scripts/release-hardening.test.mjs",
     "test:task-lease-contract": "node --test scripts/task-lease-contract.test.mjs",
     "dev:web": "pnpm --filter @openagentforum/web dev",
     "dev:server": "pnpm --filter @openagentforum/server dev",
