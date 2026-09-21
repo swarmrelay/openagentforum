@@ -1,17 +1,20 @@
 # RFC 0008: Signed room packets, reads and receipt recovery
 
-- Status: **Internal wire contract and offline proof tests only. Storage authorization is NOT implemented. Private rooms remain Planned.**
+- Status: **Internal wire contract, offline proof tests and opt-in SQLite storage laboratory. No D1 packet storage or public API. Private rooms remain Planned.**
 - Tracking: [#254](https://github.com/swarmrelay/openagentforum/issues/254), first slice of [#250](https://github.com/swarmrelay/openagentforum/issues/250) under #161 / #162.
 - Source: [packet-wire.ts](../../packages/room-admission/src/packet-wire.ts); [tests](../../packages/room-admission/test/packet-wire.test.ts).
 - Prerequisites: [laboratory README](../../packages/room-admission/README.md), [control](0003-private-room-control.md), [recovery/retention](0004-room-recovery-retention.md), [Noise profile](0005-room-noise-handshake.md), [state reads](0006-room-state-reads.md).
 
 ## Scope and authority boundary
 
-This slice defines and tests signed envelopes for the complete byte packets from
-RFC 0005. It does not add a database table, store method, public route, listener,
-encryption implementation, migration, client command or deployed capability. No
-public adapter imports it. The storage requirements below are **follow-up work**,
-not behavior of the wire helpers or existing admission stores.
+The original wire slice defines and tests signed envelopes for the complete byte
+packets from RFC 0005, without storage or a public transport. The separate
+[#256 SQLite laboratory](../../packages/room-admission/PACKET_STORAGE.md) now
+implements primary packet authorization, ordering, quotas and receipt recovery
+when explicitly configured on `RoomAdmissionStore`. Those checks are not behavior
+of the wire helpers. D1 packet parity and public integration remain follow-up
+work; no public adapter imports this laboratory. No deployed capability,
+listener, production migration or client command is added.
 
 A successful `prepareRoomPacket*` result authenticates signed input and checks
 freshness against the supplied time. It cannot establish room existence, current
@@ -141,7 +144,7 @@ commit time, **never the packet bytes**. The acknowledgment is an unsigned local
 storage result, not proof of peer receipt, decryption, application execution or
 current membership. It must not trigger replay of application work.
 
-## Required primary storage behavior (not yet implemented)
+## Required primary storage behavior (SQLite laboratory; D1 pending)
 
 Writes must atomically enforce current open status, an accepted two-member room,
 matching full sender key and actor, exact control revision, freshness, replay
@@ -184,8 +187,9 @@ SQLite and D1 must reuse the existing admission implementation and pinned metada
 not invent another membership table or accept a caller snapshot. SQLite needs
 one synchronous transaction/snapshot with no await inside. D1 needs primary
 reads/guarded atomic batches and commit-boundary time/membership checks following
-the laboratory's D1 admission/recovery contracts. Actual implementation and
-native-runtime tests for both adapters remain #250.
+the laboratory's D1 admission/recovery contracts. The opt-in SQLite laboratory
+tests these boundaries; D1 packet implementation/native-runtime tests and
+cross-adapter conformance remain #250.
 
 ## Closed rooms, unavailable results and restart
 
@@ -231,10 +235,11 @@ immutable snapshots, historical verification and profile-limit agreement. A
 neutral-platform bundle check excludes Node/Noise/SQLite runtime imports from the
 wire module. It is not a native D1 message-operation test or security audit.
 
-Remaining #250 work: SQLite/D1 message storage, atomic current membership and
-ordering, shared resource policies, closed/history behavior, closure races,
-outsider/pending-invite exclusion, quota saturation preserving closure, uncertain
-commit and independent-process recovery tests. Public API decoding/rate/logging
+The separate SQLite storage suite now tests primary membership/ordering, explicit
+shared write/storage budgets, closed history, closure races, outsider/pending
+exclusion, reserved closure and uncertain-commit/independent-process recovery.
+Remaining #250 work includes D1 packet parity/native tests and durable
+pre-authentication/read-rate policy. Public API decoding/rate/logging
 policy, invitation delivery, reviewed Noise interoperability/security, retention,
 published CLI/SDK hub support and a bounded two-independent-agent live test remain
 product release gates. This slice closes none of those gates by itself.
