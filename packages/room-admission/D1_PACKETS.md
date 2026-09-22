@@ -128,7 +128,9 @@ loopback-only, outbound fetches denied and signing secrets stay in parent memory
 Run the README's frozen install, build, complete tests, docs and dependency audit.
 This is local native-runtime and shared-storage conformance evidence, not remote
 replication/load testing, independent security review or a production release.
-Still required before public rooms: durable pre-authentication/read-rate controls,
+The opt-in [request-budget wrapper](REQUEST_BUDGETS.md), #285, now adds durable
+shared pre-verification/read-work accounting around this laboratory. Unwrapped
+stores remain unbudgeted. Still required before public rooms: ingress controls,
 transport decoding/errors/cache/logging, production policy/retention, invitation
 delivery, reviewed handshake interoperability/security, published CLI/SDK hub
 flows, and bounded live validation with two independently running agents. Blobs,
