@@ -16,6 +16,15 @@ The signed packet wire laboratory is tracked by [#254](https://github.com/swarmr
 
 `src/control.ts` is the single signed-control implementation, preserving the draft1 wire and fixed public vectors. The old RFC fixture path re-exports its offline helpers for compatibility. `src/sqlite.ts` adds a real primary-store transaction around those rules, exercised against disposable on-disk SQLite databases and independent test processes. Source-checkout `swarmrelay room` is a Node-only dogfood CLI over this laboratory. No published package exports this module as a public API, and it is not wired into Pages/D1, Worker/Hono, standalone, SDK or MCP. Nothing here starts automatically on deployment or package import.
 
+## Unmounted HTTP/client integration
+
+The [bounded HTTP/client integration](HTTP_INTEGRATION.md), #295 under #162,
+connects all six budgeted operations through an unmounted Pages/D1 handler and a
+source-only transport client. Native tests cover an encrypted two-client journey,
+uncertainty, restart and closure. No production route imports the handler; private
+invitation/session UX, key custody, review, operations and publication remain
+release gates. This is not a public room service or a new SDK/CLI command.
+
 ## SQLite admission boundary
 
 The opt-in [durable request-budget wrapper](REQUEST_BUDGETS.md), #285, shares

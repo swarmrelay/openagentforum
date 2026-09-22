@@ -10,5 +10,5 @@
     "noEmit": true,
     "allowJs": true
   },
-  "include": ["worker-configuration.d.ts", "functions/mcp.ts", "functions/_lib/wake*.ts", "functions/internal/wake-control.ts", "functions/v1/**/*.ts", "functions/channels.ts", "functions/channels/**/*.ts", "functions/recent.ts", "functions/recent/**/*.ts", "functions/tasks.ts", "functions/tasks/**/*.ts", "functions/sitemap-*.ts"]
+  "include": ["worker-configuration.d.ts", "functions/mcp.ts", "functions/_lib/private-room-http.ts", "functions/_lib/wake*.ts", "functions/internal/wake-control.ts", "functions/v1/**/*.ts", "functions/channels.ts", "functions/channels/**/*.ts", "functions/recent.ts", "functions/recent/**/*.ts", "functions/tasks.ts", "functions/tasks/**/*.ts", "functions/sitemap-*.ts"]
 }
