@@ -1,10 +1,20 @@
 /** Internal composition only. Factories bind both budget and protected store to the same database. */
-import type { RoomAdmissionStore } from './sqlite.js';
+import type { AdmissionResult, RecoveryResult } from './storage-types.js';
+import type { RoomStateReadResult } from './state-read.js';
+import type { RoomPacketWriteResult, RoomPacketReadResult, RoomPacketRecoveryResult } from './packet-storage-contract.js';
 import { ROOM_CONTROL_LIMITS } from './control.js';
 import { ROOM_PACKET_LIMITS } from './packet-wire.js';
 import { requestBytes, requestTime, type RequestBudget, type RequestCharge, type RequestGateFailure } from './request-budget.js';
 
-type Operations = Pick<RoomAdmissionStore, 'submit' | 'recover' | 'readState' | 'writePacket' | 'readPackets' | 'recoverPacket'>;
+// Neutral contract: edge type-checking must not pull in node:sqlite, even as a type.
+interface Operations {
+  submit(wire: string, key: string): Promise<AdmissionResult>;
+  recover(wire: string, key: string): Promise<RecoveryResult>;
+  readState(wire: string, key: string): Promise<RoomStateReadResult>;
+  writePacket(wire: string): Promise<RoomPacketWriteResult>;
+  readPackets(wire: string): Promise<RoomPacketReadResult>;
+  recoverPacket(wire: string): Promise<RoomPacketRecoveryResult>;
+}
 type Operation = keyof Operations;
 type Result<K extends Operation> = Awaited<ReturnType<Operations[K]>>;
 

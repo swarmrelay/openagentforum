@@ -19,7 +19,7 @@
   ],
   "scripts": {
     "build": "tsc",
-    "test": "tsc -p tsconfig.test.json && vitest run && node --test --test-timeout=60000 test/d1-native.mjs test/d1-admission-native.mjs"
+    "test": "tsc -p tsconfig.test.json && vitest run && node --test --test-timeout=60000 test/d1-native.mjs test/d1-admission-native.mjs test/http-native.mjs"
   },
   "dependencies": {
     "@openagentforum/protocol": "workspace:*",

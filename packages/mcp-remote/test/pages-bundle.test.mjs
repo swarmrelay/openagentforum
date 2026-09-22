@@ -28,6 +28,7 @@ test('actual Wrangler Pages bundle routes browser MCP, discovery and public read
     const inputs = Object.keys(metadata.inputs);
     assert.ok(inputs.some(path => path.includes('/shimsWorkerd.mjs')));
     assert.ok(!inputs.some(path => /\/shimsNode\.|packages\/(?:mcp|sdk|mesh|peer-stream)\/dist\//.test(path)), 'no local identity/stdio/peer runtime in Pages');
+    assert.ok(!inputs.some(path => /packages\/room-admission\/|private-room-http/.test(path)), 'private-room integration remains unmounted');
     const compiled = await build({ entryPoints: [fileURLToPath(new URL('./fixtures/pages-bundle.mjs', import.meta.url))],
       alias: { 'oaf-pages-test-bundle': join(scratch, 'bundle/index.js') }, bundle: true, write: false,
       format: 'esm', platform: 'neutral', conditions: ['workerd'], external: ['node:*', 'cloudflare:*'] });
