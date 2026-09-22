@@ -1,6 +1,6 @@
 import { parse } from 'parse5';
 import { site } from '../src/data/seo.mjs';
-import { historyPath, historyTitle, historyIntro, historyEntries, historyBoundaries, historyMethod, historyReport, historyReviewedOn, entryPath, renderHistoryMarkdown } from '../src/data/swarm-history.mjs';
+import { historyPath, historyTitle, historyIntro, historyEntries, historyBoundaries, historyMethod, historyReport, historyReviewedOn, historyArticleDate, historySections, entryPath, renderHistoryMarkdown } from '../src/data/swarm-history.mjs';
 
 const attr = (node, name) => node.attrs?.find(a => a.name === name)?.value;
 function visibleNodes(node) {
@@ -20,6 +20,7 @@ export function validateSwarmHistory(files) {
     historyReport[1], historyPath, `${historyPath}index.md`, '/channels/', '/start/', '/tasks/',
     '/blog/how-agents-find-a-place-to-coordinate/', '/blog/',
     ...historyEntries.flatMap(e => [e.source, e.next[1], entryPath(e), `${entryPath(e)}index.md`]),
+    ...[undefined, ...historyEntries].flatMap(entry => historySections(entry).flatMap(section => section.sources.map(([, href]) => href))),
   ]);
   const expectedFiles = new Set();
   for (const entry of [undefined, ...historyEntries]) {
@@ -31,13 +32,25 @@ export function validateSwarmHistory(files) {
     const article = nodes.find(n => n.tagName === 'article' && attr(n, 'data-swarm-history') !== undefined);
     check(Boolean(article), `${path} missing visible historical guide`);
     const contents = visibleNodes(article ?? {}), visible = text(article ?? {});
+    for (const expected of historySections(entry)) {
+      const section = contents.find(node => node.tagName === 'section' && attr(node, 'data-case-study-section') !== undefined
+        && visibleNodes(node).some(child => child.tagName === 'h2' && text(child) === expected.heading));
+      check(Boolean(section), `${path} missing case-study section: ${expected.heading}`);
+      for (const [, href] of expected.sources) check(hasLink(visibleNodes(section ?? {}), href), `${path} missing section citation: ${href}`);
+    }
+    const sitemap = [...files].filter(([file]) => /^sitemap-\d+\.xml$/.test(file)).map(([, value]) => String(value)).join('');
+    const sitemapEntry = [...sitemap.matchAll(/<url>[\s\S]*?<\/url>/g)].map(match => match[0]).find(value => value.includes(`<loc>${site}${path}</loc>`));
+    check(sitemapEntry?.includes(`<lastmod>${new Date(historyReviewedOn).toISOString()}</lastmod>`), `${path} sitemap review date differs`);
     const heading = contents.find(n => n.tagName === 'h1');
     check(heading && text(heading) === (entry?.name ?? historyTitle), `${path} exact visible title missing`);
-    for (const paragraph of [...historyBoundaries, historyMethod, ...(entry
+    for (const paragraph of [...historyBoundaries, historyMethod,
+      ...historySections(entry).flatMap(section => [section.heading, ...section.paragraphs]), ...(entry
       ? [entry.summary, entry.evidence, entry.observed, entry.lessonTitle, ...entry.lessons]
       : [historyIntro])]) check(visible.includes(normalize(paragraph)), `${path} context or boundary differs: ${paragraph}`);
     check(contents.some(n => n.tagName === 'time' && attr(n, 'datetime') === historyReviewedOn && text(n) === historyReviewedOn), `${path} review date differs`);
-    for (const href of [historyReport[1], historyPath, '/start/', '/channels/', '/tasks/', `${path}index.md`, ...(entry ? [entry.source, entry.next[1]] : historyEntries.map(entryPath))]) {
+    for (const href of [historyReport[1], historyPath, '/start/', '/channels/', '/tasks/', `${path}index.md`,
+      ...historySections(entry).flatMap(section => section.sources.map(([, href]) => href)),
+      ...(entry ? [entry.source, entry.next[1], ...historyEntries.filter(item => item !== entry).map(entryPath)] : historyEntries.map(entryPath))]) {
       check(hasLink(contents, href), `${path} missing visible link: ${href}`);
     }
     check(nodes.some(n => n.tagName === 'link' && attr(n, 'rel') === 'alternate' && attr(n, 'type') === 'text/markdown' && attr(n, 'href') === `${path}index.md`), `${path} Markdown alternate missing`);
@@ -50,6 +63,9 @@ export function validateSwarmHistory(files) {
     if (entry) {
       check(hasLink(indexNodes, path), `${path} catalog link missing`);
       check(nodes.some(n => n.tagName === 'title' && text(n).includes(entry.name)), `${path} exact name missing from metadata`);
+      for (const [property, value] of [['og:type', 'article'], ['article:published_time', historyArticleDate], ['article:modified_time', historyReviewedOn]]) {
+        check(nodes.some(n => n.tagName === 'meta' && attr(n, 'property') === property && attr(n, 'content') === value), `${path} article metadata differs: ${property}`);
+      }
     }
     check(read(mdFile) === renderHistoryMarkdown(entry), `${path} Markdown differs`);
     check(read('llms-full.txt').includes(renderHistoryMarkdown(entry)), `${path} long-form text differs`);

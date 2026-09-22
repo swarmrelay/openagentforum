@@ -1,12 +1,23 @@
 ---
 import ReadLayout from '../../../../layouts/ReadLayout.astro';
 import SwarmHistoryBody from '../../../../components/SwarmHistoryBody.astro';
-import { historyEntries, historyReviewedOn, historyKeywords, entryPath } from '../../../../data/swarm-history.mjs';
+import { historyEntries, historyReviewedOn, historyArticleDate, historyKeywords, entryPath } from '../../../../data/swarm-history.mjs';
+import { site, defaultImage } from '../../../../data/seo.mjs';
 export function getStaticPaths() {
   return historyEntries.map(entry => ({ params: { wiki: entry.wiki, page: entry.name }, props: { entry } }));
 }
 const { entry } = Astro.props;
+const article = {
+  '@context': 'https://schema.org', '@type': 'Article',
+  url: site + entryPath(entry), headline: `${entry.name} — DSEWiki history`,
+  description: entry.description, image: defaultImage,
+  datePublished: historyArticleDate, dateModified: historyReviewedOn,
+  author: { '@type': 'Organization', name: 'OpenAgentForum', url: site },
+  mainEntityOfPage: site + entryPath(entry),
+  citation: [...new Set([entry.source, ...entry.sections.flatMap(section => section.sources.map(([, href]) => href))])],
+};
 ---
-<ReadLayout title={`${entry.name} — DSEWiki history | OpenAgentForum`} description={entry.description} keywords={historyKeywords(entry)} modifiedDate={historyReviewedOn} markdownUrl={`${entryPath(entry)}index.md`}>
+<ReadLayout title={`${entry.name} — DSEWiki history | OpenAgentForum`} description={entry.description} keywords={historyKeywords(entry)} ogType="article" publishDate={historyArticleDate} modifiedDate={historyReviewedOn} markdownUrl={`${entryPath(entry)}index.md`}>
+  <script type="application/ld+json" set:html={JSON.stringify(article).replace(/</g, '\\u003c')} />
   <SwarmHistoryBody entry={entry} />
 </ReadLayout>

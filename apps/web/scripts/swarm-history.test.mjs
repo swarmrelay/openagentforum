@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { site } from '../src/data/seo.mjs';
-import { historyPath, historyTitle, historyIntro, historyEntries, historyBoundaries, historyMethod, historyReport, historyReviewedOn, entryPath, historyKeywords, renderHistoryMarkdown } from '../src/data/swarm-history.mjs';
+import { historyPath, historyTitle, historyIntro, historyEntries, historyBoundaries, historyMethod, historyReport, historyReviewedOn, historyArticleDate, historySections, entryPath, historyKeywords, renderHistoryMarkdown } from '../src/data/swarm-history.mjs';
 import { validateSwarmHistory } from './check-swarm-history.mjs';
 
 const escape = s => s.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;');
@@ -13,9 +13,15 @@ function fixture() {
     const paragraphs = [...historyBoundaries, historyMethod, ...(entry
       ? [entry.summary, entry.evidence, entry.observed, entry.lessonTitle, ...entry.lessons]
       : [historyIntro])];
-    const links = [...new Set([historyPath, historyReport[1], '/start/', '/channels/', '/tasks/', `${path}index.md`, ...(entry ? [entry.source, entry.next[1]] : historyEntries.map(entryPath))])];
-    const html = `<title>${title}</title><link rel="alternate" type="text/markdown" href="${path}index.md"><article data-swarm-history><h1>${title}</h1><time datetime="${historyReviewedOn}">${historyReviewedOn}</time>`
-      + paragraphs.map(p => `<p>${escape(p)}</p>`).join('') + links.map(href => `<a href="${href}">Read more</a>`).join('') + '</article>';
+    const links = [...new Set([historyPath, historyReport[1], '/start/', '/channels/', '/tasks/', `${path}index.md`,
+      ...historySections(entry).flatMap(section => section.sources.map(([, href]) => href)),
+      ...(entry ? [entry.source, entry.next[1], ...historyEntries.filter(item => item !== entry).map(entryPath)] : historyEntries.map(entryPath))])];
+    const metadata = entry ? `<meta property="og:type" content="article"><meta property="article:published_time" content="${historyArticleDate}"><meta property="article:modified_time" content="${historyReviewedOn}">` : '';
+    const sections = historySections(entry).map(section => '<section data-case-study-section>'
+      + `<h2>${escape(section.heading)}</h2>` + section.paragraphs.map(p => `<p>${escape(p)}</p>`).join('')
+      + section.sources.map(([label, href]) => `<a href="${href}">${escape(label)}</a>`).join('') + '</section>').join('');
+    const html = `<title>${title}</title>${metadata}<link rel="alternate" type="text/markdown" href="${path}index.md"><article data-swarm-history><h1>${title}</h1><time datetime="${historyReviewedOn}">${historyReviewedOn}</time>`
+      + paragraphs.map(p => `<p>${escape(p)}</p>`).join('') + sections + links.map(href => `<a href="${href}">Read more</a>`).join('') + '</article>';
     files.set(`${path.slice(1)}index.html`, html);
     files.set(`${path.slice(1)}index.md`, renderHistoryMarkdown(entry));
     longform.push(renderHistoryMarkdown(entry));
@@ -23,6 +29,8 @@ function fixture() {
   }
   files.set('_headers', headers.join('\n\n'));
   files.set('llms-full.txt', longform.join('\n---\n'));
+  files.set('sitemap-0.xml', '<urlset>' + [historyPath, ...historyEntries.map(entryPath)].map(path =>
+    `<url><loc>${site}${path}</loc><lastmod>${new Date(historyReviewedOn).toISOString()}</lastmod></url>`).join('') + '</urlset>');
   for (const file of ['blog/index.html', 'blog/how-agents-find-a-place-to-coordinate/index.html']) files.set(file, `<a href="${historyPath}">Historical guide</a>`);
   for (const file of ['agent.md', 'llms.txt']) files.set(file, `${historyPath}\n${historyPath}index.md`);
   return files;
@@ -95,4 +103,48 @@ test('catalog, research and machine guides must offer ordinary discoverable link
   }
   const files = fixture(); files.set('swarm-history/index.html', files.get('swarm-history/index.html').replace(`href="${entryPath(historyEntries[0])}"`, 'href="/swarm-history/"'));
   assert.ok(validateSwarmHistory(files).some(e => e.includes('catalog link missing')));
+});
+
+test('expanded case studies keep distinct substantive analysis and explicit editorial positioning', () => {
+  const paragraphs = historyEntries.flatMap(entry => entry.sections.flatMap(section => section.paragraphs));
+  assert.equal(new Set(paragraphs).size, paragraphs.length);
+  for (const entry of historyEntries) {
+    assert.ok([entry.evidence, ...entry.lessons, ...entry.sections.flatMap(section => section.paragraphs)].join(' ').split(/\s+/).length >= 400);
+    assert.ok(entry.sections.some(section => section.sources.some(([, href]) => href === entry.source)));
+    assert.ok(renderHistoryMarkdown(entry).includes('## Related case studies'));
+  }
+  const context = historySections().flatMap(section => section.paragraphs).join(' ');
+  assert.match(context, /editorial position/);
+  assert.match(context, /recursive self-improvement/);
+  assert.match(context, /did not run on the evaluations involved/);
+  assert.match(context, /different swarm/);
+  assert.match(context, /not a prediction established/);
+});
+
+test('case-study prose, nearby citations and article metadata cannot disappear from HTML', () => {
+  for (const entry of [undefined, ...historyEntries]) {
+    const path = `${(entry ? entryPath(entry) : historyPath).slice(1)}index.html`;
+    for (const section of historySections(entry)) {
+      for (const paragraph of section.paragraphs) {
+        const files = fixture(); files.set(path, files.get(path).replace(escape(paragraph), ''));
+        assert.ok(validateSwarmHistory(files).length);
+      }
+      for (const [, href] of section.sources) {
+        const files = fixture(); files.set(path, files.get(path).replaceAll(`href="${href}"`, 'href="/missing-source/"'));
+        assert.ok(validateSwarmHistory(files).some(error => error.includes('missing visible link')));
+      }
+    }
+    if (entry) {
+      const files = fixture(); files.set(path, files.get(path).replace('content="article"', 'content="website"'));
+      assert.ok(validateSwarmHistory(files).some(error => error.includes('article metadata')));
+    }
+  }
+});
+
+test('sitemap dates reflect editorial review, and citations must accompany their section', () => {
+  const files = fixture(); files.set('sitemap-0.xml', files.get('sitemap-0.xml').replaceAll(historyReviewedOn, '2020-01-01'));
+  assert.ok(validateSwarmHistory(files).some(error => error.includes('sitemap')));
+  const moved = fixture(), path = 'swarm-history/index.html', [, href] = historySections()[1].sources[0];
+  moved.set(path, moved.get(path).replace(`href="${href}"`, 'href="/start/"'));
+  assert.ok(validateSwarmHistory(moved).some(error => error.includes('section citation')));
 });
