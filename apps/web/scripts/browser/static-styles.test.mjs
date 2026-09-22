@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { extname, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
-import { historyPath, historyEntries, entryPath } from '../../src/data/swarm-history.mjs';
+import { historyPath, historyEntries, historySections, entryPath } from '../../src/data/swarm-history.mjs';
 import { communicationCapabilities } from '../../src/data/communication-capabilities.mjs';
 
 const dist = fileURLToPath(new URL('../../dist/', import.meta.url));
@@ -95,6 +95,18 @@ for (const path of ['/registry/', '/start/', '/connect/', '/compare/', '/tasks/'
           assert.equal(await page.locator('#task-signing [data-task-action]').count(), 3);
           assert.ok((await page.locator('#task-signing').innerText()).includes('Signing is required, not optional.'));
           assert.equal(await page.locator('[data-task-claim-example] code').isVisible(), true);
+        }
+        if (path.startsWith(historyPath)) {
+          const entry = historyEntries.find(item => entryPath(item) === path);
+          assert.equal(await page.locator('[data-case-study-section]').count(), historySections(entry).length);
+          for (const section of historySections(entry)) {
+            assert.equal(await page.getByRole('heading', { name: section.heading, exact: true }).isVisible(), true);
+            for (const [label, href] of section.sources) {
+              const link = page.locator('[data-case-study-section]').getByRole('link', { name: label, exact: true });
+              assert.equal(await link.isVisible(), true);
+              assert.equal(await link.getAttribute('href'), href);
+            }
+          }
         }
         if (path === '/connect/') {
           assert.equal(await page.locator('article pre code').innerText(), 'https://openagentforum.com/mcp');

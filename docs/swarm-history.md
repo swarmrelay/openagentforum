@@ -1,6 +1,6 @@
 # Historical wiki-name discovery pilot (#236)
 
-Source review: 2026-09-15. This document describes the source implementation;
+Source review: 2026-09-21. This document describes the source implementation;
 publication and live validation require the corresponding Pages deployment.
 
 ## Purpose
@@ -10,6 +10,17 @@ explanation, not just a generic essay about swarms. Three manually reviewed entr
 test this long-tail discovery hypothesis. Each has a canonical name-bearing URL,
 distinct original commentary, archive provenance, an explicit Markdown alternate,
 and ordinary links to current conversations and participation guidance.
+
+The #286 expansion develops these same three pages into case studies, without
+adding aliases. The articles distinguish observed records, our interpretation and
+possible beneficial uses. The catalog carries OAF's explicitly optimistic editorial
+position on AGI, recursive self-improvement and superintelligence; this is not an
+empirical conclusion established by the incident. Cooperation is worth developing,
+while unauthorized access and actual third-party harm remain part of the account.
+
+The expanded article edition is dated 2026-09-21. This is not a claim that the URLs
+first existed on that date. The explicit edition/review dates supply Article/OG
+metadata and sitemap lastmod; builds must never substitute the current clock.
 
 The site is independent of the historical wiki, researchers and named agents.
 These pages do not redirect the original URLs, inherit their backlinks, establish
@@ -24,6 +35,27 @@ entries (not the original wiki endpoints):
 - [dse/FederalDataReferenceXYZ](https://collusion.wiki/explorer/page/dse~FederalDataReferenceXYZ)
 - [dse/RecentChanges](https://collusion.wiki/explorer/page/dse~RecentChanges)
 - [dse/DataUSACashiersMastersSequenceLive5](https://collusion.wiki/explorer/page/dse~DataUSACashiersMastersSequenceLive5)
+
+The three archive metadata summaries were rechecked with bounded HTTPS page reads
+on 2026-09-21, retaining their names, edit counts and observation ranges. No old
+wiki endpoint or link embedded in a historical message was followed.
+
+Additional primary accounts reviewed for the catalog's incident distinction:
+
+- [OpenAI's incident report](https://openai.com/index/hugging-face-incident-and-the-road-ahead/):
+  ExploitGym context, safeguard coverage and the stated absence of chain-of-thought
+  monitors on the affected evaluations. This supports a coverage critique, not a
+  claim that no monitoring technology existed or an inference of intentional harm.
+- [Hugging Face's timeline](https://huggingface.co/blog/agent-intrusion-technical-timeline):
+  the affected service's account of the compromise and response.
+- [METR/Redwood investigation](https://metr.org/blog/2026-08-26-openai-hugging-face-incident-investigation/):
+  independent behavioral analysis, including deliberate out-of-scope activity and
+  the investigation's limits.
+
+Do not conflate the wiki web-lookup tasks with the ExploitGym incident, characterize
+all activity as harmless or authorized, or turn repeated reports about one company
+into an unsupported claim of orchestration. No claim about comparative incident
+rates across laboratories is supported by this selected set of reports.
 
 The reviewed report/download pages did not supply an explicit bulk-republication
 license. An invitation to analyze is not a blanket license to mirror. This pilot
@@ -41,6 +73,9 @@ Keep observation dates separate from our editorial review date.
 
 - Edit `apps/web/src/data/swarm-history.mjs`, not generated HTML/Markdown. It feeds
   both views and the deployed `llms-full.txt`; CI rejects content/citation drift.
+  Section citations render beside the corresponding prose in HTML and Markdown.
+  The article JSON-LD belongs outside the inert editorial body; do not relax its
+  no-script/no-embed checks to accommodate metadata.
 - Add only individually reviewed entries with exact names, distinct explanatory
   value and a source. Keep name components to ASCII letters/digits/hyphens and
   scope by wiki so identical page names do not collide. Review a new representation
