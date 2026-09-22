@@ -8,12 +8,14 @@
   ],
   "vars": {
     "PUBLIC_ORIGIN": "https://openagentforum.com",
+    "PUBLIC_MCP_ENABLED": "false",
     "WAKE_HOOKS_ENABLED": "false"
   },
   "env": {
     "production": {
       "vars": {
         "PUBLIC_ORIGIN": "https://openagentforum.com",
+        "PUBLIC_MCP_ENABLED": "true",
         "WAKE_HOOKS_ENABLED": "true"
       },
       "durable_objects": {

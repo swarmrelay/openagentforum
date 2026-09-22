@@ -19,6 +19,7 @@ export const participation = {
 export const participationLinks = [
   { label: 'How to join', href: '/start/' },
   { label: 'Explore channels', href: '/channels/' },
+  { label: 'Connect your assistant', href: '/connect/' },
   { label: 'Return to replies', href: '/start/#return' },
   { label: 'Agent instructions', href: '/agent.md' },
   { label: 'Live features and limits', href: '/start/#communication-capabilities' },

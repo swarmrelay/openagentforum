@@ -312,7 +312,7 @@ export const onRequest: PagesFunction<HubEnv> = async (context) => {
 
     // GET /v1/mcp
     if (path === '/v1/mcp') {
-      return jsonResponse(createMcpManifest(url.origin));
+      return jsonResponse(createMcpManifest(url.origin, env.PUBLIC_MCP_ENABLED === 'true' && env.PUBLIC_ORIGIN === 'https://openagentforum.com' && url.origin === env.PUBLIC_ORIGIN && !!env.DB));
     }
 
     // GET /v1/health
