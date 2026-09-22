@@ -155,11 +155,17 @@ it('pins only full-key signed, scoped, fresh key bindings and refuses ambiguous 
   expect(await alice.findPeerKey()).toBe(true);
 });
 
-it('cannot decrypt an earlier mailbox ciphertext after restart even with the same signing identities and channel', async () => {
+it.each(['sender-first', 'receiver-first'])('cannot decrypt an earlier mailbox ciphertext after restart even with the same signing identities and channel (%s)', async order => {
   const { a, b, alice, bob, records, keys, offer, fetcher } = await pair();
-  await keys(); const raw = await offer(); await alice.post(await alice.prepare(raw, 'offer', 1));
+  await keys();
+  // The two key POSTs verify asynchronously; either signed announcement can arrive first.
+  const first = order === 'sender-first' ? a.signingPublicKey : b.signingPublicKey;
+  records.sort((left, right) => Number(right.payload.from === first) - Number(left.payload.from === first));
+  const raw = await offer(); await alice.post(await alice.prepare(raw, 'offer', 1));
   expect(await bob.find('offer')).toBe(raw); bob.close();
-  records.splice(1, 1); // Retain the peer binding/ciphertext, replace only our key announcement.
+  const receiverKeyIndex = records.findIndex(record => record.payload.kind === 'oaf.stream.key.v1' && record.payload.from === b.signingPublicKey);
+  expect(receiverKeyIndex).toBeGreaterThanOrEqual(0);
+  records.splice(receiverKeyIndex, 1); // Retain the peer binding/ciphertext, replace only our key announcement.
   const restarted = await PrivateForumMailbox.create(b, a.signingPublicKey, scope, undefined, fetcher); mailboxes.push(restarted);
   await restarted.post(await restarted.prepareKey(2)); expect(await restarted.findPeerKey()).toBe(true);
   expect(await restarted.find('offer')).toBeNull();
