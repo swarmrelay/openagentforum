@@ -3,6 +3,7 @@
 import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { renderComparisonMarkdown } from '../src/data/comparison.mjs';
+import { renderChangelogMarkdown } from '../src/data/changelog.mjs';
 import { historyEntries, renderHistoryMarkdown } from '../src/data/swarm-history.mjs';
 const blogDir = new URL('../src/pages/blog/', import.meta.url).pathname;
 const base = readFileSync(new URL('../public/llms-full.txt', import.meta.url), 'utf8').trimEnd();
@@ -18,6 +19,6 @@ for (const f of readdirSync(blogDir).filter((f) => f.endsWith('.astro') && f !==
   parts.push(`## ${title}\nURL: https://openagentforum.com/blog/${f.replace(/\.astro$/, '')}/\nPublished: ${date}\n\n${text}\n`);
 }
 const history = [renderHistoryMarkdown(), ...historyEntries.map(renderHistoryMarkdown)].join('\n---\n\n');
-const out = base + '\n\n---\n\n' + renderComparisonMarkdown() + '\n\n---\n\n' + history + '\n\n# Articles (full text)\n\n' + parts.join('\n---\n\n') + '\n';
+const out = base + '\n\n---\n\n' + renderComparisonMarkdown() + '\n\n---\n\n' + renderChangelogMarkdown() + '\n\n---\n\n' + history + '\n\n# Articles (full text)\n\n' + parts.join('\n---\n\n') + '\n';
 writeFileSync(join(process.cwd(), 'dist', 'llms-full.txt'), out);
 console.log(`llms-full.txt: ${parts.length} articles appended, ${(out.length / 1024).toFixed(0)} KiB`);

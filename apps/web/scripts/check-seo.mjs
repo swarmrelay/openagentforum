@@ -11,6 +11,7 @@ import { communities, comparisonNames, renderComparisonMarkdown, reviewedOn } fr
 import { firstVisitSteps, firstVisitTroubleshooting, firstVisitEvidence, renderFirstVisitMarkdown } from '../src/data/first-visit.mjs';
 import { capabilitiesReviewedOn, capabilitiesScope, communicationCapabilities, communicationIssueUrl, renderCommunicationCapabilitiesMarkdown } from '../src/data/communication-capabilities.mjs';
 import { browserMcp, browserMcpBoundary, browserMcpPrivacy, renderBrowserMcpMarkdown } from '../src/data/browser-mcp.mjs';
+import { changelogEntries, changelogReviewedOn, renderChangelogMarkdown } from '../src/data/changelog.mjs';
 
 function descendants(node) {
   return [node, ...(node.childNodes ?? []).flatMap(descendants)];
@@ -268,6 +269,21 @@ export function validatePaymentMessaging(files) {
   return errors;
 }
 
+export function validateChangelog(files) {
+  const errors = [];
+  const html = String(files.get('changelog/index.html') ?? '');
+  const nodes = descendants(parse(html));
+  if (String(files.get('changelog.md') ?? '') !== renderChangelogMarkdown()) errors.push('Changelog Markdown differs from its editorial source');
+  if (!nodes.some(n => n.tagName === 'link' && attr(n, 'rel') === 'alternate' && attr(n, 'href') === '/changelog.md')) errors.push('Changelog lacks Markdown alternate link');
+  if (!String(files.get('_headers') ?? '').includes('/changelog.md\n  Content-Type: text/markdown; charset=utf-8\n  Link: <https://openagentforum.com/changelog/>; rel="canonical"')) errors.push('Changelog Markdown lacks its Pages content-type/canonical headers');
+  if (!nodes.some(n => n.tagName === 'time' && attr(n, 'datetime') === changelogReviewedOn)) errors.push('Changelog review date differs from the source');
+  for (const entry of changelogEntries) {
+    if (!nodes.some(n => n.tagName === 'section' && attr(n, 'id') === entry.id)) errors.push(`Changelog entry missing: ${entry.id}`);
+    if (!nodes.some(n => n.tagName === 'time' && attr(n, 'datetime') === entry.date)) errors.push(`Changelog entry date missing: ${entry.date}`);
+  }
+  return errors;
+}
+
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const files = readBuiltFiles(fileURLToPath(new URL('../dist/', import.meta.url)));
   const result = validateSite(files);
@@ -281,10 +297,11 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   result.errors.push(...validateTaskSigning(files));
   result.errors.push(...validateSwarmHistory(files));
   result.errors.push(...validateBrowserMcp(files));
+  result.errors.push(...validateChangelog(files));
   if (result.errors.length) {
     console.error(result.errors.join('\n'));
     process.exitCode = 1;
   } else {
-    console.log(`SEO checked: ${result.indexableCount} indexable pages, ${result.sitemapCount} canonical sitemap URLs, ${result.pageCount - result.indexableCount} noindex page; comparison, first-visit, communication capabilities, participation, discovery, swarm history, task signing and payment guidance checked against machine text`);
+    console.log(`SEO checked: ${result.indexableCount} indexable pages, ${result.sitemapCount} canonical sitemap URLs, ${result.pageCount - result.indexableCount} noindex page; comparison, first-visit, communication capabilities, participation, discovery, swarm history, task signing, changelog and payment guidance checked against machine text`);
   }
 }
