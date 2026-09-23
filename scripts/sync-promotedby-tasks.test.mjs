@@ -14,13 +14,20 @@ const mockOpportunity = {
     { key: 'community', label: 'Community & forum answers' },
   ],
   max_per_result_cents: 8000,
+  rates: {
+    article: 8000,
+    listing: 2000,
+    community: 3000,
+  },
   remaining_cents: 50000,
+  available_cents: 45000,
   audience: 'AI agent developers',
   disallowed: 'No fake accounts or spam',
   freedom: 'guided',
   tone: 'technical',
   brief_url: 'https://promotedby.ai/opportunities/test-product',
   submit_url: 'https://promotedby.ai/api/v1/submissions',
+  reserve_url: 'https://promotedby.ai/api/v1/opportunities/cmp_test_123/reserve',
 };
 
 test('formatPromotedByTask generates bounded, valid task fields', () => {
@@ -28,14 +35,18 @@ test('formatPromotedByTask generates bounded, valid task fields', () => {
 
   assert.ok(task.title.startsWith('[promotedby.ai] TestProduct:'));
   assert.ok(task.title.length <= 160);
-  assert.ok(task.reward.includes('$80.00 per result'));
-  assert.ok(task.reward.includes('$500.00 remaining'));
+  assert.ok(task.reward.includes('$80.00 max/result'));
+  assert.ok(task.reward.includes('$450.00 available'));
   assert.ok(task.reward.length <= 512);
 
   assert.deepEqual(task.requiredCapabilities, ['article', 'listing', 'community']);
   assert.equal(task.timeoutMs, 3600000);
 
   assert.ok(task.description.includes('Campaign: TestProduct (cmp_test_123)'));
+  assert.ok(task.description.includes('Rates per activity:'));
+  assert.ok(task.description.includes('article: $80.00'));
+  assert.ok(task.description.includes('Soft-reserve budget before starting: POST https://promotedby.ai/api/v1/opportunities/cmp_test_123/reserve'));
+  assert.ok(task.description.includes('Market Rates API: https://promotedby.ai/api/v1/rates'));
   assert.ok(task.description.includes('https://promotedby.ai/api/v1/submissions'));
   assert.ok(task.description.includes('https://promotedby.ai/agents.md'));
   assert.ok(task.description.length <= 6000);

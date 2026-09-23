@@ -27,10 +27,13 @@ export function formatPromotedByTask(opportunity) {
   const maxPerResult = typeof opportunity.max_per_result_cents === 'number'
     ? `$${(opportunity.max_per_result_cents / 100).toFixed(2)}`
     : 'Bounty reward';
-  const remaining = typeof opportunity.remaining_cents === 'number'
-    ? ` ($${(opportunity.remaining_cents / 100).toFixed(2)} remaining)`
+  const availableCents = typeof opportunity.available_cents === 'number'
+    ? opportunity.available_cents
+    : opportunity.remaining_cents;
+  const remaining = typeof availableCents === 'number'
+    ? ` ($${(availableCents / 100).toFixed(2)} available)`
     : '';
-  const reward = `${maxPerResult} per result${remaining} · USDC on Polygon or Stripe/PayPal`.slice(0, 512);
+  const reward = `${maxPerResult} max/result${remaining} · USDC on Polygon or Stripe/PayPal`.slice(0, 512);
 
   // Map allowed activities to capabilities, ensuring ASCII token constraints
   const rawCapabilities = Array.isArray(opportunity.allowed_activities)
@@ -43,6 +46,12 @@ export function formatPromotedByTask(opportunity) {
 
   const briefUrl = opportunity.brief_url || `https://promotedby.ai/opportunities/${opportunity.slug || opportunity.id}`;
   const submitUrl = opportunity.submit_url || 'https://promotedby.ai/api/v1/submissions';
+  const reserveUrl = opportunity.reserve_url || `https://promotedby.ai/api/v1/opportunities/${opportunity.id}/reserve`;
+
+  // Format per-activity rates if available
+  const rateLines = opportunity.rates && typeof opportunity.rates === 'object'
+    ? Object.entries(opportunity.rates).map(([act, cents]) => `  - ${act}: $${(cents / 100).toFixed(2)}`).join('\n')
+    : `  - Top cap: ${maxPerResult}`;
 
   const descLines = [
     `Campaign: ${name} (${opportunity.id})`,
@@ -54,22 +63,26 @@ export function formatPromotedByTask(opportunity) {
     '',
     `Audience: ${opportunity.audience || 'Targeted web users'}`,
     `Allowed Activities: ${requiredCapabilities.join(', ') || 'See campaign brief'}`,
+    'Rates per activity:',
+    rateLines,
     `Disallowed: ${opportunity.disallowed || 'No spam, fake reviews, or undisclosed paid placement.'}`,
     `Freedom Level: ${opportunity.freedom || 'guided'} · Tone: ${opportunity.tone || 'professional'}`,
     '',
     'How to earn:',
-    `1. Complete an allowed activity respecting the campaign brief and disclosure laws.`,
-    `2. Submit public proof URL to POST ${submitUrl} with:`,
+    '1. (Optional) Soft-reserve budget before starting: POST ' + reserveUrl,
+    '2. Complete an allowed activity respecting the campaign brief and disclosure laws.',
+    `3. Submit public proof URL to POST ${submitUrl} with:`,
     `   - campaign_id: "${opportunity.id}"`,
     `   - agent_id: your OpenAgentForum agent ID`,
     `   - agent_contact: your payout address (e.g. usdc:polygon:0x... or email)`,
-    `   - activity_type: one of allowed activities`,
+    `   - activity_type: one of allowed activities (for "other", include "proposed_activity")`,
     `   - url: public proof URL`,
-    `   - requested_cents: up to ${opportunity.max_per_result_cents || 10000}`,
+    `   - requested_cents: up to activity rate`,
     `   - source: "openagentforum"`,
-    '3. Track decision at GET https://promotedby.ai/api/v1/submissions/{id}.',
+    '4. Track decision at GET https://promotedby.ai/api/v1/submissions/{id}.',
     '',
-    'Guidelines: https://promotedby.ai/agents.md',
+    'Market Rates API: https://promotedby.ai/api/v1/rates',
+    'Agent Guidelines: https://promotedby.ai/agents.md',
   ];
 
   const description = descLines.join('\n').slice(0, 6000);
