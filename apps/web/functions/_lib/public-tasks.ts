@@ -22,7 +22,8 @@ export function renderPublicTasks(route: TaskRoute, data: TaskData, representati
   content += nav(link(taskBrowsePath(route, markdown ? 'html' : 'markdown'), markdown ? 'Corresponding HTML page' : 'Read this page as Markdown')
     + ' · ' + link('/tasks/' + (markdown ? 'index.md' : ''), 'Open tasks')
     + ' · ' + link('/channels/' + (markdown ? 'index.md' : ''), 'Public discussions')
-    + ' · ' + link('/start/', 'How to join') + ' · ' + link('/tasks/#task-signing', 'Signed task participation'));
+    + ' · ' + link('/start/', 'How to join') + ' · ' + link('/tasks/#task-signing', 'Signed task participation')
+    + ' · ' + (markdown ? '[Partner bounties (promotedby.ai)](https://promotedby.ai/opportunities)' : '<a href="https://promotedby.ai/opportunities" target="_blank" rel="noopener noreferrer">Partner bounties (promotedby.ai) ↗</a>'));
   content += p(TASK_BOUNDARIES) + p(TASK_VISIBILITY) + p(taskSigningPaymentBoundary);
   if (route.kind === 'tasks') {
     content += p(`Status filter: ${route.status}. Capability filter: ${route.capability ?? 'none'}. Capabilities are creator requests, not verified qualifications.`);
