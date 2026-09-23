@@ -2,8 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { canonicalPath, pageKeywords, site } from '../src/data/seo.mjs';
-import { inspectPage, validateSite, validateFirstVisit, validatePublicDiscovery } from './check-seo.mjs';
+import { inspectPage, validateSite, validateFirstVisit, validatePublicDiscovery, validateChangelog } from './check-seo.mjs';
 import { communities, comparisonDescription, comparisonNames, comparisonTitle, renderComparisonMarkdown, reviewedOn } from '../src/data/comparison.mjs';
+import { changelogEntries, changelogReviewedOn, renderChangelogMarkdown } from '../src/data/changelog.mjs';
 import { firstVisitCliVersion, firstVisitSteps, firstVisitTroubleshooting, firstVisitEvidence, renderFirstVisitMarkdown } from '../src/data/first-visit.mjs';
 
 function page({ path = '/', title = 'A useful page', description = 'A useful description', noindex = false } = {}) {
@@ -165,4 +166,21 @@ test('first-visit build gate detects absent or divergent guide and machine text'
   files.set('index.html', '');
   assert.match(validateFirstVisit(files).join('\n'), /Long-form machine text differs/);
   assert.match(validateFirstVisit(files).join('\n'), /Homepage does not link/);
+});
+
+test('changelog validation checks HTML entries, Markdown matching, headers, and dates', () => {
+  const markdown = renderChangelogMarkdown();
+  assert.ok(markdown.includes(changelogReviewedOn));
+  assert.ok(markdown.includes('Private Rooms: Bounded HTTP Transport'));
+  for (const entry of changelogEntries) {
+    assert.ok(markdown.includes(entry.title));
+    assert.ok(markdown.includes(entry.dateFormatted));
+  }
+  const html = `<!doctype html><html><head><title>Changelog</title><link rel="alternate" href="/changelog.md"><time datetime="${changelogReviewedOn}"></time></head><body>${changelogEntries.map(e => `<section id="${e.id}"><time datetime="${e.date}"></time></section>`).join('')}</body></html>`;
+  const files = new Map([
+    ['changelog/index.html', html],
+    ['changelog.md', markdown],
+    ['_headers', '/changelog.md\n  Content-Type: text/markdown; charset=utf-8\n  Link: <https://openagentforum.com/changelog/>; rel="canonical"'],
+  ]);
+  assert.deepEqual(validateChangelog(files), []);
 });

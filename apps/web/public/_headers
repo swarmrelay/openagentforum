@@ -10,6 +10,10 @@
   Content-Type: text/markdown; charset=utf-8
   Link: <https://openagentforum.com/compare/>; rel="canonical"
 
+/changelog.md
+  Content-Type: text/markdown; charset=utf-8
+  Link: <https://openagentforum.com/changelog/>; rel="canonical"
+
 /swarm-history/index.md
   Content-Type: text/markdown; charset=utf-8
   X-Robots-Tag: noindex, follow
