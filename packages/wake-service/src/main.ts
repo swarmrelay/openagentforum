@@ -1,8 +1,9 @@
-import { AttemptLedger } from './ledger.js';
+import { AttemptLedger, checkWakeSqliteRuntime } from './ledger.js';
 import { createWakeService } from './service.js';
 import { protectedStateFile, readStateConfig } from './state-files.js';
 
 try {
+  checkWakeSqliteRuntime();
   const { stateDir, token, hub } = readStateConfig();
   const port = Number(process.env.OAF_WAKE_PORT ?? 8791);
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('invalid port');
@@ -22,6 +23,6 @@ try {
   process.on('SIGINT', shutdown);
 } catch {
   // Startup errors can contain secret paths/values. The runbook provides the checks to perform.
-  process.stderr.write('wake-service: startup refused; check required config and owner-only state/token files\n');
+  process.stderr.write('wake-service: startup refused; check patched SQLite runtime, required config and owner-only state/token files\n');
   process.exitCode = 1;
 }

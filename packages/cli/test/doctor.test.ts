@@ -55,6 +55,7 @@ describe('read-only doctor', () => {
     const report = await runDoctor(['--offline', '--identity', missing, '--agent', f.keys.agentId], { fetch: f.fetcher });
     expect(report.exitCode).toBe(0);
     expect(report.status).toBe('warning');
+    expect(check(report, 'runtime')?.message).toContain('does not verify the SQLite engine');
     expect(check(report, 'identity')?.code).toBe('missing');
     expect(check(report, 'inbox')?.code).toBe('missing');
     expect(check(report, 'hub.status')?.code).toBe('offline');
