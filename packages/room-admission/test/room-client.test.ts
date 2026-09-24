@@ -5,6 +5,7 @@ import { randomBytes } from 'node:crypto';
 import { afterEach, expect, it, vi } from 'vitest';
 import { RoomClient, RoomClientError, readRoomStatus, recoverRoomOperation, closeRoom, type RoomRecoveryReference } from '../src/room-client.js';
 import { RoomLocalState } from '../src/local-state.js';
+import { RoomInvitationMailbox } from '../src/invitation-mailbox.js';
 import { fixture, HUB } from './fixtures.js';
 
 const cleanup: (() => void)[] = [];
@@ -48,9 +49,9 @@ async function setup() {
       { status: result.ok === false ? 409 : 200 });
   };
   const channel = 'room-setup-' + id();
-  const make = (i: number, timeout?: number, selected = channel) => {
+  const make = (i: number, timeout?: number, selected = channel, existingRoomId?: string) => {
     const client = new RoomClient({ local: local[i], peerSigningPublicKey: identities[1 - i].signingPublicKey,
-      role: i ? 'peer' : 'owner', channel: selected, fetch: fetcher, operationTimeoutMs: timeout });
+      role: i ? 'peer' : 'owner', channel: selected, fetch: fetcher, operationTimeoutMs: timeout, existingRoomId });
     cleanup.push(() => client.dispose()); return client;
   };
   const a = make(0), b = make(1);
@@ -225,5 +226,106 @@ it('reflects underlying session expiry and leaves the journal available for expl
   const clock = vi.spyOn(Date, 'now'), s = await setup(); await s.connected(); const now = Date.now();
   clock.mockReturnValue(now + 300001);
   await expect(s.a.receive()).rejects.toThrow(); expect(s.a.phase).toBe('failed');
+  expect(s.local[0].scope().hub).toBe(HUB);
+});
+
+async function returnToRoom(s: Awaited<ReturnType<typeof setup>>) {
+  const roomId = s.a.roomId!, channel = 'room-setup-' + id();
+  s.a.dispose(); s.b.dispose(); s.reopen(0); s.reopen(1);
+  const a = s.make(0, undefined, channel, roomId), b = s.make(1, undefined, channel, roomId);
+  await Promise.all([a.startSetup(), b.startSetup()]); await Promise.all([a.waitForPeer(), b.waitForPeer()]);
+  await a.invite(); return { a, b, roomId, channel, decision: await b.inspectInvitation() };
+}
+
+it('renegotiates an explicitly selected accepted room after invitation expiry without new membership controls or old plaintext delivery', async () => {
+  const s = await setup(); await s.connected(); const oldSession = s.a.sessionId;
+  await s.a.send(Buffer.from('old session plaintext')); const old = await s.b.receive();
+  if (old.kind !== 'untrusted-room-data') throw new Error('Missing first delivery'); s.b.acknowledge(old.requestId);
+  vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 180000);
+  const r = await returnToRoom(s);
+  expect(r.decision.kind).toBe('untrusted-room-session'); expect(r.decision.sessionId).not.toBe(oldSession);
+  expect(s.calls.filter(c => c.path.endsWith('/control'))).toHaveLength(3);
+  expect(r.b.phase).toBe('invitation'); expect(() => r.b.connect()).toThrow('wrong_phase');
+  const retained = await s.local[1].readBindings(r.roomId);
+  expect(Object.isFrozen(retained.bundle)).toBe(true); expect(Object.isFrozen(retained.pins)).toBe(true);
+  expect(JSON.stringify(retained)).not.toContain(s.hub.peer.signingPrivateKey);
+  expect(JSON.stringify(retained)).not.toContain(s.local[1].roomKey(r.roomId).privateKey);
+  await r.b.accept(r.decision); await r.a.waitForAcceptance(); await Promise.all([r.a.connect(), r.b.connect()]);
+  await r.a.send(Buffer.from('new session plaintext'));
+  const message = await r.b.receive(); expect(message.kind).toBe('untrusted-room-data');
+  if (message.kind !== 'untrusted-room-data') throw new Error('Missing new delivery');
+  expect(Buffer.from(message.bytes).toString()).toBe('new session plaintext'); r.b.acknowledge(message.requestId);
+  expect(s.calls.filter(c => c.path.endsWith('/control'))).toHaveLength(3);
+  expect(JSON.stringify(s.records)).not.toContain(r.roomId); expect(JSON.stringify(s.records)).not.toContain(r.decision.sessionId);
+  expect((await closeRoom(s.local[1], r.roomId, s.fetcher)).status).toBe('closed');
+  await expect(r.a.receive()).rejects.toThrow();
+});
+
+it.each(['room', 'peer', 'role', 'closed'] as const)('refuses an existing-room %s mismatch before posting a setup key', async variant => {
+  const s = await setup(); await s.accepted(); const roomId = s.a.roomId!;
+  if (variant === 'closed') await closeRoom(s.local[0], roomId, s.fetcher);
+  const client = new RoomClient({ local: s.local[0], role: variant === 'role' ? 'peer' : 'owner',
+    peerSigningPublicKey: variant === 'peer' ? 'ab'.repeat(32) : s.hub.peer.signingPublicKey,
+    channel: 'room-setup-' + id(), existingRoomId: variant === 'room' ? 'room_' + id() : roomId, fetch: s.fetcher });
+  cleanup.push(() => client.dispose()); const count = s.records.length;
+  await expect(client.startSetup()).rejects.toThrow(); expect(s.records).toHaveLength(count);
+});
+
+it('requires exact fresh-session consent and refuses expiry or closure without another membership action', async () => {
+  const s = await setup(); await s.accepted(); const r = await returnToRoom(s);
+  const decision = r.decision;
+  if (decision.kind !== 'untrusted-room-session') throw new Error('Wrong decision');
+  expect(() => r.b.accept({ ...decision, bindingDigest: '00'.repeat(32) })).toThrow('invalid_input');
+  expect(() => r.b.accept({ ...decision, kind: 'untrusted-room-invitation' } as any)).toThrow('invalid_input');
+  const clock = vi.spyOn(Date, 'now').mockReturnValue(decision.expiresAt);
+  expect(() => r.b.accept(decision)).toThrow('invalid_input'); clock.mockRestore();
+  await closeRoom(s.local[0], r.roomId, s.fetcher); const before = s.records.length;
+  await expect(r.b.accept(r.decision)).rejects.toMatchObject({ code: 'unavailable' });
+  expect(s.records).toHaveLength(before); expect(s.calls.filter(c => c.body?.action === 'accept')).toHaveLength(1);
+});
+
+it('does not bypass unresolved prior packets when returning to an accepted room', async () => {
+  const s = await setup(); await s.connected(); const roomId = s.a.roomId!;
+  s.fault.drop = '/v1/rooms/packets/write'; await expect(s.a.send(Buffer.from('pending'))).rejects.toThrow();
+  s.a.dispose(); s.reopen(0); const c = s.make(0, undefined, 'room-setup-' + id(), roomId), before = s.records.length;
+  await expect(c.startSetup()).rejects.toMatchObject({ code: 'needs_recovery' });
+  expect(s.local[0].pending()).toHaveLength(1); expect(s.records).toHaveLength(before);
+});
+
+it('lost fresh-session acceptance is retained once, without another control acceptance or automatic reconnect', async () => {
+  const s = await setup(); await s.accepted(); const r = await returnToRoom(s);
+  s.fault.drop = `/v1/channels/${r.channel}/messages`;
+  await expect(r.b.accept(r.decision)).rejects.toThrow();
+  expect(s.local[1].invitationAttempt(r.channel).sealedWire).toBeTypeOf('string');
+  expect(() => r.b.accept(r.decision)).toThrow('disposed');
+  expect(s.calls.filter(c => c.body?.action === 'accept')).toHaveLength(1);
+});
+
+it('refuses a valid accepted bundle for another room even when both identity keys match', async () => {
+  const s = await setup(); await s.accepted();
+  const channel = 'room-setup-' + id(), a = s.make(0, undefined, channel), b = s.make(1, undefined, channel);
+  await Promise.all([a.startSetup(), b.startSetup()]); await Promise.all([a.waitForPeer(), b.waitForPeer()]);
+  await a.invite(); await b.accept(await b.inspectInvitation()); await a.waitForAcceptance();
+  const other = (await s.local[1].readBindings(a.roomId!)).bundle; a.dispose(); b.dispose();
+  s.reopen(1);
+  const next = s.make(1, undefined, 'room-setup-' + id(), s.a.roomId!);
+  await next.startSetup();
+  vi.spyOn(RoomInvitationMailbox.prototype, 'findPeerKey').mockResolvedValue(true); await next.waitForPeer();
+  vi.spyOn(RoomInvitationMailbox.prototype, 'find').mockResolvedValue({ kind: 'oaf.room.session-offer.v1', sessionId: id(), ...other });
+  const before = s.calls.length;
+  await expect(next.inspectInvitation()).rejects.toMatchObject({ code: 'invalid_input' });
+  expect(s.calls).toHaveLength(before); expect(s.local[1].pending()).toHaveLength(0);
+});
+
+it('a returning-room status deadline prevents a late setup reservation or key POST', async () => {
+  const s = await setup(); await s.accepted();
+  const reserve = vi.spyOn(s.local[0], 'createInvitationMailbox');
+  const c = s.make(0, 500, 'room-setup-' + id(), s.a.roomId!);
+  s.fault.stall = '/v1/rooms/state'; const count = s.records.length;
+  const running = c.startSetup().catch(error => error);
+  await vi.waitFor(() => expect(s.fault.release).toBeTypeOf('function'));
+  expect(await running).toMatchObject({ code: 'deadline' });
+  s.fault.release!(); await new Promise(resolve => setTimeout(resolve, 20));
+  expect(reserve).not.toHaveBeenCalled(); expect(s.records).toHaveLength(count);
   expect(s.local[0].scope().hub).toBe(HUB);
 });

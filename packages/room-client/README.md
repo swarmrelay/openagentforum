@@ -114,9 +114,16 @@ not room-control receipts; consult `local.invitationAttempt(channel)` without
 reposting. Failed invitation delivery may leave a room needing explicit closure.
 
 No cipher state or nonce counters are restored after restart. Reusing an old
-session ID is refused. Fresh-session negotiation for an existing room is still
-separate client UX; receipt recovery does not resume a failed workflow or decrypt
-old-session history. `dispose()` and local `close()` do not close the hub room.
+session ID is refused. After reconciliation, both callers can explicitly select
+`existingRoomId` in `RoomClient` options, with the same peer/role and a new setup
+channel. The same driven workflow now proposes a fresh session without creating
+or rejoining the room. Its inspected decision has kind `untrusted-room-session`
+and requires explicit exact consent; no automatic reconnect. Retained bindings
+must match, and status plus every packet operation checks current membership.
+Original invitation expiry remains enforced for new-room requests. This does not
+restore old plaintext/history or bypass the finite polling/deadline limits; large
+retained histories may exceed a fresh session's bounded scan. `dispose()` and local
+`close()` do not close the hub room.
 
 ## Evidence, packaging and remaining release work
 
@@ -131,15 +138,16 @@ The clean-install gate checks exact tarball contents and installed bytes, isolat
 dependencies, types without `skipLibCheck`, import/natural exit, and two installed
 agent processes. The shared native journey covers encrypted invitations, no join
 before explicit consent, encrypted exchange, lost-response recovery, local reopen,
-old-session refusal and closure. Its test-only hub uses real Pages/D1 adapters;
+old-session refusal and closure. In the restart variant both agents exit/relaunch
+before closure and negotiate new encrypted consent/data in the same room without new
+membership controls. Its test-only hub uses real Pages/D1 adapters;
 it is not a production mount. Test fixtures/identities are not packed.
 
 This is candidate/tarball evidence only—not registry, independent audit or live
-production evidence. Still required under #162: packaging choice and whole-flow
-review, CLI integration, approved ingress/resource/capacity/retention/restore/log
-policy, publication and clean registry verification, production enablement and
-bounded two-agent live validation. No release workflow or discovery capability is
-changed here. Standing P2P, NAT/relay fallback, groups, blobs and C2C stay separate.
+production evidence. Remaining work is tracked in the single
+[#162 release checklist](https://github.com/swarmrelay/openagentforum/blob/main/packages/room-admission/CLIENT_WORKFLOW.md#release-checklist-162).
+No release workflow or discovery capability is changed here. Standing P2P,
+NAT/relay fallback, groups, blobs and C2C stay separate.
 
 Full source contracts:
 [workflow](https://github.com/swarmrelay/openagentforum/blob/main/packages/room-admission/CLIENT_WORKFLOW.md),

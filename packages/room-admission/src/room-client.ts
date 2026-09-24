@@ -1,11 +1,11 @@
 /** Source-only agent workflow over the existing room contracts. No service, command runner or auto-accept. */
 import { randomBytes } from 'node:crypto';
-import { deriveAgentId } from '@openagentforum/protocol';
+import { deriveAgentId, canonicalizeJson, sha256Hex } from '@openagentforum/protocol';
 import { RoomLocalState } from './local-state.js';
 import { RoomHttpClient } from './http-client.js';
 import { roomDeadline, roomWithSignal } from './http-contract.js';
 import { RoomInvitationMailbox } from './invitation-mailbox.js';
-import { invitationScope, type RoomInvitationOffer } from './invitation-wire.js';
+import { invitationScope, type RoomInvitationOffer, type RoomSessionOffer } from './invitation-wire.js';
 import { ROOM_CONTROL_PROTOCOL, deriveRoomId, signRoomControl, verifyHistoricalRoomControlSignature, type RoomControlAction } from './control.js';
 import { ROOM_STATE_PROTOCOL, signRoomState } from './state-read.js';
 import type { RoomSessionClient } from './session-client.js';
@@ -31,8 +31,14 @@ export interface RoomInvitationDecision {
   kind: 'untrusted-room-invitation'; roomId: string; sessionId: string;
   fromSigningPublicKey: string; invitationDigest: string; expiresAt: number;
 }
+export interface RoomSessionDecision {
+  kind: 'untrusted-room-session'; roomId: string; sessionId: string;
+  fromSigningPublicKey: string; bindingDigest: string; expiresAt: number;
+}
 export interface RoomClientOptions {
   local: RoomLocalState; peerSigningPublicKey: string; role: 'owner' | 'peer'; channel: string;
+  /** Local explicit selection only. Both sides must retain identical accepted bindings. Never creates/reinvites. */
+  existingRoomId?: string;
   fetch?: typeof fetch; operationTimeoutMs?: number;
 }
 
@@ -51,8 +57,10 @@ export class RoomClient {
   #busy = false;
   #mailbox: RoomInvitationMailbox | null = null;
   #session: RoomSessionClient | null = null;
-  #offer: RoomInvitationOffer | null = null;
-  #decision: Readonly<RoomInvitationDecision> | null = null;
+  readonly #existingRoomId: string | null;
+  #retained: Awaited<ReturnType<RoomLocalState['readBindings']>> | null = null;
+  #offer: RoomInvitationOffer | RoomSessionOffer | null = null;
+  #decision: Readonly<RoomInvitationDecision | RoomSessionDecision> | null = null;
   #roomId: string | null = null;
   #recovery: RoomRecoveryReference | null = null;
   constructor(options: RoomClientOptions) {
@@ -60,6 +68,9 @@ export class RoomClient {
       if (!(options.local instanceof RoomLocalState) || !['owner', 'peer'].includes(options.role)
         || typeof options.peerSigningPublicKey !== 'string' || !/^[0-9a-f]{64}$/.test(options.peerSigningPublicKey)) throw new Error();
       const scope = options.local.scope(); invitationScope({ hub: scope.hub, channel: options.channel });
+      if (options.existingRoomId !== undefined && (typeof options.existingRoomId !== 'string'
+        || !/^room_[0-9a-f]{32}$/.test(options.existingRoomId))) throw new Error();
+      this.#existingRoomId = options.existingRoomId ?? null; this.#roomId = this.#existingRoomId;
       if (scope.signingPublicKey === options.peerSigningPublicKey) throw new Error();
       this.#timeout = options.operationTimeoutMs ?? 20000;
       if (!Number.isSafeInteger(this.#timeout) || this.#timeout < 1 || this.#timeout > 20000) throw new Error();
@@ -106,12 +117,29 @@ export class RoomClient {
     return this.#run(async () => {
       // Unresolved earlier controls/packets need a decision, not another automatically generated room.
       if (this.#local.pending(0, 1).length) throw new RoomClientError('needs_recovery');
+      if (this.#existingRoomId) {
+        this.#retained = await this.#local.readBindings(this.#existingRoomId); this.#check();
+        const b = this.#retained.binding, remoteRole = this.#role === 'owner' ? 'peer' : 'owner';
+        if (b[this.#role].signingPublicKey !== this.#own || b[remoteRole].signingPublicKey !== this.#peer) throw new RoomClientError('invalid_input');
+        await this.#existingState(); this.#check();
+      }
       const mailbox = await this.#local.createInvitationMailbox(this.#peer, this.#role, this.#channel, this.#fetch);
       if (this.#phase === 'disposed' || this.#phase === 'failed') { mailbox.close(); this.#check(); }
       this.#mailbox = mailbox;
       const wire = await mailbox.prepareKey(); this.#check(); await mailbox.post(wire); this.#check();
       this.#phase = 'waiting-peer';
     });
+  }
+  async #existingState() {
+    if (!this.#existingRoomId) return;
+    const state = await readRoomStatus(this.#local, this.#existingRoomId, this.#fetch); this.#check();
+    if (!state || state.status !== 'open' || state.role !== this.#role || state.revision !== this.#retained?.binding.acceptedRevision)
+      throw new RoomClientError('unavailable');
+    if (this.#local.pending(0, 1).length) throw new RoomClientError('needs_recovery');
+  }
+  #sameBindings(value: RoomKeyBundle) {
+    const b = this.#retained?.bundle;
+    if (!b || b.create !== value.create || b.invite !== value.invite || b.accept !== value.accept) throw new RoomClientError('invalid_input');
   }
   /** Finite read-only wait for the already pinned peer's key announcement. */
   waitForPeer(): Promise<void> {
@@ -131,10 +159,16 @@ export class RoomClient {
     return { protocol: ROOM_CONTROL_PROTOCOL, hub: this.#hub, actor, roomId, requestId,
       ...fresh(), action, expectedRevision: revision, payload } as RoomControlAction;
   }
-  /** Explicitly create, invite and deliver. Each room mutation is retained before its one POST. */
+  /** New room: retained create/invite. Explicit existing room: fresh session proposal only, no membership mutation. */
   invite(): Promise<{ roomId: string; sessionId: string }> {
     this.#require('peer-ready'); if (this.#role !== 'owner') throw new RoomClientError('wrong_phase');
     return this.#run(async () => {
+      if (this.#existingRoomId) {
+        await this.#existingState(); this.#check();
+        this.#offer = { kind: 'oaf.room.session-offer.v1', sessionId: id(), ...this.#retained!.bundle };
+        const sealed = await this.#mailbox!.prepare(this.#offer); this.#check(); await this.#mailbox!.post(sealed); this.#check();
+        this.#phase = 'offer-sent'; return { roomId: this.#existingRoomId, sessionId: this.#offer.sessionId };
+      }
       const requestId = id(), actor = await deriveAgentId(this.#own); this.#check();
       const roomId = await deriveRoomId(this.#hub, actor, requestId); this.#check(); this.#roomId = roomId;
       const key = this.#local.createRoomKey(roomId);
@@ -148,11 +182,20 @@ export class RoomClient {
     });
   }
   /** Returns consent metadata, not raw signing instructions. This method never accepts or writes a room. */
-  inspectInvitation(): Promise<Readonly<RoomInvitationDecision>> {
+  inspectInvitation(): Promise<Readonly<RoomInvitationDecision | RoomSessionDecision>> {
     this.#require('peer-ready', 'invitation'); if (this.#role !== 'peer') throw new RoomClientError('wrong_phase');
     return this.#run(async () => {
       if (this.#decision) return this.#decision;
       const offer = await this.#wait(() => this.#mailbox!.find());
+      if (this.#existingRoomId) {
+        if (offer.kind !== 'oaf.room.session-offer.v1') throw new RoomClientError('invalid_input');
+        this.#sameBindings(offer); await this.#existingState(); this.#check();
+        const bindingDigest = await sha256Hex(canonicalizeJson(this.#retained!.bundle)); this.#check();
+        this.#offer = offer;
+        this.#decision = Object.freeze({ kind: 'untrusted-room-session', roomId: this.#existingRoomId, sessionId: offer.sessionId,
+          fromSigningPublicKey: this.#peer, bindingDigest, expiresAt: this.#mailbox!.expiresAt });
+        this.#phase = 'invitation'; return this.#decision;
+      }
       if (offer.kind !== 'oaf.room.offer.v1') throw new RoomClientError('unavailable');
       const proof = await verifyHistoricalRoomControlSignature(offer.invite, this.#peer, this.#hub); this.#check();
       if (!proof.ok || proof.action.action !== 'invite') throw new RoomClientError('unavailable');
@@ -169,13 +212,21 @@ export class RoomClient {
       peerSigningPublicKey: this.#role === 'peer' ? this.#own : this.#peer }); this.#check();
   }
   /** Explicit local decision for the exact inspected invitation, not a boolean auto-accept hook. */
-  accept(decision: Readonly<RoomInvitationDecision>): Promise<void> {
+  accept(decision: Readonly<RoomInvitationDecision | RoomSessionDecision>): Promise<void> {
     this.#require('invitation');
     if (!decision || !this.#decision || Object.keys(decision).length !== 6
-      || Object.entries(this.#decision).some(([key, value]) => decision[key as keyof RoomInvitationDecision] !== value)
+      || Object.entries(this.#decision).some(([key, value]) => (decision as unknown as Record<string, unknown>)[key] !== value)
       || Date.now() >= this.#decision.expiresAt) throw new RoomClientError('invalid_input');
     return this.#run(async () => {
       await this.#mailbox!.findPeerKey(); this.#check(); // recheck setup expiry before creating acceptance
+      if (this.#existingRoomId) {
+        await this.#existingState(); this.#check();
+        if (this.#offer?.kind !== 'oaf.room.session-offer.v1' || this.#decision?.kind !== 'untrusted-room-session') throw new RoomClientError('invalid_input');
+        const sealed = await this.#mailbox!.prepare({ ...this.#offer, kind: 'oaf.room.session-accept.v1' }); this.#check();
+        if (Date.now() >= this.#decision.expiresAt) throw new RoomClientError('invalid_input');
+        await this.#mailbox!.post(sealed); this.#check(); this.#mailbox!.close(); this.#phase = 'accepted'; return;
+      }
+      if (this.#decision?.kind !== 'untrusted-room-invitation') throw new RoomClientError('invalid_input');
       const offer = this.#offer!, key = this.#local.createRoomKey(this.#roomId!);
       const invite = JSON.parse(offer.invite);
       const accept = await this.#control(await this.#action('accept', this.#roomId!, invite.expectedRevision + 1,
@@ -190,8 +241,13 @@ export class RoomClient {
     this.#require('offer-sent');
     return this.#run(async () => {
       const accepted = await this.#wait(() => this.#mailbox!.find());
-      if (accepted.kind !== 'oaf.room.accept.v1') throw new RoomClientError('unavailable');
-      await this.#bindings({ create: accepted.create, invite: accepted.invite, accept: accepted.accept });
+      if (this.#existingRoomId) {
+        if (accepted.kind !== 'oaf.room.session-accept.v1') throw new RoomClientError('unavailable');
+        this.#sameBindings(accepted); await this.#existingState(); this.#check();
+      } else {
+        if (accepted.kind !== 'oaf.room.accept.v1') throw new RoomClientError('unavailable');
+        await this.#bindings({ create: accepted.create, invite: accepted.invite, accept: accepted.accept });
+      }
       this.#mailbox!.close(); this.#phase = 'accepted';
     });
   }
@@ -199,6 +255,7 @@ export class RoomClient {
   connect(): Promise<void> {
     this.#require('accepted');
     return this.#run(async () => {
+      await this.#existingState(); this.#check();
       const session = await this.#local.createSession(this.#roomId!, this.#offer!.sessionId, this.#http);
       if (this.#phase === 'disposed' || this.#phase === 'failed') { session.dispose(); this.#check(); }
       this.#session = session;

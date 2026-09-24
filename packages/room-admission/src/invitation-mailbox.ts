@@ -3,7 +3,7 @@ import { decryptPayloadFromSender, encryptPayloadForRecipient, generateAgentKeyP
   deriveAgentId, verifyEnvelope, canonicalizeJson, type MessageEnvelope } from '@openagentforum/protocol';
 import { RoomInvitationHttp } from './invitation-http.js';
 import { invitationFailure as fail, invitationHex as hex, invitationInteger as integer, invitationExact as exact,
-  invitationScope, readRoomInvitation, ROOM_INVITATION_LIMITS as LIMITS,
+  invitationScope, readRoomInvitation, isInvitationOffer, isSessionInvitation, invitationExpiry, ROOM_INVITATION_LIMITS as LIMITS,
   type RoomInvitationScope, type RoomInvitationIdentity, type RoomInvitation } from './invitation-wire.js';
 
 const keyKind = 'oaf.room.setup-key.v1', sealedKind = 'oaf.room.setup-sealed.v1';
@@ -127,9 +127,10 @@ export class RoomInvitationMailbox {
     const offer = (this.#role === 'owner') === outgoing;
     const v = await readRoomInvitation(raw, this.scope.hub, this.#role === 'owner' ? this.#own : this.#peer,
       this.#role === 'peer' ? this.#own : this.#peer);
-    if (v.kind !== (offer ? 'oaf.room.offer.v1' : 'oaf.room.accept.v1')) fail();
+    if (offer !== isInvitationOffer(v)) fail();
     if (!offer && (!this.#offer || this.#offer.create !== v.create || this.#offer.invite !== v.invite
-      || this.#offer.sessionId !== v.sessionId)) fail();
+      || this.#offer.sessionId !== v.sessionId || isSessionInvitation(this.#offer) !== isSessionInvitation(v)
+      || (isSessionInvitation(this.#offer) && (!isSessionInvitation(v) || this.#offer.accept !== v.accept)))) fail();
     if (offer && this.#offer && canonicalizeJson(this.#offer) !== canonicalizeJson(v)) fail();
     return v;
   }
@@ -141,7 +142,7 @@ export class RoomInvitationMailbox {
       if (!this.#localKey || !this.#peerKey || this.#sealed || !this.#acknowledged.has(this.#localKey.id)) fail();
       const inner = await this.#inner(raw, true);
       const expiresAt = Math.min(this.#localKey.payload.expiresAt, this.#peerKey.payload.expiresAt,
-        JSON.parse(inner.invite).payload.inviteExpiresAt);
+        invitationExpiry(inner));
       const plain = JSON.stringify({ kind: sealedKind, hub: this.scope.hub, from: this.#own, to: this.#peer, expiresAt,
         fromKeyId: this.#localKey.id, fromKeyHash: this.#localKey.checksum, toKeyId: this.#peerKey.id,
         toKeyHash: this.#peerKey.checksum, invitation: inner });
@@ -151,7 +152,7 @@ export class RoomInvitationMailbox {
       const wire = await this.#sign({ ciphertext: prefix + encrypted.nonce + encrypted.ciphertext }, false);
       const record = await signed(wire, this.scope, this.#own, this.#peer, false);
       await this.#inner(raw, true); this.#check(); if (expiresAt <= Date.now()) fail();
-      this.#sealed = true; if (inner.kind === 'oaf.room.offer.v1') this.#offer = inner;
+      this.#sealed = true; if (isInvitationOffer(inner)) this.#offer = inner;
       this.#prepared.set(wire, { record, slot: 'sealed', expiresAt }); return wire;
     });
   }
@@ -188,12 +189,12 @@ export class RoomInvitationMailbox {
             || p.toKeyId !== this.#localKey.id || p.toKeyHash !== this.#localKey.checksum || !integer(p.expiresAt)) continue;
           inner = await this.#inner(JSON.stringify(p.invitation), false);
           if (p.expiresAt <= Date.now() || p.expiresAt > Math.min(this.#localKey.payload.expiresAt,
-            this.#peerKey.payload.expiresAt, JSON.parse(inner.invite).payload.inviteExpiresAt)) continue;
+            this.#peerKey.payload.expiresAt, invitationExpiry(inner))) continue;
           fresh(outer);
         } catch { continue; }
         this.#check(); if (found && canonicalizeJson(found) !== canonicalizeJson(inner)) fail(); found = inner;
       }
-      this.#check(); if (found?.kind === 'oaf.room.offer.v1') this.#offer = found; return found;
+      this.#check(); if (found && isInvitationOffer(found)) this.#offer = found; return found;
     });
   }
   close(): void {

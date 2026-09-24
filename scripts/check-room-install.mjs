@@ -92,7 +92,7 @@ try {
   writeFileSync(join(consumer, 'journey.mjs'), `import { test } from 'node:test';
 import { runInvitationJourney } from ${JSON.stringify(journeyImport)};
 test('packed room client journey', { timeout: 45000 }, async () => {
-  const result = await runInvitationJourney({ agentScript: ${JSON.stringify(agentScript)}, agentCwd: ${JSON.stringify(consumer)}, agentEnv: process.env });
+  const result = await runInvitationJourney({ agentScript: ${JSON.stringify(agentScript)}, agentCwd: ${JSON.stringify(consumer)}, agentEnv: process.env, restart: true });
   console.log('OAF_ROOM_JOURNEY ' + JSON.stringify(result));
 });\n`);
   const { stdout: journeyOutput } = await exec(process.execPath, ['--test', '--test-timeout=60000', 'journey.mjs'],
@@ -101,15 +101,23 @@ test('packed room client journey', { timeout: 45000 }, async () => {
   assert.equal(records.length, 1); assert.match(journeyOutput, /# pass 1\r?\n/); assert.match(journeyOutput, /# skipped 0\r?\n/);
   const journey = JSON.parse(records[0].slice('# OAF_ROOM_JOURNEY '.length));
   assert.deepEqual(journey, { independentAgents: 2, explicitConsent: true, encryptedInvitations: true,
-    encryptedPackets: 6, uncertainWriteRecovery: true, localReopen: true,
+    independentProcessRestart: true, freshSession: true, membershipControlsUnchanged: true,
+    encryptedPackets: 12, uncertainWriteRecovery: true, localReopen: true,
     oldSessionRefused: true, closed: true, naturalExit: true, publicPosts: 0 });
   phase = 'consumer dependency audit';
   await exec('npm', ['audit', ...npmOptions, '--omit=dev', '--audit-level=low'],
     { cwd: consumer, env, timeout: 120000, maxBuffer: 2 * 1024 * 1024 });
   console.log(JSON.stringify({ ok: true, package: pkg.name, version: pkg.version, published: false,
     clientSource: 'packed', protocolSource: 'packed', workspaceLinks: false, installedTypes: true, consumerAudit: true, journey }));
-} catch {
-  console.error(`Clean room client check failed during: ${phase}. No subprocess output was printed.`);
+} catch (error) {
+  // Fixed diagnostics only: installer output may contain local paths or server
+  // text, so never echo it. Distinguish availability from an artifact assertion.
+  const code = /npm (?:ERR!|error) code ([A-Z0-9_]+)\b/.exec(String(error?.stderr ?? ''))?.[1];
+  const allowed = ['EAI_AGAIN', 'ENOTFOUND', 'ETIMEDOUT', 'ECONNRESET', 'E429', 'E500', 'E502', 'E503', 'E504',
+    'E401', 'E403', 'E404', 'EINTEGRITY', 'ERESOLVE', 'EBADENGINE', 'EBADPLATFORM', 'ENEEDAUTH', 'ENOSPC'];
+  const category = error?.killed ? 'subprocess_deadline' : error?.code === 'ERR_ASSERTION' ? 'artifact_or_contract_mismatch'
+    : allowed.includes(code) ? code : 'subprocess_or_verification_failure';
+  console.error(`Clean room client check failed during: ${phase} (${category}). No subprocess output was printed.`);
   process.exitCode = 1;
 } finally {
   // Only this invocation's newly allocated fixture, its generated identities and installed dependencies.

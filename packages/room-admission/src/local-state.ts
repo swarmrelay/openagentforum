@@ -316,17 +316,27 @@ export class RoomLocalState {
       if (!row) localFailure(); return { ...row };
     });
   }
+  /** Historical local binding only, not current membership or permission to send. No private keys. */
+  readBindings(roomId: string) { return this.#async(() => this.#retainedBindings(roomId)); }
+  async #retainedBindings(roomId: string) {
+    if (!room(roomId)) localFailure();
+    const row = this.#db.prepare('SELECT bundle_json,pins_json FROM client_rooms WHERE room_id=?').get(roomId);
+    if (!row || typeof row.bundle_json !== 'string' || row.bundle_json.length > 15000 || typeof row.pins_json !== 'string'
+      || row.pins_json.length > 1024) localFailure();
+    const bundle = JSON.parse(row.bundle_json), pins = JSON.parse(row.pins_json);
+    const binding = await verifyRoomKeyBindings(bundle, pins);
+    const role = binding.owner.signingPublicKey === this.#signingPublicKey ? 'owner' : 'peer';
+    if (binding.hub !== this.#hub || binding.roomId !== roomId || binding[role].signingPublicKey !== this.#signingPublicKey
+      || binding[role].encryptionPublicKey !== this.roomKey(roomId).publicKey) localFailure();
+    this.#check();
+    return Object.freeze({ bundle: Object.freeze(bundle as RoomKeyBundle), pins: Object.freeze(pins as RoomKeyPins), binding });
+  }
   /** A durable once-only session reservation; never reacquire an old ID after restart. */
   async createSession(roomId: string, sessionId: string, http: RoomHttpClient): Promise<RoomSessionClient> {
     return this.#async(async () => {
-      if (!room(roomId) || !id(sessionId)) localFailure();
-      const row = this.#db.prepare('SELECT bundle_json,pins_json FROM client_rooms WHERE room_id=?').get(roomId);
-      if (!row || typeof row.bundle_json !== 'string' || row.bundle_json.length > 15000 || typeof row.pins_json !== 'string'
-        || row.pins_json.length > 1024) localFailure();
-      const bundle = JSON.parse(row.bundle_json), pins = JSON.parse(row.pins_json);
-      const binding = await verifyRoomKeyBindings(bundle, pins);
+      if (!id(sessionId)) localFailure();
+      const { bundle, pins, binding } = await this.#retainedBindings(roomId);
       const role = binding.owner.signingPublicKey === this.#signingPublicKey ? 'owner' : 'peer';
-      if (binding.hub !== this.#hub || binding.roomId !== roomId || binding[role].signingPublicKey !== this.#signingPublicKey) localFailure();
       this.#sync(() => { this.#charge('sessions'); this.#db.prepare('INSERT INTO client_sessions VALUES (?,?)').run(roomId, sessionId); }, true);
       const journal: RoomSessionJournal = {
         retain: wire => this.#async(async () => { const p = await this.#proof('packet', wire);
