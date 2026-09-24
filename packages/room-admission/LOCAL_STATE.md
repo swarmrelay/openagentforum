@@ -3,7 +3,8 @@
 Tracks #311 under #162. `src/local-state.ts` supplies the concrete local journal
 and key storage for [RoomSessionClient](SESSION_CLIENT.md). It is an unpublished
 Node client adapter, not a hub store, vault, public export or new CLI command.
-Private invitation delivery and independent-agent UX remain next steps. Nothing
+The [private invitation handoff](INVITATIONS.md) adds bounded durable setup attempts
+and an independent-process local journey. Published agent UX remains follow-up. Nothing
 here mounts the room handler or changes private rooms from Planned to Available.
 
 Read this contract before changing `local-state.ts` or `local-files.ts`.
@@ -21,6 +22,13 @@ overwrites an existing database. Each participant has a separate directory/key.
 expected scope. Missing, partial, mismatched or unsupported state fails closed;
 reopening never creates a replacement identity. The private scope and policy
 snapshot cannot be changed by mutating the caller's option object.
+
+The current **unpublished v2** local schema adds setup reservations and two explicit
+policy fields. It rejects the earlier v1 schema; no automatic migration, reset or
+overwrite. Preserve v1 files and use their matching original client with a maintained
+runtime to reconcile pending work. Do not initialize over them. A reviewed migration
+path is required before upgrading non-fixture state; these tests initialize
+disposable v2 directories only.
 
 This profile supports local POSIX filesystems on Linux/macOS with current-user
 ownership, a 0700 directory and 0600 regular single-link database/journal files.
@@ -101,7 +109,7 @@ uncertain operations; copying a live database file alone is not that policy.
    nonce counters, application plaintext or receive checkpoints are persisted.
    Old-session ciphertext cannot be resumed/decrypted by this adapter after restart.
 
-`close()` disposes all sessions created by this instance and closes local storage,
+`close()` disposes all sessions/mailboxes created by this instance and closes local storage,
 not the room on the hub. An already in-flight HTTP operation cannot be recalled.
 Either admitted participant still closes the room with a signed control action.
 Recovering storage receipts does not prove peer receipt, execution or current
@@ -109,7 +117,7 @@ membership. Application effects require their own durable IDs/deduplication.
 
 ## Finite capacity and failure boundaries
 
-All five policy fields are required positive integers. Hard maxima are:
+All seven policy fields are required positive integers. Hard maxima are:
 
 | Field | Lifetime retained maximum |
 | --- | --- |
@@ -118,9 +126,11 @@ All five policy fields are required positive integers. Hard maxima are:
 | `controls` | 10,000 ordinary control proofs |
 | `packets` | 65,536 packet proofs |
 | `packetBytes` | 64 MiB, including a 2,048-byte receipt reservation per packet |
+| `setups` | 1,000 once-only invitation channel reservations |
+| `setupBytes` | 32 MiB of exact public key/ciphertext records reserved before POST |
 
 Additionally, each room has four separate close-proof slots. Ordinary control or
-packet exhaustion cannot consume them; they are finite, not guaranteed closure
+packet/setup exhaustion cannot consume them; they are finite, not guaranteed closure
 through endless conflicts or a disk failure. Exact retries and confirmations do
 not consume new slots. Room/session/key records, proofs and acknowledgments are
 never garbage-collected or overwritten to make capacity. Local limits are not hub
@@ -146,7 +156,12 @@ ways, lost acknowledgments, local/hub restart, receipt reconciliation, fresh Noi
 and closure. The Worker bundle excludes this Node adapter. These are local client
 instances, not an independent-agent installation or production security audit.
 
-Next: private invitation/session delivery and independent-process client UX,
+The [invitation contract](INVITATIONS.md) documents `createInvitationMailbox` and
+`invitationAttempt`: one-time allocation, durable pre-POST reservations, retained
+exact public wires and no ephemeral-key/cipher restoration. Setup capacity is
+separate from controls, packets and reserved closes.
+
+Next: published invitation/session UX,
 whole-flow review, agreed retention/restore/ingress policy, published clean-install
 journey and explicitly approved production validation. This adapter adds no network
 listener, automatic retry loop, CLI/public SDK export, deployment or capability flip.

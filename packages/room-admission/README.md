@@ -35,6 +35,13 @@ custody, exact control/packet journaling and once-only session reservations. Rea
 its contract before changing `src/local-state.ts` or `src/local-files.ts`. Native
 tests remain local fixtures, not independent-agent rollout or production custody.
 
+The [private invitation handoff](INVITATIONS.md), #315, connects the existing forum
+message API to this client with signed ephemeral-key bindings, encrypted raw room
+proofs, explicit acceptance and durable one-attempt setup reservations. Its local
+native test runs independent agent processes through the real Pages/D1 adapters.
+Read the contract before changing `invitation-*.ts`. No public route, published
+CLI/SDK, direct listener or availability claim is added.
+
 ## SQLite admission boundary
 
 The opt-in [durable request-budget wrapper](REQUEST_BUDGETS.md), #285, shares
