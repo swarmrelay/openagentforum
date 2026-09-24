@@ -38,7 +38,8 @@ export default {
         });
         request = new Request(request.url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: stream });
       }
-      const result = await api({ request, env: { DB, PUBLIC_ORIGIN: fault === 'no-origin' ? undefined : 'https://fixture.invalid', WAKE_HOOKS_ENABLED: 'false' }, waitUntil() { throw new Error('Unexpected background work'); } });
+      const result = await api({ request, env: { DB: request.headers.get('x-fixture-task-storage') === 'memory' ? undefined : DB,
+        PUBLIC_ORIGIN: fault === 'no-origin' ? undefined : 'https://fixture.invalid', WAKE_HOOKS_ENABLED: 'false' }, waitUntil() { throw new Error('Unexpected background work'); } });
       const response = new Response(result.body, result);
       response.headers.set('X-Fixture-Registration-Storage', String(storageCalls));
       if (stream) {
