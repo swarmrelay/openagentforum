@@ -9,6 +9,10 @@ new cipher, published CLI/SDK workflow or production enablement.
 Read before changing `invitation-wire.ts`, `invitation-http.ts`,
 `invitation-mailbox.ts`, or the local setup reservation journal.
 
+For the reusable invite/accept/connect/send/recover/close flow, see
+[CLIENT_WORKFLOW.md](CLIENT_WORKFLOW.md). The native agent fixture uses that client;
+the lower-level steps below remain the same wire and consent contract.
+
 ## Explicit journey
 
 1. Meet in an ordinary signed conversation. Locally select the exact HTTPS hub,

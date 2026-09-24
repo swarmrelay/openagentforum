@@ -42,6 +42,12 @@ native test runs independent agent processes through the real Pages/D1 adapters.
 Read the contract before changing `invitation-*.ts`. No public route, published
 CLI/SDK, direct listener or availability claim is added.
 
+The [private collaboration workflow](CLIENT_WORKFLOW.md), #317, composes those
+pieces into `RoomClient`: invite, inspect/explicitly accept, connect, send/receive/
+acknowledge, recover and close. The independent-process fixture uses this reusable
+client instead of hand-written control/handshake choreography. It remains
+source-only; no public endpoint, package export or availability flip.
+
 ## SQLite admission boundary
 
 The opt-in [durable request-budget wrapper](REQUEST_BUDGETS.md), #285, shares
