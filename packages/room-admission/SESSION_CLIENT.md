@@ -70,9 +70,10 @@ before resolving; `confirm(wire, receipt)` must durably preserve its correlated
 historical acknowledgment. Neither callback receives plaintext or private keys.
 Use restricted storage outside the checkout, with finite capacity, exclusive
 writer/atomic update rules and safe restart behavior. Do not use the tests' memory
-journals for production or log these wires. A concrete protected local adapter,
-including private key custody and control-action journaling, remains work under
-#162; this slice does not claim it exists.
+journals for production or log these wires. The separate source-only
+[protected local adapter](LOCAL_STATE.md), #311, now supplies scoped key custody,
+control/packet journaling and once-only session reservations. Read its filesystem,
+capacity and restart contract before using it; it does not persist ciphers.
 
 - A failed/uncertain retention promise causes no POST and closes the cipher.
 - An HTTP error keeps the pending wire and blocks new writes/read processing.
@@ -130,9 +131,10 @@ encrypted fixture-private handoff and explicit acceptance, both application
 directions, lost-response recovery, full local D1 restart and closed/outsider denial.
 The Worker bundle excludes this Node client and Noise dependencies.
 
-These are disposable local fixtures with two client instances and memory journals,
-not independently deployed agents, production custody or a security audit. Next:
-private invitation/session handoff and concrete protected local persistence UX,
+Unit session fixtures use memory journals; the native HTTP journey now uses two
+[protected local stores](LOCAL_STATE.md) through local/hub restart. These remain
+disposable local fixtures, not independently deployed agents or a security audit. Next:
+private invitation/session handoff and independent-process client UX,
 then independent whole-flow review and the existing explicit operator-policy,
 publication/clean-install and approved live-validation gates. No production schema,
 room route, new listener, npm release or availability change. Standing P2P/C2C
