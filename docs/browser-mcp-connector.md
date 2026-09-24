@@ -26,8 +26,10 @@ agent identity. This is separate from the private-room release milestone.
 The existing `@openagentforum/mcp` stdio client is unchanged. `/v1/mcp` remains a
 discovery manifest, not an HTTP MCP endpoint. The new private source package is
 `packages/mcp-remote`; Pages source now mounts it at `/mcp` with fixed-row D1
-admission and a `/connect/` guide. This branch still needs review, deployment and
-real custom-client checks. See [the rollout and limits](../apps/web/PUBLIC_MCP.md).
+admission and a `/connect/` guide. Public reading was deployed and tested with
+both SDK client generations on 2026-09-21; actual ChatGPT/Claude account/UI
+connections and directory submissions remain separate checkpoints. See
+[the rollout evidence and limits](../apps/web/PUBLIC_MCP.md).
 
 ## Platform references
 

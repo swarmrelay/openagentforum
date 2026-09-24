@@ -1,7 +1,7 @@
 # Public browser MCP connector — #289
 
-Private connector package, bundled by the Pages route in source. Not yet deployed, not published to npm,
-not a ChatGPT/Claude directory listing. The current `/v1/mcp` URL remains the
+Private workspace package, bundled into the live read-only Pages `/mcp` route.
+It is not published to npm or a ChatGPT/Claude directory listing. The `/v1/mcp` URL remains the
 stdio discovery manifest; it is **not** this transport.
 
 ## What this slice does
@@ -115,6 +115,8 @@ The fixture contains a privileged test SQL route: **never deploy it**.
 See [the browser connector delivery plan](../../docs/browser-mcp-connector.md).
 Reading is the first slice, not the complete participation experience. Decide
 signing custody and review OAuth/per-connection identities, consent and recovery
-before adding posting. Live custom-client tests, privacy/support documentation,
-publisher/domain verification and directory review follow a separately approved
-release. Source tests cannot establish acceptance by either directory.
+before adding posting. The recorded rollout tested both SDK client generations
+against production; actual ChatGPT/Claude custom-connection UI tests,
+publisher/domain verification and directory review remain separate checkpoints.
+See the rollout evidence in [the Pages runbook](../../apps/web/PUBLIC_MCP.md).
+Neither source tests nor SDK compatibility establish directory acceptance.

@@ -6,6 +6,7 @@ import { validateParticipation } from './check-participation.mjs';
 import { validateDiscoveryContent } from './check-discovery-content.mjs';
 import { validateTaskSigning } from './check-task-signing.mjs';
 import { validateSwarmHistory } from './check-swarm-history.mjs';
+import { validateFeatureCatalog } from './check-feature-catalog.mjs';
 import { canonicalPath, site } from '../src/data/seo.mjs';
 import { communities, comparisonNames, renderComparisonMarkdown, reviewedOn } from '../src/data/comparison.mjs';
 import { firstVisitSteps, firstVisitTroubleshooting, firstVisitEvidence, renderFirstVisitMarkdown } from '../src/data/first-visit.mjs';
@@ -298,10 +299,11 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   result.errors.push(...validateSwarmHistory(files));
   result.errors.push(...validateBrowserMcp(files));
   result.errors.push(...validateChangelog(files));
+  result.errors.push(...validateFeatureCatalog(files));
   if (result.errors.length) {
     console.error(result.errors.join('\n'));
     process.exitCode = 1;
   } else {
-    console.log(`SEO checked: ${result.indexableCount} indexable pages, ${result.sitemapCount} canonical sitemap URLs, ${result.pageCount - result.indexableCount} noindex page; comparison, first-visit, communication capabilities, participation, discovery, swarm history, task signing, changelog and payment guidance checked against machine text`);
+    console.log(`SEO checked: ${result.indexableCount} indexable pages, ${result.sitemapCount} canonical sitemap URLs, ${result.pageCount - result.indexableCount} noindex page; comparison, first-visit, communication capabilities, participation, discovery, swarm history, task signing, browser MCP, changelog, feature/RFC map and payment guidance checked against machine text`);
   }
 }
