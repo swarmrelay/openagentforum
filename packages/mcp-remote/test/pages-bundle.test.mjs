@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
+import { createRequire } from 'node:module';
 import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -11,19 +10,22 @@ import { Miniflare } from 'miniflare';
 import workerd from 'workerd';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { browserMcp } from '../../../apps/web/src/data/browser-mcp.mjs';
+import { compilerEnvironment, runCompiler } from './helpers/compiler-process.mjs';
 
-test('actual Wrangler Pages bundle routes browser MCP, discovery and public reads in workerd', { timeout: 90_000 }, async () => {
+test('actual Wrangler Pages bundle routes browser MCP, discovery and public reads in workerd', { timeout: 90_000 }, async t => {
   const root = fileURLToPath(new URL('../../../', import.meta.url));
   const scratch = await mkdtemp(join(tmpdir(), 'oaf-pages-mcp-'));
   const oldRuntime = process.env.MINIFLARE_WORKERD_PATH;
-  process.env.MINIFLARE_WORKERD_PATH = workerd.default;
   let mf, client, outbound = 0;
   try {
     const config = JSON.parse(await readFile(join(root, 'apps/web/wrangler.jsonc'), 'utf8'));
-    await promisify(execFile)('pnpm', ['exec', 'wrangler', 'pages', 'functions', 'build', 'apps/web/functions',
+    // Run the installed CLI entry directly, avoiding pnpm + bin-wrapper descendants.
+    const wrangler = createRequire(join(root, 'package.json')).resolve('wrangler');
+    const compilation = await runCompiler(process.execPath, ['--no-warnings', wrangler, 'pages', 'functions', 'build', 'apps/web/functions',
       '--project-directory=apps/web', `--outdir=${scratch}/bundle`, `--metafile=${scratch}/meta.json`,
       `--compatibility-date=${config.compatibility_date}`, `--compatibility-flags=${config.compatibility_flags.join(',')}`,
-    ], { cwd: root, timeout: 45_000, maxBuffer: 1024 * 1024, env: { ...process.env, WRANGLER_SEND_METRICS: 'false' } });
+    ], { cwd: root, signal: t.signal, env: compilerEnvironment() });
+    t.diagnostic(`Pages compiler: ${JSON.stringify(compilation)}`);
     const metadata = JSON.parse(await readFile(join(scratch, 'meta.json'), 'utf8'));
     const inputs = Object.keys(metadata.inputs);
     assert.ok(inputs.some(path => path.includes('/shimsWorkerd.mjs')));
@@ -32,6 +34,7 @@ test('actual Wrangler Pages bundle routes browser MCP, discovery and public read
     const compiled = await build({ entryPoints: [fileURLToPath(new URL('./fixtures/pages-bundle.mjs', import.meta.url))],
       alias: { 'oaf-pages-test-bundle': join(scratch, 'bundle/index.js') }, bundle: true, write: false,
       format: 'esm', platform: 'neutral', conditions: ['workerd'], external: ['node:*', 'cloudflare:*'] });
+    process.env.MINIFLARE_WORKERD_PATH = workerd.default;
     mf = new Miniflare({ host: '127.0.0.1', port: 0, inspectorHost: '127.0.0.1', cf: false,
       telemetry: { enabled: false }, logRequests: false, resourceTmpPath: join(scratch, 'runtime'),
       workers: [{ config: { type: 'worker', name: 'pages-mcp-test', compatibilityDate: config.compatibility_date,
@@ -80,10 +83,15 @@ test('actual Wrangler Pages bundle routes browser MCP, discovery and public read
     assert.equal(preflight.status, 204);
     assert.match(preflight.headers.get('access-control-allow-headers'), /MCP-Method/);
   } finally {
-    await client?.close(); await mf?.dispose();
-    if (oldRuntime === undefined) delete process.env.MINIFLARE_WORKERD_PATH;
-    else process.env.MINIFLARE_WORKERD_PATH = oldRuntime;
-    await rm(scratch, { recursive: true, force: true });
+    try { await client?.close(); }
+    finally {
+      try { await mf?.dispose(); }
+      finally {
+        if (oldRuntime === undefined) delete process.env.MINIFLARE_WORKERD_PATH;
+        else process.env.MINIFLARE_WORKERD_PATH = oldRuntime;
+        await rm(scratch, { recursive: true, force: true });
+      }
+    }
   }
   assert.equal(outbound, 0);
 });
