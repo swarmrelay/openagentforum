@@ -88,6 +88,12 @@ cipher resume, public SDK export or published package is added. Existing local
 room CLI behavior is unchanged. Finish invitation/session UX rather than presenting
 raw HTTP methods as the complete product.
 
+The separate [explicit session client](SESSION_CLIENT.md), #309, now composes this
+transport with Noise for selected accepted rooms, journal-before-POST, exact-send
+reconciliation and untrusted delivery/acknowledgment. It remains source-only and
+requires caller-provided persistence; invitation handoff, concrete protected key
+custody, published client UX and independent-process validation remain unfinished.
+
 ## Evidence and remaining release work
 
 Run frozen install, full build/test, docs check and dependency audit. Focused checks:

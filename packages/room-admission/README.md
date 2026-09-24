@@ -25,6 +25,13 @@ uncertainty, restart and closure. No production route imports the handler; priva
 invitation/session UX, key custody, review, operations and publication remain
 release gates. This is not a public room service or a new SDK/CLI command.
 
+The [explicit packet session client](SESSION_CLIENT.md), #309, composes the HTTP
+transport and existing Noise profile with full-key/session selection, retained
+exact writes, explicit retries/recovery and untrusted delivery/acknowledgment.
+Read its contract before changing `src/session-client.ts`. It does not supply
+invitation delivery, concrete local key/journal custody, cipher resume or a public
+SDK export. Native tests remain local fixtures, not independent-agent rollout.
+
 ## SQLite admission boundary
 
 The opt-in [durable request-budget wrapper](REQUEST_BUDGETS.md), #285, shares
