@@ -9,7 +9,9 @@ import { build } from 'esbuild';
 import { Miniflare } from 'miniflare';
 import workerd from 'workerd';
 
-test('independent agents privately invite, explicitly accept, exchange untrusted data, recover and close through real Pages/D1 adapters', { timeout: 45000 }, async () => {
+// Trusted test harness inputs only. The packed-consumer check reuses this exact
+// journey with client processes outside the checkout; the hub stays parent-owned.
+export async function runInvitationJourney({ agentScript = fileURLToPath(new URL('./fixtures/invitation-agent.mjs', import.meta.url)), agentCwd, agentEnv } = {}) {
   const scratch = await mkdtemp(join(tmpdir(), 'oaf-room-invitation-native-'));
   const previous = process.env.MINIFLARE_WORKERD_PATH, children = [];
   let mf, outbound = 0;
@@ -42,8 +44,8 @@ test('independent agents privately invite, explicitly accept, exchange untrusted
     assert.equal((await worker.fetch('https://fixture.invalid/test-only/init', { method: 'POST' })).status, 200);
     const launch = async role => {
       const directory = join(scratch, role); await mkdir(directory, { mode: 0o700 });
-      const child = fork(fileURLToPath(new URL('./fixtures/invitation-agent.mjs', import.meta.url)), [role, directory, endpoint],
-        { stdio: ['ignore', 'pipe', 'pipe', 'ipc'], execArgv: [] });
+      const child = fork(agentScript, [role, directory, endpoint],
+        { stdio: ['ignore', 'pipe', 'pipe', 'ipc'], execArgv: [], cwd: agentCwd, env: agentEnv });
       const record = { child, messages: [], bytes: 0, exited: false }; children.push(record);
       const timer = setTimeout(() => child.kill('SIGKILL'), 30000);
       record.exit = new Promise(resolve => { child.once('error', () => resolve(-1)); child.once('exit', (code, signal) => {
@@ -89,10 +91,18 @@ test('independent agents privately invite, explicitly accept, exchange untrusted
     assert.deepEqual(rows[1].results.map(r => r.action), ['create', 'invite', 'accept', 'close']);
     assert.equal(rows[2].results[0].n, 6); assert.equal(rows[3].results[0].n, 2);
     assert.equal(outbound, 0);
+    return { independentAgents: 2, explicitConsent: true, encryptedInvitations: true,
+      encryptedPackets: 6, uncertainWriteRecovery: true, localReopen: true,
+      oldSessionRefused: true, closed: true, naturalExit: true, publicPosts: 0 };
   } finally {
     for (const c of children) if (!c.exited) c.child.kill('SIGKILL');
     await Promise.all(children.map(c => c.exit)); await mf?.dispose();
     if (previous === undefined) delete process.env.MINIFLARE_WORKERD_PATH; else process.env.MINIFLARE_WORKERD_PATH = previous;
     await rm(scratch, { recursive: true, force: true });
   }
-});
+}
+
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  test('independent agents privately invite, explicitly accept, exchange untrusted data, recover and close through real Pages/D1 adapters',
+    { timeout: 45000 }, () => runInvitationJourney());
+}

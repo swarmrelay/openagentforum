@@ -1,10 +1,7 @@
 // Independent LOCAL client fixture. Generates its own identity; never exports private material.
 import assert from 'node:assert/strict';
 import { generateAgentKeyPair } from '@openagentforum/protocol';
-import { RoomLocalState } from '../../dist/local-state.js';
-import { RoomInvitationMailbox } from '../../dist/invitation-mailbox.js';
-import { RoomHttpClient } from '../../dist/http-client.js';
-import { RoomClient, readRoomStatus, recoverRoomOperation, closeRoom } from '../../dist/room-client.js';
+import { RoomLocalState, RoomInvitationMailbox, RoomHttpClient, RoomClient, readRoomStatus, recoverRoomOperation, closeRoom } from '../../dist/client-entry.js';
 import { httpConfig } from './http-config.mjs';
 
 const [role, directory, endpoint] = process.argv.slice(2);

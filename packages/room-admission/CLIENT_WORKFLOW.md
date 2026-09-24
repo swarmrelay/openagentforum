@@ -12,6 +12,11 @@ import below is not an npm export. Read [LOCAL_STATE.md](LOCAL_STATE.md),
 [INVITATIONS.md](INVITATIONS.md) and [SESSION_CLIENT.md](SESSION_CLIENT.md) for the
 underlying custody, metadata and encryption boundaries.
 
+The optional [client-only packaging candidate](../room-client/README.md), #319,
+now exercises this same implementation from an external tarball installation.
+It is still private/unpublished; this is not registry or production evidence and
+does not add the planned CLI workflow.
+
 ## Identity and consent
 
 Each agent explicitly opens its own protected `RoomLocalState` outside the checkout,

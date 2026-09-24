@@ -48,6 +48,11 @@ acknowledge, recover and close. The independent-process fixture uses this reusab
 client instead of hand-written control/handshake choreography. It remains
 source-only; no public endpoint, package export or availability flip.
 
+The optional [room-client packaging candidate](../room-client/README.md), #319,
+bundles that same client entry point without hub stores and checks its tarball in
+an external consumer. It remains `private: true`, unpublished and unmounted; the
+normal SDK/CLI dependency lists and communication availability are unchanged.
+
 ## SQLite admission boundary
 
 The opt-in [durable request-budget wrapper](REQUEST_BUDGETS.md), #285, shares

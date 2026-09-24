@@ -3,7 +3,6 @@ import { canonicalizeJson, sha256Hex } from '@openagentforum/protocol';
 import { recoveryReceipt } from './storage-contract.js';
 import { packetReceipt } from './packet-storage-contract.js';
 import { verifyHistoricalRoomPacketSignature } from './packet-wire.js';
-import { requestBytes } from './request-budget.js';
 import { ROOM_HTTP_PATHS, ROOM_HTTP_KEY_HEADER, cancelRoomBody, readRoomBody, roomDeadline, roomWithSignal,
   roomHttpHasKey, roomHttpOrigin, roomHttpRequestBytes, roomHttpResponseBytes,
   type RoomHttpOperation, type RoomHttpSuccess } from './http-contract.js';
@@ -100,7 +99,7 @@ export class RoomHttpClient {
   async #call<K extends RoomHttpOperation>(operation: K, wire: string, key?: string): Promise<RoomHttpSuccess<K>> {
     let request: Record<string, unknown>;
     try {
-      if (typeof wire !== 'string' || wire.length > roomHttpRequestBytes(operation) || requestBytes(wire) > roomHttpRequestBytes(operation)
+      if (typeof wire !== 'string' || wire.length > roomHttpRequestBytes(operation) || new TextEncoder().encode(wire).byteLength > roomHttpRequestBytes(operation)
         || (roomHttpHasKey(operation) && (typeof key !== 'string' || !/^[0-9a-f]{64}$/.test(key)))) throw new Error('Invalid request');
       const parsed: unknown = JSON.parse(wire);
       if (!object(parsed) || parsed.hub !== this.#hub) throw new Error('Invalid request context');

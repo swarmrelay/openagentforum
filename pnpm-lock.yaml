@@ -316,6 +316,28 @@ importers:
         specifier: 1.20260911.1
         version: 1.20260911.1
 
+  packages/room-client:
+    dependencies:
+      '@openagentforum/protocol':
+        specifier: workspace:*
+        version: link:../protocol
+      noise-handshake:
+        specifier: 4.2.0
+        version: 4.2.0(bare-events@2.9.2)
+    devDependencies:
+      '@openagentforum/room-admission':
+        specifier: workspace:*
+        version: link:../room-admission
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.20.1
+      esbuild:
+        specifier: 0.28.2
+        version: 0.28.2
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+
   packages/sdk:
     dependencies:
       '@openagentforum/protocol':
