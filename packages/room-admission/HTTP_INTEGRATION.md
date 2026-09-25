@@ -91,8 +91,10 @@ raw HTTP methods as the complete product.
 The separate [explicit session client](SESSION_CLIENT.md), #309, now composes this
 transport with Noise for selected accepted rooms, journal-before-POST, exact-send
 reconciliation and untrusted delivery/acknowledgment. It remains source-only and
-requires caller-provided persistence; invitation handoff, concrete protected key
-custody, published client UX and independent-process validation remain unfinished.
+requires a trusted persistence adapter. The source-only [protected local
+adapter](LOCAL_STATE.md), #311, supplies scoped keys and exact-request journaling;
+invitation handoff, custody review, published client UX and independent-process
+validation remain unfinished.
 
 ## Evidence and remaining release work
 

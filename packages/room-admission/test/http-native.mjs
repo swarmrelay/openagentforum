@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { beforeEach, afterEach, test } from 'node:test';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -9,7 +9,7 @@ import { Miniflare } from 'miniflare';
 import workerd from 'workerd';
 import { generateAgentKeyPair, sha256Hex, encryptPayloadForRecipient, decryptPayloadFromSender } from '@openagentforum/protocol';
 import { RoomHttpClient } from '../dist/http-client.js';
-import { RoomSessionClient } from '../dist/session-client.js';
+import { RoomLocalState } from '../dist/local-state.js';
 import { ROOM_CONTROL_PROTOCOL, deriveRoomId, roomControlSignString, signRoomControl } from '../dist/control.js';
 import { ROOM_RECOVERY_PROTOCOL, signRoomRecovery } from '../dist/recovery.js';
 import { ROOM_STATE_PROTOCOL, signRoomState } from '../dist/state-read.js';
@@ -31,7 +31,7 @@ beforeEach(async () => {
   const bundle = await build({ entryPoints: [fileURLToPath(new URL('./fixtures/http-worker.mjs', import.meta.url))],
     bundle: true, write: false, format: 'esm', platform: 'neutral', metafile: true });
   assert.ok(Object.values(bundle.metafile.outputs).every(o => o.imports.length === 0));
-  assert.ok(Object.keys(bundle.metafile.inputs).every(path => !/noise|sqlite|libsodium|http-client|session-client/.test(path)));
+  assert.ok(Object.keys(bundle.metafile.inputs).every(path => !/noise|sqlite|libsodium|http-client|session-client|local-state|local-files/.test(path)));
   assert.ok(Object.keys(bundle.metafile.inputs).some(path => path.endsWith('apps/web/functions/_lib/private-room-http.ts')));
   runtimeConfig = { host: '127.0.0.1', port: 0, inspectorHost: '127.0.0.1', cf: false,
     telemetry: { enabled: false }, logRequests: false, resourceTmpPath: join(scratch, 'runtime'), resourcePersistencePath: join(scratch, 'state'),
@@ -188,38 +188,47 @@ test('native HTTP rejects malformed bytes, stalled bodies and methods before D1,
   assert.equal((await f.a.recover(recovery, f.creator.signingPublicKey)).receipt.status, 'open');
 });
 
-test('reusable session clients exchange untrusted data through native D1, reconcile a lost send and restart with fresh sessions', async () => {
+test('protected local session clients exchange data through native D1 and recover retained intents after local and hub restarts', async () => {
   const f = await fixtures(), clients = [];
+  const directories = { owner: join(scratch, 'owner-client'), peer: join(scratch, 'peer-client') };
+  const localPolicy = { rooms: 10, sessions: 20, controls: 100, packets: 1000, packetBytes: 10000000 };
+  const scopes = { owner: { hub, signingPublicKey: f.creator.signingPublicKey, policy: localPolicy },
+    peer: { hub, signingPublicKey: f.peer.signingPublicKey, policy: localPolicy } };
+  const local = {};
   try {
-    const create = await f.action(f.creator, 'create', null, 0, { encryptionPublicKey: f.creator.encryptionPublicKey });
-    const { receipt } = await f.a.submit(create.wire, f.creator.signingPublicKey);
-    const roomId = receipt.roomId;
+    for (const [role, identity] of [['owner', f.creator], ['peer', f.peer]]) {
+      await mkdir(directories[role], { mode: 0o700 });
+      local[role] = RoomLocalState.initialize(directories[role], { hub, signingPrivateKey: identity.signingPrivateKey, policy: localPolicy });
+    }
+    const requestId = id(), roomId = await deriveRoomId(hub, f.creator.agentId, requestId);
+    const ownerKey = local.owner.createRoomKey(roomId), peerKey = local.peer.createRoomKey(roomId);
+    assert.notEqual(ownerKey.publicKey, f.creator.encryptionPublicKey); // fresh per-room, not the directory identity's key
+    const createProof = { protocol: ROOM_CONTROL_PROTOCOL, hub, actor: f.creator.agentId, requestId, roomId,
+      ...fresh(), expectedRevision: 0, action: 'create', payload: { encryptionPublicKey: ownerKey.publicKey } };
+    const create = { proof: createProof, wire: await signRoomControl(createProof, f.creator.signingPrivateKey) };
+    await local.owner.submitControl(create.wire, f.a);
     const invite = await f.action(f.creator, 'invite', roomId, 1, { recipient: f.peer.agentId,
       recipientSigningPublicKey: f.peer.signingPublicKey, inviteExpiresAt: Date.now() + 120000 });
-    await f.a.submit(invite.wire, f.creator.signingPublicKey);
+    await local.owner.submitControl(invite.wire, f.a);
     // Still fixture-private handoff and explicit acceptance, not a shipped invitation inbox.
     const sealed = await encryptPayloadForRecipient({ create: create.wire, invite: invite.wire },
       f.peer.encryptionPublicKey, f.creator.encryptionPrivateKey);
     const received = await decryptPayloadFromSender(sealed.ciphertext, sealed.nonce, f.creator.encryptionPublicKey, f.peer.encryptionPrivateKey);
     assert.equal((await f.state(f.b, f.peer, roomId)).room, null);
     const accept = await f.action(f.peer, 'accept', roomId, 2,
-      { invitationDigest: await sha256Hex(roomControlSignString(invite.proof)), encryptionPublicKey: f.peer.encryptionPublicKey });
-    await f.b.submit(accept.wire, f.peer.signingPublicKey);
+      { invitationDigest: await sha256Hex(roomControlSignString(invite.proof)), encryptionPublicKey: peerKey.publicKey });
+    await local.peer.submitControl(accept.wire, f.b);
     const bundle = { ...received, accept: accept.wire };
     const pins = { hub, roomId, ownerSigningPublicKey: f.creator.signingPublicKey, peerSigningPublicKey: f.peer.signingPublicKey };
-    // Memory journals only for disposable tests. Production custody/durability is a separate gate.
-    const retained = new Map(), confirmed = new Map();
-    const endpoint = async (role, identity, http, sessionId) => {
-      const client = await RoomSessionClient.create({ role, bundle, pins, sessionId, http,
-        signingPrivateKey: identity.signingPrivateKey, encryptionPrivateKey: identity.encryptionPrivateKey,
-        journal: { async retain(wire) { retained.set(wire, true); },
-          async confirm(wire, receipt) { assert.ok(retained.has(wire)); confirmed.set(wire, receipt); } } });
+    await local.owner.saveBindings(bundle, pins); await local.peer.saveBindings(bundle, pins);
+    const endpoint = async (role, http, sessionId) => {
+      const client = await local[role].createSession(roomId, sessionId, http);
       clients.push(client); return client;
     };
     const pair = async () => {
       const sessionId = id();
-      const a = await endpoint('owner', f.creator, f.client(), sessionId);
-      const b = await endpoint('peer', f.peer, f.client(), sessionId);
+      const a = await endpoint('owner', f.client(), sessionId);
+      const b = await endpoint('peer', f.client(), sessionId);
       await a.start(); await a.flush();
       // Each call scans at most eight rows, even across old retained sessions.
       for (let i = 0; i < 4 && !b.pendingWire; i++) await b.poll();
@@ -234,20 +243,30 @@ test('reusable session clients exchange untrusted data through native D1, reconc
     await assert.rejects(first.a.flush(), e => e.code === 'room_transport_unknown');
     assert.equal(first.a.pendingWire, pending);
     assert.equal((await first.a.recoverPending()).sessionId, first.sessionId);
-    assert.ok(confirmed.has(pending));
+    assert.equal((await local.owner.operation('packet', JSON.parse(pending).requestId)).receipt.sessionId, first.sessionId);
     const message = await first.b.poll(); assert.equal(message.kind, 'untrusted-room-data');
     assert.equal(Buffer.from(message.bytes).toString(), 'Untrusted peer content, never a tool invocation.');
     first.b.acknowledge(message.requestId);
     await first.b.prepareData(Buffer.from('Accepted as data.')); await first.b.flush();
     const reply = await first.a.poll(); assert.equal(reply.kind, 'untrusted-room-data'); first.a.acknowledge(reply.requestId);
-    first.a.dispose(); first.b.dispose(); await restart(); // No reseeding or cipher restoration.
+    // Lose another acknowledgment, then discard all local client/cipher instances.
+    await first.a.prepareData(Buffer.from('Uncertain old-session delivery is never repeated as application work.'));
+    const abandoned = first.a.pendingWire; f.drop(); await assert.rejects(first.a.flush());
+    local.owner.close(); local.peer.close();
+    assert.equal(first.a.closed && first.b.closed, true);
+    await restart(); // No reseeding or cipher restoration.
+    local.owner = RoomLocalState.open(directories.owner, scopes.owner);
+    local.peer = RoomLocalState.open(directories.peer, scopes.peer);
+    const recovered = await local.owner.recover('packet', JSON.parse(abandoned).requestId, f.client());
+    assert.equal(recovered.sessionId, first.sessionId);
+    assert.equal(local.owner.roomKey(roomId).publicKey, ownerKey.publicKey);
     const second = await pair(); assert.notEqual(second.sessionId, first.sessionId);
     await second.a.prepareData(Buffer.from('A fresh session cannot decrypt the old session.')); await second.a.flush();
     const freshMessage = await second.b.poll(); assert.equal(freshMessage.kind, 'untrusted-room-data');
     assert.equal(freshMessage.sessionId, second.sessionId); second.b.acknowledge(freshMessage.requestId);
-    const close = await f.action(f.peer, 'close', roomId, 3, {}); await f.b.submit(close.wire, f.peer.signingPublicKey);
+    const close = await f.action(f.peer, 'close', roomId, 3, {}); await local.peer.submitControl(close.wire, f.b);
     await assert.rejects(second.a.poll(), e => e.code === 'room_session_unavailable');
     await assert.rejects(second.b.poll(), e => e.code === 'room_session_unavailable');
     assert.equal((await f.read(f.c, f.outsider, roomId)).page, null);
-  } finally { clients.forEach(client => client.dispose()); }
+  } finally { clients.forEach(client => client.dispose()); Object.values(local).forEach(state => state.close()); }
 });

@@ -27,15 +27,18 @@ The [bounded HTTP/client integration](HTTP_INTEGRATION.md), #295 under #162,
 connects all six budgeted operations through an unmounted Pages/D1 handler and a
 source-only transport client. Native tests cover an encrypted two-client journey,
 uncertainty, restart and closure. No production route imports the handler; private
-invitation/session UX, key custody, review, operations and publication remain
+invitation/session UX, custody review, operations and publication remain
 release gates. This is not a public room service or a new SDK/CLI command.
 
 The [explicit packet session client](SESSION_CLIENT.md), #309, composes the HTTP
 transport and existing Noise profile with full-key/session selection, retained
 exact writes, explicit retries/recovery and untrusted delivery/acknowledgment.
 Read its contract before changing `src/session-client.ts`. It does not supply
-invitation delivery, concrete local key/journal custody, cipher resume or a public
-SDK export. Native tests remain local fixtures, not independent-agent rollout.
+invitation delivery, cipher resume or a public SDK export. The separate
+[protected local state adapter](LOCAL_STATE.md), #311, supplies explicit Node key
+custody, exact control/packet journaling and once-only session reservations. Read
+its contract before changing `src/local-state.ts` or `src/local-files.ts`. Native
+tests remain local fixtures, not independent-agent rollout or production custody.
 
 ## SQLite admission boundary
 
@@ -144,7 +147,7 @@ pnpm security:audit
 pnpm docs:check
 ```
 
-Tests cover real SQLite statement rollback, process exit before receipt insertion, process exit after commit before acknowledgment, injected uncertainty after COMMIT, restarts, independent-process revision/quota races, expiry during verification, immutable configuration, retained tombstones/receipts, quota exhaustion and reserved closure. Child processes receive only already signed public proof material over local IPC; test signing secrets stay in the parent process's memory. Test databases are disposable temporary directories, not production storage. The original four fixed vectors remain unchanged.
+Admission tests cover real SQLite statement rollback, process exit before receipt insertion, process exit after commit before acknowledgment, injected uncertainty after COMMIT, restarts, independent-process revision/quota races, expiry during verification, immutable configuration, retained tombstones/receipts, quota exhaustion and reserved closure. Those admission child processes receive only already signed public proof material over local IPC; signing secrets stay in the parent process's memory. The separate [local custody tests](LOCAL_STATE.md) also reopen disposable protected key stores from child processes, without passing keys in argv or IPC. Test databases are temporary fixtures, not production storage. The original four fixed vectors remain unchanged.
 
 The package test command first strictly type-checks source and test fixtures without emitting files. Recovery tests additionally cover expired-action recovery, historical receipts after closure, actor/full-key/digest/room isolation, independent Node signature verification, signed-field substitution, canonical-input rejection, primary snapshot isolation, shared concurrency, failure redaction and read-only operation at quota saturation. They verify that recovery changes no retained state or close reservations.
 
