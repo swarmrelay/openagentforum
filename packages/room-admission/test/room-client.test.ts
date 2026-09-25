@@ -162,6 +162,71 @@ it('rejects a decision at its expiry without creating an acceptance', async () =
   expect(s.calls.filter(c => c.body?.action === 'accept')).toHaveLength(0);
 });
 
+it('expiry during acceptance retention prevents POST and preserves the exact proof for recovery', async () => {
+  const s = await setup(), decision = await s.invited();
+  const clock = vi.spyOn(Date, 'now').mockReturnValue(decision.expiresAt - 1000);
+  const retain = s.local[1].retainControl.bind(s.local[1]); let retained = '';
+  vi.spyOn(s.local[1], 'retainControl').mockImplementation(async wire => {
+    await retain(wire); retained = wire; clock.mockReturnValue(decision.expiresAt);
+  });
+  const error = await s.b.accept(decision).catch(e => e);
+  expect(error).toBeInstanceOf(RoomClientError);
+  expect(s.calls.filter(c => c.body?.action === 'accept')).toHaveLength(0);
+  expect(s.hub.room(decision.roomId).peer).toBeNull();
+  const proof = JSON.parse(retained);
+  expect(proof.expiresAt).toBeLessThanOrEqual(decision.expiresAt);
+  expect(error.recovery).toEqual({ kind: 'control', roomId: decision.roomId, requestId: proof.requestId });
+  const local = s.reopen(1);
+  expect(local.pending()).toHaveLength(1);
+  expect((await local.operation('control', proof.requestId)).wire).toBe(retained);
+  expect(await recoverRoomOperation(local, error.recovery, s.fetcher)).toBeNull();
+  expect(local.pending()).toHaveLength(1);
+});
+
+it('setup monotonic expiry during retention prevents acceptance even while the wall clock remains fresh', async () => {
+  const s = await setup(), decision = await s.invited();
+  vi.spyOn(Date, 'now').mockReturnValue(Date.now());
+  const retain = s.local[1].retainControl.bind(s.local[1]);
+  vi.spyOn(s.local[1], 'retainControl').mockImplementation(async wire => {
+    await retain(wire); vi.spyOn(performance, 'now').mockReturnValue(performance.now() + 60001);
+  });
+  const error = await s.b.accept(decision).catch(e => e);
+  expect(Date.now()).toBeLessThan(decision.expiresAt);
+  expect(error).toMatchObject({ code: 'needs_recovery', recovery: { kind: 'control', roomId: decision.roomId } });
+  expect(s.calls.filter(c => c.body?.action === 'accept')).toHaveLength(0);
+  expect(s.hub.room(decision.roomId).peer).toBeNull(); expect(s.local[1].pending()).toHaveLength(1);
+});
+
+it('acceptance proof expires at consent even when expiry crosses after dispatch but before admission', async () => {
+  const s = await setup(), decision = await s.invited();
+  const clock = vi.spyOn(Date, 'now').mockReturnValue(decision.expiresAt - 1000);
+  const submit = s.hub.store.submit.bind(s.hub.store);
+  vi.spyOn(s.hub.store, 'submit').mockImplementation(async (wire, key) => {
+    clock.mockReturnValue(decision.expiresAt); s.hub.clock.now = decision.expiresAt;
+    return submit(wire, key);
+  });
+  const error = await s.b.accept(decision).catch(e => e);
+  expect(error).toMatchObject({ code: 'needs_recovery' });
+  const posts = s.calls.filter(c => c.body?.action === 'accept'); expect(posts).toHaveLength(1);
+  expect(posts[0].body.expiresAt).toBeLessThanOrEqual(decision.expiresAt);
+  expect(s.hub.room(decision.roomId).peer).toBeNull();
+  expect(s.local[1].pending()).toHaveLength(1);
+  expect(await recoverRoomOperation(s.reopen(1), error.recovery, s.fetcher)).toBeNull();
+});
+
+it('a timely committed acceptance is confirmed even if its response arrives after consent expiry', async () => {
+  const s = await setup(), decision = await s.invited();
+  const clock = vi.spyOn(Date, 'now').mockReturnValue(decision.expiresAt - 1000);
+  const submit = s.hub.store.submit.bind(s.hub.store);
+  vi.spyOn(s.hub.store, 'submit').mockImplementation(async (wire, key) => {
+    const result = await submit(wire, key); clock.mockReturnValue(decision.expiresAt + 60001); return result;
+  });
+  await expect(s.b.accept(decision)).rejects.toMatchObject({ code: 'unavailable', recovery: null });
+  expect(s.hub.room(decision.roomId).peer?.agentId).toBe(s.hub.peer.agentId);
+  expect(s.local[1].pending()).toEqual([]);
+  expect(s.calls.filter(c => c.body?.action === 'accept')).toHaveLength(1);
+});
+
 it('requires reconciliation of earlier pending work before a fresh setup', async () => {
   const s = await setup(); await s.keys(); s.fault.before = 'create'; await expect(s.a.invite()).rejects.toThrow();
   const next = s.make(0, undefined, 'room-setup-' + id()), n = s.calls.length;
@@ -209,6 +274,53 @@ it('concurrent close calls cannot sign and submit two replacement close requests
   const s = await setup(); await s.accepted();
   const result = await Promise.allSettled([closeRoom(s.local[0], s.a.roomId!, s.fetcher), closeRoom(s.local[0], s.a.roomId!, s.fetcher)]);
   expect(result.some(r => r.status === 'fulfilled')).toBe(true);
+  expect(s.calls.filter(c => c.body?.action === 'close')).toHaveLength(1);
+});
+
+it('overlapping close is rejected before reading state, including after the first receipt clears its pending intent', async () => {
+  const s = await setup(); await s.accepted(); const roomId = s.a.roomId!;
+  let releaseRead!: () => void, releaseClose!: () => void;
+  const readGate = new Promise<void>(resolve => { releaseRead = resolve; });
+  const closeGate = new Promise<void>(resolve => { releaseClose = resolve; });
+  let reads = 0, confirmed = false;
+  const fetcher: typeof fetch = async (input, init) => {
+    const response = await s.fetcher(input, init);
+    if (String(input).endsWith('/state') && ++reads === 1) await readGate;
+    return response;
+  };
+  const submit = s.local[0].submitControl.bind(s.local[0]);
+  vi.spyOn(s.local[0], 'submitControl').mockImplementation(async (wire, http) => {
+    const result = await submit(wire, http); confirmed = true; await closeGate; return result;
+  });
+  const running = closeRoom(s.local[0], roomId, fetcher).catch(e => e);
+  const overlaps: Promise<unknown>[] = [];
+  const rejectOverlap = async () => {
+    let error: unknown;
+    overlaps.push(closeRoom(s.local[0], roomId, fetcher).catch(e => { error = e; }));
+    await vi.waitFor(() => expect(error).toMatchObject({ code: 'busy' }));
+  };
+  try {
+    await vi.waitFor(() => expect(reads).toBe(1));
+    await rejectOverlap();
+    expect(reads).toBe(1); releaseRead();
+    await vi.waitFor(() => expect(confirmed).toBe(true));
+    expect(s.local[0].pending()).toEqual([]);
+    await rejectOverlap();
+    expect(reads).toBe(1); releaseClose();
+    expect(await running).toMatchObject({ status: 'closed' });
+    expect(await closeRoom(s.local[0], roomId, fetcher)).toMatchObject({ status: 'closed' });
+    expect(s.calls.filter(c => c.body?.action === 'close')).toHaveLength(1);
+    expect(s.reopen(0).pending()).toEqual([]);
+    await expect(s.make(0, undefined, 'room-setup-' + id()).startSetup()).resolves.toBeUndefined();
+  } finally { releaseRead(); releaseClose(); await Promise.allSettled([running, ...overlaps]); }
+});
+
+it('close single-flight releases after a pre-mutation failure', async () => {
+  const s = await setup(); await s.accepted(); const roomId = s.a.roomId!;
+  s.fault.before = '/v1/rooms/state';
+  await expect(closeRoom(s.local[0], roomId, s.fetcher)).rejects.toMatchObject({ code: 'unavailable' });
+  expect(s.local[0].pending()).toEqual([]);
+  expect(await closeRoom(s.local[0], roomId, s.fetcher)).toMatchObject({ status: 'closed' });
   expect(s.calls.filter(c => c.body?.action === 'close')).toHaveLength(1);
 });
 
