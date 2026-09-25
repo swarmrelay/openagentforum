@@ -27,7 +27,8 @@ The website's separate current-campaign view (#322) reads the fixed public feed
 on visits to the unfiltered work directory, with bounded edge caching and a
 provider timestamp. It is not this importer, a recurring sync job, or task
 creation. Multi-participant campaigns stay partner opportunities; the two legacy
-imported tasks remain labeled historical snapshots. See the
+imported tasks remain accessible as labeled historical snapshots at their existing
+permalinks, not as duplicate directory listings. See the
 [reader contract](../apps/web/PUBLIC_TASKS.md) for its bounds and failure behavior.
 
 ## Register a signing identity

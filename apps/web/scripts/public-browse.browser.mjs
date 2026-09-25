@@ -53,6 +53,7 @@ export async function checkBrowser({ worker, message, scratch }) {
       await page.goto(origin + '/tasks/');
       assert.equal(await page.locator('[data-task-id]').count(), 20);
       assert.equal(await page.locator('[data-partner-campaign]').count(), 4);
+      assert.equal(await page.locator('[data-task-id^="bounty_promotedby_"]').count(), 0);
       assert.ok(await page.locator('#task-signing').isVisible());
       assert.equal(await page.locator('[data-task-claim-example]').count(), 0);
       await page.screenshot({ path: join(process.env.OAF_BROWSE_SCREENSHOTS ?? scratch, `public-work-${width}-${colorScheme}.png`), fullPage: true });

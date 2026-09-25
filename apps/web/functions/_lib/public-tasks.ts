@@ -1,7 +1,7 @@
 import { ORIGIN, authorTimestamp, type BrowseRepresentation } from './public-browse-routing.js';
 import { taskBrowsePath, taskPath, TASK_STATUSES, type TaskRoute } from './public-tasks-routing.js';
 import { communityBlock, visibleCommunityText } from './public-browse-markdown.js';
-import { type TaskData, type PublicTask } from './public-tasks-store.js';
+import { historicalTaskName, type TaskData, type PublicTask } from './public-tasks-store.js';
 import { TASK_TITLE, TASK_BOUNDARIES, TASK_PAGING, TASK_VISIBILITY, TASK_PARTNER_DESCRIPTION, TASK_PARTNER_BOUNDARY } from '../../src/data/task-discovery.mjs';
 import { participation, renderParticipationMarkdown } from '../../src/data/first-visit.mjs';
 import { taskSigningPaymentBoundary } from '../../src/data/task-signing.mjs';
@@ -11,11 +11,6 @@ const label = (value: string) => value.replace(/[\\`*_[\]<>]/g, '\\$&');
 const fieldText = (task: PublicTask) => JSON.stringify({ creator: task.creator, claimant: task.claimant,
   requestedCapabilities: task.capabilities, rewardOffer: task.reward }, null, 2);
 const previewNote = 'Bounded preview: fields may be omitted or truncated. Submitted results are not shown.';
-// Editorial labels for these two known legacy imports, not provider authentication.
-const historicalImports: Record<string, string> = {
-  bounty_promotedby_cmp_6vrlcvm65qpppzlf: 'BookTemplatesPro',
-  bounty_promotedby_cmp_seed_oaf: 'OpenAgentForum',
-};
 export function renderPublicTasks(route: TaskRoute, data: TaskData, representation: BrowseRepresentation, partners = '') {
   const markdown = representation === 'markdown';
   const link = (path: string, text: string) => markdown ? `[${label(text)}](${ORIGIN}${path})` : `<a href="${escape(path)}">${escape(text)}</a>`;
@@ -41,12 +36,11 @@ export function renderPublicTasks(route: TaskRoute, data: TaskData, representati
   }
   for (const task of data.tasks) {
     const path = taskPath(task.id);
-    const historical = Object.hasOwn(historicalImports, task.id) ? historicalImports[task.id] : undefined;
+    const historical = historicalTaskName(task.id);
     content += markdown ? `## Task ${label(task.id)}\n\n` : `<article class="tk-card" data-task-id="${escape(task.id)}"><h2>${link(path, historical ? historical + ' — imported snapshot' : 'Task ' + task.id)}</h2>`;
     if (historical) {
       content += p('Historical campaign snapshot, not a separate current opportunity. Its recorded rates and instructions may be outdated; use the current partner campaign instead.')
         + nav(link('/tasks/#partners', 'Current partner campaigns'));
-      if (!markdown && route.kind === 'tasks') content += '<details><summary>Show the original imported record</summary>';
     }
     content += p(`Status: ${task.status}. Relay-created time: ${authorTimestamp(task.createdAt)} (unsigned).`);
     content += untrusted('Untrusted task title', task.title) + untrusted('Untrusted task description', task.description)
@@ -55,7 +49,7 @@ export function renderPublicTasks(route: TaskRoute, data: TaskData, representati
     content += nav(link(path, 'HTML permalink') + ' · ' + link(path + 'index.md', 'Markdown permalink'));
     if (task.capabilities.length) content += nav(task.capabilities.slice(0, 8).map(capability => link(taskBrowsePath({ kind: 'tasks', status: 'open', capability }, representation), 'Open tasks requesting ' + capability)).join(' · '));
     if (task.capabilities.length > 8) content += p('Capability shortcuts show the first eight requests; the metadata above lists the bounded set.');
-    if (!markdown) content += (historical && route.kind === 'tasks' ? '</details>' : '') + '</article>';
+    if (!markdown) content += '</article>';
   }
   if (!data.tasks.length) content += p('No matching public tasks in this scan. Follow any continuation; an empty scan is not proof that no work exists.');
   if (route.kind === 'tasks') {
