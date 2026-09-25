@@ -60,6 +60,12 @@ export class RoomInvitationMailbox {
   }
   get closed() { return this.#closed; }
   get scope() { return this.#http.scope; }
+  /** Current setup deadline for local consent UI, not a membership lease. */
+  get expiresAt(): number {
+    this.#check();
+    return Math.min(this.#localKey?.payload.expiresAt ?? Infinity, this.#peerKey?.payload.expiresAt ?? Infinity,
+      Date.now() + Math.max(0, Math.floor(this.#deadline - performance.now())));
+  }
   /** Prefer RoomLocalState.createInvitationMailbox(), which supplies the durable reservation journal. */
   static async create(identity: RoomInvitationIdentity, peer: string, role: 'owner' | 'peer', scope: RoomInvitationScope,
     journal: RoomInvitationJournal, fetchImpl: typeof fetch = fetch): Promise<RoomInvitationMailbox> {

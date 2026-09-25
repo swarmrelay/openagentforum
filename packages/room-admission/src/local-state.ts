@@ -171,6 +171,16 @@ export class RoomLocalState {
   }
   /** Private local material. Never serialize into an invitation, request, error or log. */
   identity() { return this.#sync(() => this.#identity()); }
+  /** Public pinned local context; never caller-selected hub authority. */
+  scope() { return this.#sync(() => Object.freeze({ hub: this.#hub, signingPublicKey: this.#signingPublicKey })); }
+  /** Indexed, bounded pending close lookup; never creates or replaces a request. */
+  pendingClose(roomId: string): string | null {
+    return this.#sync(() => {
+      if (!room(roomId)) localFailure();
+      const row = this.#db.prepare("SELECT request_id FROM client_ops WHERE room_id=? AND is_close=1 AND kind='control' AND receipt IS NULL LIMIT 1").get(roomId);
+      return row ? String(row.request_id) : null;
+    });
+  }
   roomKey(roomId: string): Readonly<KeyPair> {
     return this.#sync(() => { if (!room(roomId)) localFailure();
       const row = this.#db.prepare('SELECT key_json FROM client_rooms WHERE room_id=?').get(roomId);

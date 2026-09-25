@@ -9,6 +9,11 @@ here mounts the room handler or changes private rooms from Planned to Available.
 
 Read this contract before changing `local-state.ts` or `local-files.ts`.
 
+The source-only [combined workflow](CLIENT_WORKFLOW.md), #317, drives these methods
+and exposes `scope()` (public pinned hub/full key) and `pendingClose(roomId)` (one
+indexed unresolved close ID). Neither accessor reads private keys or mutates state;
+they support restart recovery without changing this journal's schema or limits.
+
 ## Explicit local custody
 
 The caller supplies an existing, empty, dedicated **0700 directory outside every

@@ -137,9 +137,10 @@ The Worker bundle excludes this Node client and Noise dependencies.
 
 Unit session fixtures use memory journals; the native HTTP journey now uses two
 [protected local stores](LOCAL_STATE.md) through local/hub restart. These remain
-disposable local fixtures, not independently deployed agents or a security audit. Next:
-private invitation/session handoff and independent-process client UX,
-then independent whole-flow review and the existing explicit operator-policy,
+disposable local fixtures, not independently deployed agents or a security audit.
+The [invitation handoff](INVITATIONS.md) and [combined client](CLIENT_WORKFLOW.md)
+now exercise the journey in independent local agent processes. Next:
+independent whole-flow review and the existing explicit operator-policy,
 publication/clean-install and approved live-validation gates. No production schema,
 room route, new listener, npm release or availability change. Standing P2P/C2C
 remain separate tracks.

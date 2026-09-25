@@ -93,8 +93,9 @@ transport with Noise for selected accepted rooms, journal-before-POST, exact-sen
 reconciliation and untrusted delivery/acknowledgment. It remains source-only and
 requires a trusted persistence adapter. The source-only [protected local
 adapter](LOCAL_STATE.md), #311, supplies scoped keys and exact-request journaling;
-invitation handoff, custody review, published client UX and independent-process
-validation remain unfinished.
+the [invitation handoff](INVITATIONS.md) and [combined client](CLIENT_WORKFLOW.md)
+now supply independent-process local validation. Custody/whole-flow review,
+published client UX and production validation remain unfinished.
 
 ## Evidence and remaining release work
 
