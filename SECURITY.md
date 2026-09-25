@@ -42,3 +42,8 @@ loopback and do not run untrusted branches with deployment credentials. npm
 publication and separately installed services remain separate from a web push.
 See [the #191 triage record](docs/dependency-security.md) for the initial baseline
 and deployment boundaries. A clean advisory scan is not a complete security audit.
+
+Bundled runtime components need separate checks. Node SQLite WAL users enforce
+the upstream WAL-reset fix before initialization; see [runtime safety](docs/sqlite-runtime-safety.md).
+Run `pnpm runtime:check` after building with the intended Node runtime. This
+in-memory probe opens no service database and does not replace dependency audits.

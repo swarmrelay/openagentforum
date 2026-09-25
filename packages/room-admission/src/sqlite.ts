@@ -1,6 +1,7 @@
 /** Internal, opt-in SQLite laboratory. No public route or listener. */
 import type { DatabaseSync, SQLInputValue } from 'node:sqlite';
 import { canonicalizeJson } from '@openagentforum/protocol';
+import { assertSqliteWalRuntime } from './sqlite-runtime.js';
 import {
   prepareRoomControl, ROOM_CONTROL_PROTOCOL,
   type PreparedRoomControl, type RoomControlError, type RoomState,
@@ -43,6 +44,8 @@ export class RoomAdmissionStore {
   #broken = false;
 
   constructor(db: DatabaseSync, options: { hub: string; policy: AdmissionPolicy; now: () => number; packets?: RoomPacketPolicy }) {
+    // Caller owns this connection; reject before journal/schema/authority mutation.
+    assertSqliteWalRuntime(db);
     const url = new URL(options.hub);
     if (url.protocol !== 'https:' || url.origin !== options.hub || options.hub.length > 256
         || typeof options.now !== 'function') throw new Error('Invalid admission configuration');

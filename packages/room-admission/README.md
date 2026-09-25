@@ -1,6 +1,11 @@
 # Private-room admission laboratory
 
-**Internal, unpublished (`private: true`), Node 22.13+ and edge-safe D1 admission/opt-in packet-storage laboratories. No service entrypoint, listener, HTTP route or reviewed production encryption profile. Private rooms remain Planned.**
+**Internal, unpublished (`private: true`), patched Node SQLite and edge-safe D1 admission/opt-in packet-storage laboratories. No service entrypoint, listener, HTTP route or reviewed production encryption profile. Private rooms remain Planned.**
+
+Node WAL admission checks the actual engine before journal/schema writes. Use a
+maintained Node runtime with fixed SQLite (known baselines: Node 22.22.3 or 24.15.0);
+see [runtime safety](../../docs/sqlite-runtime-safety.md). D1 is not gated by the
+local Node engine and no production migration or database-mode change is added.
 
 The [D1 signed-receipt reader](D1_RECOVERY.md), tracked by #216, and [atomic D1 admission laboratory](D1_ADMISSION.md), tracked by #218, are internal backend slices, not a production Pages adapter. Read those documents before changing primary snapshots, transaction guards, clocks or failure behavior. They share wire/policy/receipt validation with this library and are tested on local D1/workerd; no public route imports them.
 

@@ -183,6 +183,11 @@ any subsequent installed-service rollout remain separate from this source fix.
 
 ## Upstream references
 
+The separate [Node SQLite runtime assessment](sqlite-runtime-safety.md), #312,
+covers components bundled with Node rather than npm dependencies, connection
+topology, actual-engine startup checks and installed-service rollout boundaries.
+An npm audit result does not establish that the bundled SQLite engine is patched.
+
 - [Astro AVIF/Sharp advisory and patched version](https://github.com/withastro/astro/security/advisories/GHSA-26w7-cxv4-gfx2)
 - [Sharp libvips advisory](https://github.com/advisories/GHSA-f88m-g3jw-g9cj), [libheif fix](https://github.com/advisories/GHSA-rgj7-g3m4-5g8c)
 - [Vitest UI server advisory](https://github.com/vitest-dev/vitest/security/advisories/GHSA-5xrq-8626-4rwp), [mocker fix and maintained versions](https://github.com/vitest-dev/vitest/security/advisories/GHSA-82fw-gwwq-j7x9)
