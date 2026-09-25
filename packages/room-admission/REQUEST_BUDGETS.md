@@ -59,9 +59,15 @@ SQLite uses a synchronous `BEGIN IMMEDIATE`, validates the pinned row, charges
 with an exact-state update, checks the window and commits. No await occurs inside
 the transaction. D1 reads through a fresh `first-primary` session, then uses a new
 primary session's single-statement transactional batch with exact state/config CAS
-and a database-time expiry predicate. No affected row means `busy`, not permission
-to proceed; there is no automatic retry. D1 acknowledgments must contain precisely
-the expected committed state.
+and a database-time expiry predicate. Only an acknowledged successful batch with
+zero returned rows permits an internal fresh-primary re-read/replan: that CAS did
+not charge and protected work has not started. At most **three read/CAS attempts**
+are made per reservation, within the original accounting window and the caller's
+guarded operation deadline. Every attempt revalidates canonical state, pinned
+configuration and all allowances; persistent contention returns `busy`. Clock
+high-water is preserved across attempts. This bounded accounting retry does not
+retry any signed room operation, message POST, uncertain batch or committed charge.
+D1 acknowledgments must contain precisely the expected committed state.
 
 After acknowledgment the wrapper checks freshness again before protected work.
 A late or lost acknowledgment never starts that work, even if the charge committed.
@@ -100,7 +106,7 @@ limits. Recovery, administrative policy changes and restore procedures need a
 reviewed production contract; these helpers are not that contract.
 
 This bounds protected work, **not incoming traffic or the cost of rejecting it**.
-Every bounded attempt can still cause an accounting read/CAS. It does not provide
+Every bounded request can still cause up to three accounting read/CAS attempts. It does not provide
 DDoS protection, connection/body read limits, per-source fairness, a rolling-window
 rate, distributed in-flight caps or guaranteed close/recovery availability. A
 public adapter still needs ingress limits, finite body/deadline handling, no-store
@@ -125,3 +131,8 @@ encrypted packet reads followed by close/receipt
 recovery after ordinary/read exhaustion. These are local fixtures, not production
 D1 evidence, a security audit or a delivered private-room service. The edge bundle
 remains Node-free and does not import SQLite or Noise.
+
+#328 adds deterministic same-snapshot collisions with both spare and exhausted
+allowance, different-lane contention, the three-attempt ceiling, configuration
+change/deletion, window rollover and deadline interruption. Native D1 tests force
+the collision before two real signed creates and assert exact charges/receipts.

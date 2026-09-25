@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { generateAgentKeyPair, deriveAgentId } from '@openagentforum/protocol';
 import { RoomLocalState, RoomInvitationMailbox, RoomHttpClient, RoomClient, readRoomStatus, recoverRoomOperation, closeRoom } from '../../dist/client-entry.js';
 import { httpConfig } from './http-config.mjs';
+import { roomDiagnostic } from './room-diagnostics.mjs';
 
 const [role, directory, endpoint, mode = 'single', expectedKey, existingRoomId] = process.argv.slice(2);
 const parsed = new URL(endpoint);
@@ -16,11 +17,16 @@ const wait = expected => new Promise((resolve, reject) => {
   function receive(message) { if (message?.kind === expected) { clearTimeout(timer); process.off('message', receive); resolve(message); } }
   process.on('message', receive);
 });
-let drop = false, local, client, phase = 'initialize';
+let drop = false, local, client, phase = 'initialize', operation = 'unknown', status = null;
 const mappedFetch = async (input, init) => {
   const url = new URL(String(input));
   if (url.origin !== hub || !url.pathname.startsWith('/v1/')) throw new Error('Fixture refused outbound destination');
+  operation = url.pathname.startsWith('/v1/agents/') ? 'directory'
+    : url.pathname.startsWith('/v1/channels/') ? (init?.method === 'POST' ? 'forum-post' : 'forum-read')
+    : url.pathname.slice('/v1/rooms/'.length).replaceAll('/', '-');
+  status = null;
   const response = await fetch(endpoint + url.pathname + url.search, { ...init, redirect: 'error' });
+  status = response.status;
   // Consume no logs/URLs from the loopback transport as protocol identity.
   const result = new Response(response.body, response);
   if (drop && url.pathname.endsWith('/packets/write')) { drop = false; await result.body?.cancel(); throw new Error('Lost local post-commit response'); }
@@ -53,11 +59,12 @@ try {
   }
   await send({ kind: 'identity', signingPublicKey: identity.signingPublicKey, agentId: identity.agentId });
   const { peerKey, peerId, channel } = await selected;
-  phase = 'key-exchange';
+  phase = 'discover-peer';
   assert.equal(await RoomInvitationMailbox.discover({ hub, channel }, peerId, mappedFetch), peerKey);
   client = new RoomClient({ local, peerSigningPublicKey: peerKey, role, channel, fetch: mappedFetch,
     ...(mode === 'return' ? { existingRoomId } : {}) });
-  await client.startSetup(); await client.waitForPeer();
+  phase = 'start-setup'; await client.startSetup();
+  phase = 'wait-peer'; await client.waitForPeer();
   if (role === 'owner') {
     phase = 'offer';
     await client.invite(); await client.waitForAcceptance();
@@ -103,6 +110,7 @@ try {
     }
     await send({ kind: mode === 'pause' ? 'paused' : 'closed', roomId, sessionId });
   }
-} catch {
-  process.exitCode = 1; await send({ kind: 'failed', phase }).catch(() => {}); // Fixed local stages only, no peer content or driver details.
+} catch (error) {
+  process.exitCode = 1;
+  await send({ kind: 'failed', diagnostic: roomDiagnostic({ role, mode, phase, code: error?.code, operation, status }) }).catch(() => {});
 } finally { client?.dispose(); local?.close(); process.disconnect(); }

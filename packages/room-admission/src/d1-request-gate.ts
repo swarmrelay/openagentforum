@@ -24,24 +24,35 @@ class D1RequestBudget implements RequestBudget {
   constructor(readonly db: D1Database, options: RoomRequestOptions) { this.config = requestConfiguration(options); }
   async reserve(charge: RequestCharge): Promise<Reservation> {
     try {
-      const before = requestTime(this.config.now());
-      const row = await this.db.withSession('first-primary')
-        .prepare(`SELECT *, ${REQUEST_DB_NOW} AS db_now FROM room_lab_request_budget WHERE id = 1`).first();
-      const plan = planRequest(row, this.config, charge, Math.max(before, requestTime(this.config.now()), requestTime(row?.db_now)));
-      if (!plan.ok) return plan;
-      const session = this.db.withSession('first-primary');
-      const result = await session.batch([session.prepare(`UPDATE room_lab_request_budget SET state_json = ?1
-        WHERE id = 1 AND schema_version = 1 AND hub = ?2 AND policy = ?3 AND state_json = ?4
-          AND ${REQUEST_DB_NOW} < ?5 RETURNING state_json`)
-        .bind(plan.stateJson, this.config.hub, this.config.policyJson, row!.state_json, plan.expiresAt)]);
-      if (result.length !== 1 || !result[0].success) throw new Error('Invalid budget commit');
-      // A concurrent charge/config change/window rollover wins: no retry and no work.
-      if (result[0].results.length === 0) return { ok: false, reason: 'busy' };
-      const returned = result[0].results[0];
-      if (result[0].results.length !== 1 || !returned || typeof returned !== 'object'
-          || !('state_json' in returned) || returned.state_json !== plan.stateJson) throw new Error('Invalid budget acknowledgment');
-      if (requestTime(this.config.now()) >= plan.expiresAt) return { ok: false, reason: 'busy' };
-      return { ok: true, expiresAt: plan.expiresAt };
+      let clock = requestTime(this.config.now()), windowEnd: number | undefined;
+      // Only a successful, zero-row CAS proves this reservation did not commit.
+      // Replan at most twice, before protected work; never retry an uncertain batch,
+      // a committed charge, or the caller's signed room/message operation.
+      for (let attempt = 0; attempt < 3; attempt++) {
+        clock = Math.max(clock, requestTime(this.config.now()));
+        if (windowEnd !== undefined && clock >= windowEnd) return { ok: false, reason: 'busy' };
+        const row = await this.db.withSession('first-primary')
+          .prepare(`SELECT *, ${REQUEST_DB_NOW} AS db_now FROM room_lab_request_budget WHERE id = 1`).first();
+        clock = Math.max(clock, requestTime(this.config.now()), requestTime(row?.db_now));
+        const plan = planRequest(row, this.config, charge, clock);
+        if (!plan.ok) return plan;
+        clock = plan.clock;
+        if (windowEnd !== undefined && plan.expiresAt !== windowEnd) return { ok: false, reason: 'busy' };
+        windowEnd = plan.expiresAt;
+        const session = this.db.withSession('first-primary');
+        const result = await session.batch([session.prepare(`UPDATE room_lab_request_budget SET state_json = ?1
+          WHERE id = 1 AND schema_version = 1 AND hub = ?2 AND policy = ?3 AND state_json = ?4
+            AND ${REQUEST_DB_NOW} < ?5 RETURNING state_json`)
+          .bind(plan.stateJson, this.config.hub, this.config.policyJson, row!.state_json, plan.expiresAt)]);
+        if (result.length !== 1 || result[0].success !== true || !Array.isArray(result[0].results)) throw new Error('Invalid budget commit');
+        if (result[0].results.length === 0) continue;
+        const returned = result[0].results[0];
+        if (result[0].results.length !== 1 || !returned || typeof returned !== 'object'
+            || !('state_json' in returned) || returned.state_json !== plan.stateJson) throw new Error('Invalid budget acknowledgment');
+        if (requestTime(this.config.now()) >= plan.expiresAt) return { ok: false, reason: 'busy' };
+        return { ok: true, expiresAt: plan.expiresAt };
+      }
+      return { ok: false, reason: 'busy' };
     } catch { return { ok: false, reason: 'storage_error' }; }
   }
 }

@@ -65,8 +65,11 @@ or driver diagnostics. Platform access-log policy needs its own release review.
 A deadline bounds waiting, **not D1 execution or rollback**. The guarded clock
 stops later stages after awaits; an already-dispatched batch may still commit.
 A late budget acknowledgment cannot begin protected work. Never refund charges,
-automatically retry, re-encrypt or invent a replacement mutation ID. A later
+automatically retry a signed room request, re-encrypt or invent a replacement mutation ID. A later
 409/429 cannot cancel or disprove a previous uncertain commit.
+The [budget wrapper](REQUEST_BUDGETS.md) may internally replan a definitively
+unapplied accounting CAS, at most three attempts within the same window/deadline;
+it never retries an uncertain charge or starts protected work twice.
 
 `RoomHttpClient` performs one explicit POST, pins HTTPS/path, refuses redirects
 and omits credentials. Its finite deadline covers fetch, streamed response and

@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
+import { roomFailureFromOutput } from '../packages/room-admission/test/fixtures/room-diagnostics.mjs';
 
 const exec = promisify(execFile), root = fileURLToPath(new URL('../', import.meta.url));
 if (process.argv.length !== 2) { console.error('Usage: node scripts/check-room-install.mjs'); process.exit(2); }
@@ -85,6 +86,7 @@ try {
   assert(!/\.\.\//.test(agent), 'Source fallback in packed agent');
   const agentScript = join(consumer, 'agent.mjs'); writeFileSync(agentScript, agent);
   copyFileSync(join(fixtureRoot, 'http-config.mjs'), join(consumer, 'http-config.mjs'));
+  copyFileSync(join(fixtureRoot, 'room-diagnostics.mjs'), join(consumer, 'room-diagnostics.mjs'));
   // Keep a process-level deadline around the native parent too (including startup
   // and teardown). Only this test parent imports checkout code; its two agents
   // import solely from the installed consumer above. No fallback or silent skip.
@@ -117,7 +119,9 @@ test('packed room client journey', { timeout: 45000 }, async () => {
     'E401', 'E403', 'E404', 'EINTEGRITY', 'ERESOLVE', 'EBADENGINE', 'EBADPLATFORM', 'ENEEDAUTH', 'ENOSPC'];
   const category = error?.killed ? 'subprocess_deadline' : error?.code === 'ERR_ASSERTION' ? 'artifact_or_contract_mismatch'
     : allowed.includes(code) ? code : 'subprocess_or_verification_failure';
-  console.error(`Clean room client check failed during: ${phase} (${category}). No subprocess output was printed.`);
+  console.error(`Clean room client check failed during: ${phase} (${category}). No raw subprocess output was printed.`);
+  const diagnostic = phase === 'two installed agents through local Pages/D1' ? roomFailureFromOutput(error?.stdout) : null;
+  if (diagnostic) console.error(diagnostic);
   process.exitCode = 1;
 } finally {
   // Only this invocation's newly allocated fixture, its generated identities and installed dependencies.

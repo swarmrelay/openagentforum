@@ -224,8 +224,93 @@ for (const adapter of ['sqlite', 'd1'] as const) describe(`${adapter} durable re
     expect(t.state().lanes.ordinary.requests).toBe(1);
   });
 
+  if (adapter === 'd1') {
+    // Hold both primary snapshots until both callers have read the same counter.
+    // Unlike timing-based stress, this forces the stale-CAS interleaving.
+    function collide(binding: TestD1) {
+      let reads = 0, release!: () => void;
+      const paired = new Promise<void>(resolve => { release = resolve; });
+      binding.afterRead = async sql => {
+        if (!sql.includes('AS db_now FROM room_lab_request_budget')) return;
+        if (++reads === 2) release();
+        if (reads <= 2) await paired;
+      };
+    }
+
+    it('replans a definite missed reservation so concurrent callers can both use remaining capacity', async () => {
+      const t = await setup(); const created = await t.f.create();
+      const wire = await t.signedState(created.state.roomId);
+      collide(t.binding); const batch = vi.spyOn(t.binding, 'batch');
+      const results = await Promise.all([t.fresh(), t.fresh()].map(store => store.readState(wire, t.f.owner.signingPublicKey)));
+      expect(results.every(r => r.ok)).toBe(true);
+      expect(batch).toHaveBeenCalledTimes(3); // winner, definite zero-row loser, fresh reservation
+      expect(t.state().lanes.read.requests).toBe(2);
+      expect(t.state().lanes.read.verifications).toBe(2);
+      expect(t.f.counts().receipts).toBe(1);
+    });
+
+    it('rechecks exhaustion after the competing reservation wins without extra verification', async () => {
+      const p = requestPolicy(); p.read.requests = 1;
+      const t = await setup(p); const created = await t.f.create();
+      const wire = await t.signedState(created.state.roomId);
+      collide(t.binding); const verify = vi.spyOn(crypto.subtle, 'verify');
+      const batch = vi.spyOn(t.binding, 'batch');
+      const results = await Promise.all([t.fresh(), t.fresh()].map(store => store.readState(wire, t.f.owner.signingPublicKey)));
+      expect(results.filter(r => r.ok)).toHaveLength(1);
+      expect(results.find(r => !r.ok)).toMatchObject({ reason: 'rate_limited' });
+      expect(batch).toHaveBeenCalledTimes(2);
+      expect(verify).toHaveBeenCalledTimes(1);
+      expect(t.state().lanes.read.requests).toBe(1);
+    });
+
+    it('keeps different lanes independent when they race on the shared row', async () => {
+      const t = await setup(); collide(t.binding);
+      const results = await Promise.all([t.fresh().writePacket('{}'), t.fresh().recoverPacket('{}')]);
+      expect(results).toEqual([{ ok: false, reason: 'not_configured' }, { ok: false, reason: 'not_configured' }]);
+      expect(t.state().lanes.ordinary.requests).toBe(1);
+      expect(t.state().lanes.recovery.requests).toBe(1);
+    });
+
+    it('bounds persistent CAS contention to three attempts without protected work', async () => {
+      const t = await setup(); const wire = await t.f.wire(await actionFor(t.f.owner, 'create'));
+      let attempts = 0;
+      t.binding.beforeBatch = async () => {
+        attempts++;
+        const state = t.state(); state.clock++;
+        t.f.db.prepare('UPDATE room_lab_request_budget SET state_json = ?').run(canonicalizeJson(state));
+      };
+      const verify = vi.spyOn(crypto.subtle, 'verify');
+      expect(await t.store.submit(wire, t.f.owner.signingPublicKey)).toEqual({ ok: false, reason: 'busy' });
+      expect(attempts).toBe(3); expect(verify).not.toHaveBeenCalled();
+      expect(t.state().lanes.ordinary.requests).toBe(0); expect(t.f.counts().rooms).toBe(0);
+    });
+
+    for (const change of ['policy', 'missing', 'rollover', 'deadline'] as const) {
+      it(`refuses ${change} after a definite missed reservation`, async () => {
+        const t = await setup(); const wire = await t.f.wire(await actionFor(t.f.owner, 'create'));
+        let attempts = 0, expired = false;
+        const store = t.fresh({ ...t.options, now: () => { if (expired) throw new Error('Operation deadline'); return t.f.clock.now; } });
+        t.binding.beforeBatch = async () => {
+          attempts++;
+          if (change === 'policy') t.f.db.prepare('UPDATE room_lab_request_budget SET policy = ?').run('{}');
+          else if (change === 'missing') t.f.db.exec('DELETE FROM room_lab_request_budget');
+          else {
+            const state = t.state(); state.clock++;
+            t.f.db.prepare('UPDATE room_lab_request_budget SET state_json = ?').run(canonicalizeJson(state));
+            if (change === 'rollover') t.f.clock.now += 60000; else expired = true;
+          }
+        };
+        const verify = vi.spyOn(crypto.subtle, 'verify');
+        expect(await store.submit(wire, t.f.owner.signingPublicKey))
+          .toEqual({ ok: false, reason: change === 'rollover' ? 'busy' : 'storage_error' });
+        expect(attempts).toBe(1); expect(verify).not.toHaveBeenCalled(); expect(t.f.counts().rooms).toBe(0);
+      });
+    }
+  }
+
   it('uncertain budget commit never reaches protected work and does not refund the charge', async () => {
     const t = await setup(); const a = await actionFor(t.f.owner, 'create'), wire = await t.f.wire(a);
+    const batches = vi.spyOn(t.binding, 'batch');
     if (adapter === 'd1') t.binding.afterCommit = async () => { throw new Error('lost budget acknowledgment'); };
     else {
       const original = t.f.db.exec.bind(t.f.db);
@@ -234,6 +319,7 @@ for (const adapter of ['sqlite', 'd1'] as const) describe(`${adapter} durable re
     expect(await t.store.submit(wire, t.f.owner.signingPublicKey)).toEqual({ ok: false, reason: 'storage_error' });
     expect(t.f.counts().rooms).toBe(0); expect(t.state().lanes.ordinary.requests).toBe(1);
     expect(await t.store.recoverPacket('{}')).toEqual({ ok: false, reason: 'storage_error' });
+    if (adapter === 'd1') expect(batches).toHaveBeenCalledTimes(1);
     vi.restoreAllMocks(); t.binding.afterCommit = async () => {};
     expect((await t.fresh().submit(wire, t.f.owner.signingPublicKey)).ok).toBe(true);
     expect(t.state().lanes.ordinary.requests).toBe(2);
@@ -241,6 +327,7 @@ for (const adapter of ['sqlite', 'd1'] as const) describe(`${adapter} durable re
 
   it('a late budget acknowledgment does not start protected work in another window', async () => {
     const t = await setup(); const a = await actionFor(t.f.owner, 'create'), wire = await t.f.wire(a);
+    const batches = vi.spyOn(t.binding, 'batch');
     if (adapter === 'd1') t.binding.afterCommit = async () => { t.f.clock.now += 60000; };
     else {
       const original = t.f.db.exec.bind(t.f.db);
@@ -248,6 +335,7 @@ for (const adapter of ['sqlite', 'd1'] as const) describe(`${adapter} durable re
     }
     expect(await t.store.submit(wire, t.f.owner.signingPublicKey)).toEqual({ ok: false, reason: 'busy' });
     expect(t.f.counts().rooms).toBe(0); expect(t.state().lanes.ordinary.requests).toBe(1);
+    if (adapter === 'd1') expect(batches).toHaveBeenCalledTimes(1);
   });
 
   it('survives a database connection restart without resetting allowance', async () => {
