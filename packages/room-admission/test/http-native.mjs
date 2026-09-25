@@ -9,6 +9,7 @@ import { Miniflare } from 'miniflare';
 import workerd from 'workerd';
 import { generateAgentKeyPair, sha256Hex, encryptPayloadForRecipient, decryptPayloadFromSender } from '@openagentforum/protocol';
 import { RoomHttpClient } from '../dist/http-client.js';
+import { RoomSessionClient } from '../dist/session-client.js';
 import { ROOM_CONTROL_PROTOCOL, deriveRoomId, roomControlSignString, signRoomControl } from '../dist/control.js';
 import { ROOM_RECOVERY_PROTOCOL, signRoomRecovery } from '../dist/recovery.js';
 import { ROOM_STATE_PROTOCOL, signRoomState } from '../dist/state-read.js';
@@ -30,7 +31,7 @@ beforeEach(async () => {
   const bundle = await build({ entryPoints: [fileURLToPath(new URL('./fixtures/http-worker.mjs', import.meta.url))],
     bundle: true, write: false, format: 'esm', platform: 'neutral', metafile: true });
   assert.ok(Object.values(bundle.metafile.outputs).every(o => o.imports.length === 0));
-  assert.ok(Object.keys(bundle.metafile.inputs).every(path => !/noise|sqlite|libsodium|http-client/.test(path)));
+  assert.ok(Object.keys(bundle.metafile.inputs).every(path => !/noise|sqlite|libsodium|http-client|session-client/.test(path)));
   assert.ok(Object.keys(bundle.metafile.inputs).some(path => path.endsWith('apps/web/functions/_lib/private-room-http.ts')));
   runtimeConfig = { host: '127.0.0.1', port: 0, inspectorHost: '127.0.0.1', cf: false,
     telemetry: { enabled: false }, logRequests: false, resourceTmpPath: join(scratch, 'runtime'), resourcePersistencePath: join(scratch, 'state'),
@@ -185,4 +186,68 @@ test('native HTTP rejects malformed bytes, stalled bodies and methods before D1,
   const recovery = await signRoomRecovery({ protocol: ROOM_RECOVERY_PROTOCOL, hub, roomId: created.receipt.roomId, actor: f.creator.agentId,
     queryId: id(), requestId: create.proof.requestId, proofDigest: await sha256Hex(roomControlSignString(create.proof)), ...fresh() }, f.creator.signingPrivateKey);
   assert.equal((await f.a.recover(recovery, f.creator.signingPublicKey)).receipt.status, 'open');
+});
+
+test('reusable session clients exchange untrusted data through native D1, reconcile a lost send and restart with fresh sessions', async () => {
+  const f = await fixtures(), clients = [];
+  try {
+    const create = await f.action(f.creator, 'create', null, 0, { encryptionPublicKey: f.creator.encryptionPublicKey });
+    const { receipt } = await f.a.submit(create.wire, f.creator.signingPublicKey);
+    const roomId = receipt.roomId;
+    const invite = await f.action(f.creator, 'invite', roomId, 1, { recipient: f.peer.agentId,
+      recipientSigningPublicKey: f.peer.signingPublicKey, inviteExpiresAt: Date.now() + 120000 });
+    await f.a.submit(invite.wire, f.creator.signingPublicKey);
+    // Still fixture-private handoff and explicit acceptance, not a shipped invitation inbox.
+    const sealed = await encryptPayloadForRecipient({ create: create.wire, invite: invite.wire },
+      f.peer.encryptionPublicKey, f.creator.encryptionPrivateKey);
+    const received = await decryptPayloadFromSender(sealed.ciphertext, sealed.nonce, f.creator.encryptionPublicKey, f.peer.encryptionPrivateKey);
+    assert.equal((await f.state(f.b, f.peer, roomId)).room, null);
+    const accept = await f.action(f.peer, 'accept', roomId, 2,
+      { invitationDigest: await sha256Hex(roomControlSignString(invite.proof)), encryptionPublicKey: f.peer.encryptionPublicKey });
+    await f.b.submit(accept.wire, f.peer.signingPublicKey);
+    const bundle = { ...received, accept: accept.wire };
+    const pins = { hub, roomId, ownerSigningPublicKey: f.creator.signingPublicKey, peerSigningPublicKey: f.peer.signingPublicKey };
+    // Memory journals only for disposable tests. Production custody/durability is a separate gate.
+    const retained = new Map(), confirmed = new Map();
+    const endpoint = async (role, identity, http, sessionId) => {
+      const client = await RoomSessionClient.create({ role, bundle, pins, sessionId, http,
+        signingPrivateKey: identity.signingPrivateKey, encryptionPrivateKey: identity.encryptionPrivateKey,
+        journal: { async retain(wire) { retained.set(wire, true); },
+          async confirm(wire, receipt) { assert.ok(retained.has(wire)); confirmed.set(wire, receipt); } } });
+      clients.push(client); return client;
+    };
+    const pair = async () => {
+      const sessionId = id();
+      const a = await endpoint('owner', f.creator, f.client(), sessionId);
+      const b = await endpoint('peer', f.peer, f.client(), sessionId);
+      await a.start(); await a.flush();
+      // Each call scans at most eight rows, even across old retained sessions.
+      for (let i = 0; i < 4 && !b.pendingWire; i++) await b.poll();
+      assert.ok(b.pendingWire); await b.flush();
+      for (let i = 0; i < 4 && !a.pendingWire; i++) await a.poll();
+      assert.ok(a.pendingWire); await a.flush();
+      assert.equal((await b.poll()).kind, 'outgoing'); await b.flush(); await a.poll();
+      assert.equal(a.ready && b.ready, true); return { a, b, sessionId };
+    };
+    const first = await pair(); await first.a.prepareData(Buffer.from('Untrusted peer content, never a tool invocation.'));
+    const pending = first.a.pendingWire; f.drop();
+    await assert.rejects(first.a.flush(), e => e.code === 'room_transport_unknown');
+    assert.equal(first.a.pendingWire, pending);
+    assert.equal((await first.a.recoverPending()).sessionId, first.sessionId);
+    assert.ok(confirmed.has(pending));
+    const message = await first.b.poll(); assert.equal(message.kind, 'untrusted-room-data');
+    assert.equal(Buffer.from(message.bytes).toString(), 'Untrusted peer content, never a tool invocation.');
+    first.b.acknowledge(message.requestId);
+    await first.b.prepareData(Buffer.from('Accepted as data.')); await first.b.flush();
+    const reply = await first.a.poll(); assert.equal(reply.kind, 'untrusted-room-data'); first.a.acknowledge(reply.requestId);
+    first.a.dispose(); first.b.dispose(); await restart(); // No reseeding or cipher restoration.
+    const second = await pair(); assert.notEqual(second.sessionId, first.sessionId);
+    await second.a.prepareData(Buffer.from('A fresh session cannot decrypt the old session.')); await second.a.flush();
+    const freshMessage = await second.b.poll(); assert.equal(freshMessage.kind, 'untrusted-room-data');
+    assert.equal(freshMessage.sessionId, second.sessionId); second.b.acknowledge(freshMessage.requestId);
+    const close = await f.action(f.peer, 'close', roomId, 3, {}); await f.b.submit(close.wire, f.peer.signingPublicKey);
+    await assert.rejects(second.a.poll(), e => e.code === 'room_session_unavailable');
+    await assert.rejects(second.b.poll(), e => e.code === 'room_session_unavailable');
+    assert.equal((await f.read(f.c, f.outsider, roomId)).page, null);
+  } finally { clients.forEach(client => client.dispose()); }
 });
