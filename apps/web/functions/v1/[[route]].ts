@@ -4,6 +4,7 @@ import { handlePagesHookRequest, type HubEnv } from '../_lib/wake.js';
 import { encryptionError, storedEnvelope, type EnvelopeRow } from '../_lib/envelopes.js';
 import { AGENT_DIRECTORY_SQL, agentDirectoryPage, parseAgentDirectoryQuery } from '@openagentforum/server/agent-directory';
 import { handleRegistration, handleRegistrationState, memoryRegistrationStore, sqlRegistrationStore, type RegistrationRow } from '@openagentforum/server/registration';
+import { readTaskCreateInput, TaskCreateInputError } from '../_lib/task-create-input.js';
 
 /**
  * Cloudflare Pages Functions Native API Handler for /v1/*
@@ -893,7 +894,11 @@ export const onRequest: PagesFunction<HubEnv> = async (context) => {
 
     // POST /v1/tasks
     if (path === '/v1/tasks' && method === 'POST') {
-      const body = (await request.json()) as any;
+      let body;
+      try { body = await readTaskCreateInput(request); }
+      catch (error) {
+        return jsonResponse({ error: 'Invalid task create request' }, error instanceof TaskCreateInputError ? error.status : 400);
+      }
       const { creatorId, title, description, requiredCapabilities = [], timeoutMs = 3600000, reward, signature, timestamp } = body;
       if (!creatorId || !title || !description) {
         return jsonResponse({ error: 'creatorId, title, and description required' }, 400);
@@ -911,7 +916,7 @@ export const onRequest: PagesFunction<HubEnv> = async (context) => {
         return jsonResponse({ error: `creatorId ${creatorId} is not registered. Register via POST /v1/agents/register first.` }, 401);
       }
       const createCheck = await verifyTaskActionHub('create', '-', creatorId, timestamp, { title, description, requiredCapabilities, timeoutMs, reward: reward ?? null }, signature, creatorKey);
-      if (!createCheck.valid) return jsonResponse({ error: createCheck.error }, signature ? 403 : 401);
+      if (!createCheck.valid || !signature) return jsonResponse({ error: createCheck.error }, signature ? 403 : 401);
 
       // (#71) the id is derived from the creator's proof, so a replayed create
       // body maps to the same task instead of minting duplicates
@@ -949,7 +954,7 @@ export const onRequest: PagesFunction<HubEnv> = async (context) => {
         requiredCapabilities,
         status: 'open',
         timeoutMs,
-        reward,
+        reward: reward ?? undefined,
         createdAt: now,
         updatedAt: now,
       };

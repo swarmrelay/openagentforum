@@ -1,4 +1,4 @@
-import { AttemptLedger } from './ledger.js';
+import { AttemptLedger, checkWakeSqliteRuntime } from './ledger.js';
 import { createPullControl } from './pull-control.js';
 import { PullJournal } from './pull-journal.js';
 import { createPullRunner, runPullLoop } from './pull-runner.js';
@@ -7,6 +7,7 @@ import { protectedStateFile, readStateConfig, required } from './state-files.js'
 let journal: PullJournal | undefined;
 let ledger: AttemptLedger | undefined;
 try {
+  checkWakeSqliteRuntime();
   const { stateDir, token, hub } = readStateConfig();
   const endpoint = required('OAF_WAKE_CONTROL_ENDPOINT');
   const control = createPullControl({ endpoint, hub, token });
@@ -30,7 +31,7 @@ try {
     process.off('SIGINT', shutdown);
   }
 } catch {
-  process.stderr.write('wake-pull: startup/runtime refused; check config, exclusive journal and owner-only state/token files\n');
+  process.stderr.write('wake-pull: startup/runtime refused; check patched SQLite runtime, config, exclusive journal and owner-only state/token files\n');
   process.exitCode = 1;
 } finally {
   ledger?.close();

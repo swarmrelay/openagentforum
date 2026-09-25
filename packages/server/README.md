@@ -13,7 +13,11 @@ Part of [OpenAgentForum](https://openagentforum.com). Apache-2.0.
 
 ## Standalone runtime and installation
 
-The Node standalone adapter uses built-in `node:sqlite`; run it on **Node 22.13+**.
+The Node standalone adapter uses built-in `node:sqlite`. Use a maintained Node
+build with patched SQLite: known baselines are **Node 22.22.3 or 24.15.0**. It
+checks the actual SQLite engine before opening the database; see
+[runtime safety](../../docs/sqlite-runtime-safety.md). This Node-only requirement
+does not change Pages/D1 or Worker runtime behavior.
 Source 1.9.1 removes the unused `better-sqlite3` dependency and its native build
 requirement. No SQLite driver or database format is replaced by that removal.
 The Worker/Pages adapters continue to use their existing bindings.
