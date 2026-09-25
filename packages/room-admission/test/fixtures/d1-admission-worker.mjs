@@ -27,6 +27,35 @@ export default {
       await env.DB.prepare('DELETE FROM room_lab_request_budget').run();
       return Response.json({ removed: true });
     }
+    if (path === '/test-only/budget-collision') {
+      // One disposable request owns this barrier: no global request state.
+      // Force two real primary reads of the same budget before either CAS.
+      let reads = 0, batches = 0, misses = 0, release;
+      const paired = new Promise(resolve => { release = resolve; });
+      const primary = { withSession(constraint) {
+        if (constraint !== 'first-primary') throw new Error('Not primary');
+        const session = env.DB.withSession(constraint); let charge = false;
+        return { prepare(sql) {
+          if (sql.startsWith('UPDATE room_lab_request_budget')) charge = true;
+          const statement = session.prepare(sql);
+          if (!sql.includes('AS db_now FROM room_lab_request_budget')) return statement;
+          return { async first() {
+            const row = await statement.first();
+            if (++reads === 2) release();
+            if (reads <= 2) await paired;
+            return row;
+          } };
+        }, async batch(statements) {
+          const result = await session.batch(statements);
+          if (charge) { batches++; if (result[0].results.length === 0) misses++; }
+          return result;
+        } };
+      } };
+      if (!Array.isArray(input.proofs) || input.proofs.length !== 2) throw new Error('Expected two fixture proofs');
+      const results = await Promise.all(input.proofs.map(proof => createBudgetedD1RoomStore(primary,
+        { ...options, requests: input.requests }).submit(proof.wire, proof.key)));
+      return Response.json({ results, reads, batches, misses });
+    }
     if (path.startsWith('/test-only/budget-')) {
       let clock = input.now;
       const primary = { withSession(constraint) {

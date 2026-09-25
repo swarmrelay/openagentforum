@@ -433,6 +433,30 @@ test('native D1 new keys and concurrent requests cannot oversubscribe one shared
   assert.equal((await f.call('budget-submit', proofs[0])).reason, 'rate_limited');
 });
 
+test('native D1 forced budget collision admits both callers once when allowance remains', async () => {
+  const f = await setup({}, undefined, requestPolicy());
+  const proofs = await Promise.all([f.owner, f.peer].map(async key => ({ key: key.signingPublicKey,
+    wire: await signRoomControl(await f.action(key), key.signingPrivateKey) })));
+  const result = await f.call('budget-collision', { proofs });
+  assert.ok(result.results.every(r => r.ok && !r.replayed));
+  assert.equal(result.reads, 3); assert.equal(result.batches, 3); assert.equal(result.misses, 1);
+  assert.equal((await requestState(f)).lanes.ordinary.requests, 2);
+  assert.equal((await f.inspect()).rooms.length, 2); assert.equal((await f.inspect()).receipts.length, 2);
+});
+
+test('native D1 forced budget collision cannot consume the last allowance twice', async () => {
+  const requests = requestPolicy(); requests.ordinary.requests = 1;
+  const f = await setup({}, undefined, requests);
+  const proofs = await Promise.all([f.owner, f.peer].map(async key => ({ key: key.signingPublicKey,
+    wire: await signRoomControl(await f.action(key), key.signingPrivateKey) })));
+  const result = await f.call('budget-collision', { proofs });
+  assert.equal(result.results.filter(r => r.ok).length, 1);
+  assert.equal(result.results.find(r => !r.ok).reason, 'rate_limited');
+  assert.equal(result.reads, 3); assert.equal(result.batches, 2); assert.equal(result.misses, 1);
+  assert.equal((await requestState(f)).lanes.ordinary.requests, 1);
+  assert.equal((await f.inspect()).receipts.length, 1);
+});
+
 test('native D1 request allowances persist across full runtime restart and exact retries', async () => {
   const requests = requestPolicy(); requests.ordinary.requests = 2;
   const f = await setup({}, undefined, requests);

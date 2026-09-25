@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
 import { Miniflare } from 'miniflare';
 import workerd from 'workerd';
+import { roomFailureLine } from './fixtures/room-diagnostics.mjs';
 
 // Trusted test harness inputs only. The packed-consumer check reuses this exact
 // journey with client processes outside the checkout; the hub stays parent-owned.
@@ -60,9 +61,11 @@ export async function runInvitationJourney({ agentScript = fileURLToPath(new URL
         const deadline = performance.now() + 15000;
         while (performance.now() < deadline) {
           const message = record.messages.find(m => m.kind === kind); if (message) return message;
-          const failure = record.messages.find(m => m.kind === 'failed');
-          const stage = ['initialize', 'key-exchange', 'offer', 'accept', 'session', 'owner-data', 'owner-recovery', 'peer-data', 'peer-close'].includes(failure?.phase) ? failure.phase : 'unknown';
-          assert.equal(!!failure || record.exited, false, `Local ${role} fixture stopped before ${kind} at ${stage}`);
+          // Notice either actor's fixed failure immediately, rather than timing out
+          // waiting for the surviving actor to observe a missing peer message.
+          const failure = children.flatMap(c => c.messages).find(m => m.kind === 'failed');
+          if (failure) { console.error(roomFailureLine(failure.diagnostic)); assert.fail('Local room fixture failed; see fixed diagnostic'); }
+          assert.equal(record.exited, false, `Local ${role} fixture exited before ${kind}`);
           await new Promise(resolve => setTimeout(resolve, 20));
         }
         assert.fail('Local fixture stage deadline');

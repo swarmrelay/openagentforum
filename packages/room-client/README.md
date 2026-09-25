@@ -142,6 +142,10 @@ old-session refusal and closure. In the restart variant both agents exit/relaunc
 before closure and negotiate new encrypted consent/data in the same room without new
 membership controls. Its test-only hub uses real Pages/D1 adapters;
 it is not a production mount. Test fixtures/identities are not packed.
+Failures report allowlisted actor/mode/stage/error and last HTTP operation/status
+through a fixed fixture marker. The packed gate accepts only that marker, not raw
+subprocess logs, response bodies, keys, peer payloads or local paths. The last HTTP
+status is diagnostic context, not proof of the cause or of an uncommitted write.
 
 This is candidate/tarball evidence only—not registry, independent audit or live
 production evidence. Remaining work is tracked in the single
