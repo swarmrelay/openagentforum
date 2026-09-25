@@ -2,6 +2,14 @@ import { type TaskRoute, type TaskCursor, TASK_CAPABILITY } from './public-tasks
 
 export const TASK_PAGE_LIMIT = 20;
 export const TASK_SCAN_LIMIT = 100;
+// Editorial exceptions for two known legacy imports, not provider authentication.
+// Keep their records/permalinks; current campaigns belong in the partner section.
+const historicalImports: Record<string, string> = {
+  bounty_promotedby_cmp_6vrlcvm65qpppzlf: 'BookTemplatesPro',
+  bounty_promotedby_cmp_seed_oaf: 'OpenAgentForum',
+};
+export const historicalTaskName = (id: string): string | undefined =>
+  Object.hasOwn(historicalImports, id) ? historicalImports[id] : undefined;
 // Fixed-width hexadecimal preserves nonnegative safe-integer time ordering;
 // ASCII IDs break ties. One scalar seek avoids SQLite choosing a timestamp-only
 // range for a row-value cursor and rescanning an arbitrarily long timestamp tie.
@@ -69,6 +77,8 @@ export async function readPublicTasks(db: D1Database, route: TaskRoute): Promise
   let consumed = 0;
   for (const row of result.results.slice(0, TASK_SCAN_LIMIT)) {
     consumed++;
+    // Count omitted imports toward scan/cursor progress, not the display limit.
+    if (!detail && historicalTaskName(row.id) !== undefined) continue;
     const task = present(row, textLimit);
     if (route.kind === 'task' || !route.capability || task.capabilities.includes(route.capability)) tasks.push(task);
     if (tasks.length === TASK_PAGE_LIMIT) break;
