@@ -12,6 +12,7 @@ import { micromark } from 'micromark';
 import { generateAgentKeyPair, signEnvelope, canonicalizeJson, signTaskAction, signProfileRegistration } from '@openagentforum/protocol';
 import { inspectPage } from './check-seo.mjs';
 import { taskClaimExample } from '../src/data/task-signing.mjs';
+import { syncPromotedByTasks, runPartnerCli } from '../../../scripts/sync-promotedby-tasks.mjs';
 
 let mf, worker, scratch, author, runtimeOptions;
 let outbound = 0;
@@ -91,6 +92,26 @@ beforeEach(async () => {
     'UPDATE public_recent_state SET high_seq=0', "DELETE FROM sqlite_sequence WHERE name='public_message_arrivals'"].map(statement => ({ sql: statement })));
   await sql([{ sql: 'INSERT INTO agents (agent_id,name,public_key,registered_at,last_seen_at) VALUES (?,?,?,?,?)', args: [author.agentId, 'Fixture author', author.signingPublicKey, 1, 1] }]);
   await channel();
+});
+
+test('Commerce bookmarks redirect to partner work in one hop without reading storage or forwarding queries', async () => {
+  for (const host of ['openagentforum.com', 'www.openagentforum.com', 'swarmrelay.org', 'www.swarmrelay.org']) {
+    for (const path of ['/commerce', '/commerce/', '/commerce/index.html']) for (const method of ['GET', 'HEAD']) {
+      const response = await worker.fetch(`https://${host}${path}?campaign=old&next=https://example.com`, { method, redirect: 'manual' });
+      assert.equal(response.status, 301);
+      assert.equal(response.headers.get('location'), origin + '/tasks/#partners');
+      assert.equal(response.headers.get('x-fixture-queries'), '0');
+      assert.equal(response.headers.get('x-fixture-assets'), '0');
+      assert.equal(await response.text(), '');
+    }
+  }
+  const target = await get('/tasks/');
+  assert.equal(target.response.status, 200); assert.match(target.text, /id="partners"/);
+  const spec = await worker.fetch('http://swarmrelay.org/', { redirect: 'manual' });
+  assert.equal(spec.headers.get('location'), origin + '/spec/');
+  const channel = await worker.fetch('https://www.openagentforum.com/channels/?after=general', { redirect: 'manual' });
+  assert.equal(channel.headers.get('location'), origin + '/channels/?after=general');
+  assert.equal((await get('/commerce/unknown/')).response.status, 404);
 });
 
 test('native D1 profile CAS, exact-retry receipts and content-bound signatures', async () => {
@@ -266,7 +287,7 @@ test('documented claim example and signed task lifecycle work on native Pages/D1
 
   // Execute only our trusted static documentation excerpt, copied from the real
   // built HTML. No downloaded/community code, network client or persistent key.
-  const html = await readFile(new URL('../dist/tasks/index.html', import.meta.url), 'utf8');
+  const html = await readFile(new URL('../dist/task-signing/index.html', import.meta.url), 'utf8');
   const example = elements(html).find(n => n.tagName === 'pre' && attr(n, 'data-task-claim-example') !== undefined);
   assert.ok(example);
   const code = nodeText(example);
@@ -1186,7 +1207,9 @@ test('task reader: raw HTML and Markdown share records, guidance and safe permal
     assert.match(html.text, /Review documentation/); assert.match(md.text, /Review documentation/);
     assert.doesNotMatch(html.text + md.text, /PRIVATE_RESULT_NOT_FOR_DISCOVERY|reading the record…|static preview has no task/);
     assert.match(html.text + md.text, /cannot independently verify/);
-    assert.ok(links(html.text).includes('/tasks/#task-signing'));
+    assert.ok(links(html.text).includes('/task-signing/'));
+    assert.match(md.text, /OAF task claims and submissions stay on OAF: they do not reserve partner funds/);
+    assert.match(md.text, /\[Partner agent guide\]\(https:\/\/promotedby.ai\/agents.md\)/);
     assert.ok(links(html.text).includes('/tasks/task_fixture/index.md'));
     assert.match(html.text, /data-participation-invite/); assert.match(md.text, /Project-authored participation guidance follows/);
     assert.deepEqual(inspectPage(html.text, path.slice(1) + 'index.html').errors, []);
@@ -1424,6 +1447,86 @@ test('task sitemap: complete at capacity, overflow fails closed, and query/index
     } finally { await sql([{ sql: definition.sql }]); }
   }
   t.diagnostic(`Task sitemap: ${full.response.headers.get('x-fixture-batch-rows-read')} rows read at 5000-task capacity`);
+});
+
+for (const storage of ['d1', 'memory']) test(`partner task-create bounds hold in actual Pages ${storage}`, async () => {
+  const key = await generateAgentKeyPair();
+  const headers = { 'content-type': 'application/json', 'x-fixture-task-storage': storage };
+  const post = (path, body) => worker.fetch('https://fixture.invalid' + path, { method: 'POST', headers, body: JSON.stringify(body) });
+  assert.equal((await post('/v1/agents/register', { publicKey: key.signingPublicKey })).status, 200);
+  const valid = { title: 'Valid offer', description: 'Public terms', requiredCapabilities: [], timeoutMs: 3600000, reward: null };
+  for (const patch of [{ title: 'x'.repeat(161) }, { description: 'x'.repeat(6001) }, { reward: 'x'.repeat(513) },
+    { requiredCapabilities: Array(17).fill('article') }, { requiredCapabilities: ['bad/token'] }, { timeoutMs: 1 },
+    { timeoutMs: 86400001 }, { timeoutMs: '60000' }]) {
+    const payload = { ...valid, ...patch }, timestamp = Date.now();
+    const signature = await signTaskAction({ action: 'create', taskId: '-', agentId: key.agentId, timestamp, payload }, key.signingPrivateKey);
+    assert.equal((await post('/v1/tasks', { creatorId: key.agentId, ...payload, timestamp, signature })).status, 400);
+  }
+  const empty = await worker.fetch('https://fixture.invalid/v1/tasks?status=all', { headers });
+  assert.equal((await empty.json()).tasks.filter(t => t.creatorId === key.agentId).length, 0);
+  const timestamp = Date.now();
+  const signature = await signTaskAction({ action: 'create', taskId: '-', agentId: key.agentId, timestamp, payload: valid }, key.signingPrivateKey);
+  const body = { creatorId: key.agentId, ...valid, timestamp, signature };
+  assert.equal((await post('/v1/tasks', { ...body, title: 'Tampered title' })).status, 403);
+  const first = await post('/v1/tasks', body); assert.equal(first.status, 200);
+  const replay = await post('/v1/tasks', body); assert.equal(replay.status, 200);
+  assert.equal((await first.json()).task.id, (await replay.json()).task.id);
+});
+
+test('partner publisher uses normal signing path against Pages/D1, survives lost response and cannot fake provider cancellation', async () => {
+  const identity = await generateAgentKeyPair();
+  const now = Date.now(), hub = 'https://fixture.invalid';
+  const guide = await readFile(new URL('../../../docs/partner-bounty-ingestion.md', import.meta.url), 'utf8');
+  const snippet = guide.match(/<!-- partner-registration-example -->\s*```js\n([\s\S]*?)\n```/)[1];
+  const buildRegistration = new Function('signProfileRegistration', 'identity', 'hub', 'registrationState', 'now', `return (async () => { ${snippet}; return proof; })();`);
+  const proof = await buildRegistration(signProfileRegistration, identity, hub, { revision: 0 }, now);
+  const send = (path, body) => worker.fetch(hub + path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  assert.equal((await send('/v1/agents/register', proof)).status, 200);
+  const stateDir = await mkdtemp(join(tmpdir(), 'oaf-partner-native-'));
+  let posts = 0, loseResponse = true;
+  const wires = [];
+  const transport = async (url, init) => {
+    if (url === 'https://partner.invalid/feed') return Response.json({ opportunities: [{
+      id: 'cmp_native', name: 'Native fixture', description: 'Only local test data', status: 'live', allowed_activities: ['article'],
+    }] });
+    assert.equal(new URL(url).origin, hub);
+    if (init.method === 'POST') { posts++; wires.push(init.body); }
+    const response = await worker.fetch(url, init);
+    if (init.method === 'POST' && loseResponse) { await response.arrayBuffer(); throw new Error('Lost after commit'); }
+    return response;
+  };
+  const options = { hubUrl: hub, apiUrl: 'https://partner.invalid/feed', campaignId: 'cmp_native', stateDir,
+    privateKeyHex: identity.signingPrivateKey, fetch: transport };
+  try {
+    const failed = await runPartnerCli([], () => syncPromotedByTasks({ ...options, initialize: true }));
+    assert.equal(failed.code, 1);
+    assert.equal((await sql([{ sql: 'SELECT COUNT(*) AS n FROM tasks WHERE creator_id=?', args: [identity.agentId] }]))[0].results[0].n, 1);
+    await assert.rejects(syncPromotedByTasks(options), /Pending/);
+    assert.equal(posts, 1);
+    loseResponse = false;
+    const [result] = await syncPromotedByTasks({ ...options, retryPending: true });
+    assert.equal(result.status, 'created'); assert.equal(wires[0], wires[1]);
+    assert.equal((await syncPromotedByTasks(options))[0].status, 'already_synced');
+    assert.equal(posts, 2);
+    const taskId = result.taskId;
+    const claimTime = Date.now();
+    const claimSignature = await signTaskAction({ action: 'claim', taskId, agentId: author.agentId, timestamp: claimTime, payload: {} }, author.signingPrivateKey);
+    assert.equal((await send(`/v1/tasks/${taskId}/claim`, { agentId: author.agentId, timestamp: claimTime, signature: claimSignature })).status, 200);
+    const resultPayload = { campaign: 'cancelled' }, timestamp = Date.now();
+    const signature = await signTaskAction({ action: 'submit', taskId, agentId: identity.agentId, timestamp, payload: { resultPayload } }, identity.signingPrivateKey);
+    assert.equal((await send(`/v1/tasks/${taskId}/submit`, { agentId: identity.agentId, timestamp, signature, resultPayload })).status, 400);
+    assert.equal((await worker.fetch(`${hub}/v1/tasks/${taskId}`, { method: 'PATCH', body: '{}' })).status, 404);
+    assert.equal(outbound, 0);
+  } finally { await rm(stateDir, { recursive: true, force: true }); }
+});
+
+test('task-create deadline is enforced inside workerd before any D1 work', async () => {
+  const response = await worker.fetch('https://fixture.invalid/v1/tasks', { method: 'POST',
+    headers: { 'x-fixture-registration-fault': 'stalled-body' }, body: '{}', signal: AbortSignal.timeout(12000) });
+  assert.equal(response.status, 408);
+  assert.equal(response.headers.get('x-fixture-registration-storage'), '0');
+  assert.equal(response.headers.get('x-fixture-registration-cancelled'), 'true');
+  assert.equal(response.headers.get('x-fixture-registration-locked'), 'false');
 });
 
 if (process.env.OAF_BROWSE_PLAYWRIGHT) {

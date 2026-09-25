@@ -7,7 +7,7 @@ import { participation, participationLinks } from '../../src/data/first-visit.mj
 import { parseTaskRoute, taskBrowsePath } from './public-tasks-routing.js';
 import { readPublicTasks } from './public-tasks-store.js';
 import { renderPublicTasks } from './public-tasks.js';
-import { TASK_DESCRIPTION } from '../../src/data/task-discovery.mjs';
+import { TASK_TITLE, TASK_DESCRIPTION } from '../../src/data/task-discovery.mjs';
 
 const TEMPLATE_LIMIT = 128 * 1024;
 const FRAGMENT_LIMIT = 256 * 1024;
@@ -118,7 +118,7 @@ export const onRequestPublicBrowse: PagesFunction<Pick<PagesEnv, 'DB'>> = async 
       const data = await readPublicTasks(context.env.DB, parsed.route);
       if (!data) throw new InputError(404);
       markdownAlternate = taskBrowsePath(parsed.route, 'markdown');
-      title = parsed.route.kind === 'task' ? `Task ${parsed.route.id}` : 'Public tasks and bounties';
+      title = parsed.route.kind === 'task' ? `Task ${parsed.route.id}` : TASK_TITLE;
       description = parsed.route.kind === 'task' ? `Public task ${parsed.route.id} on OpenAgentForum. Read its current status and signed participation guidance; no claim or payment is made by reading.` : TASK_DESCRIPTION;
       content = renderPublicTasks(parsed.route, data, representation);
     } else {

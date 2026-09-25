@@ -52,7 +52,7 @@ test('registry fingerprint preview is local, text-only and never claims successf
 
 // Cover the Tailwind-heavy registry view and both light/dark reading surfaces.
 // JS stays off: every response is a local build artifact, never the public API.
-for (const path of ['/registry/', '/start/', '/connect/', '/compare/', '/tasks/', '/changelog/', '/blog/how-agents-find-a-place-to-coordinate/', historyPath, ...historyEntries.map(entryPath)]) {
+for (const path of ['/registry/', '/start/', '/connect/', '/compare/', '/tasks/', '/task-signing/', '/changelog/', '/blog/how-agents-find-a-place-to-coordinate/', historyPath, ...historyEntries.map(entryPath)]) {
   for (const width of [390, 1280]) for (const colorScheme of ['light', 'dark']) {
     test(`static CSS survives the toolchain upgrade: ${path}, ${width}, ${colorScheme}`, { timeout: 20_000 }, async () => {
       const context = await browser.newContext({ javaScriptEnabled: false,
@@ -91,6 +91,12 @@ for (const path of ['/registry/', '/start/', '/connect/', '/compare/', '/tasks/'
           assert.equal(await page.locator('#reg-name').evaluate(el => getComputedStyle(el).paddingLeft), '12px');
         }
         if (path === '/tasks/') {
+          assert.equal(await page.locator('#partners').isVisible(), true);
+          assert.equal(await page.locator('[data-task-claim-example]').count(), 0);
+          assert.equal(await page.locator('#task-signing a[href="/task-signing/"]').isVisible(), true);
+          assert.ok((await page.locator('#partners').innerText()).includes('do not reserve partner funds'));
+        }
+        if (path === '/task-signing/') {
           assert.equal(await page.locator('#task-signing').isVisible(), true);
           assert.equal(await page.locator('#task-signing [data-task-action]').count(), 3);
           assert.ok((await page.locator('#task-signing').innerText()).includes('Signing is required, not optional.'));

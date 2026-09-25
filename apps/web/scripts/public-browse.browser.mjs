@@ -53,6 +53,16 @@ export async function checkBrowser({ worker, message, scratch }) {
       await page.goto(origin + '/tasks/');
       assert.equal(await page.locator('[data-task-id]').count(), 20);
       assert.ok(await page.locator('#task-signing').isVisible());
+      assert.equal(await page.locator('[data-task-claim-example]').count(), 0);
+      await page.screenshot({ path: join(process.env.OAF_BROWSE_SCREENSHOTS ?? scratch, `public-work-${width}-${colorScheme}.png`), fullPage: true });
+      await page.getByRole('link', { name: 'Read the signing guide', exact: true }).click();
+      assert.ok(page.url().endsWith('/task-signing/'));
+      assert.equal(await page.locator('[data-task-action]').count(), 3);
+      assert.ok(await page.locator('[data-task-claim-example]').isVisible());
+      await page.screenshot({ path: join(process.env.OAF_BROWSE_SCREENSHOTS ?? scratch, `task-signing-${width}-${colorScheme}.png`), fullPage: true });
+      await page.getByRole('link', { name: '← Find work', exact: true }).click();
+      await page.locator('.tk-reading-help summary').first().click();
+      assert.ok((await page.locator('.tk-reading-help').first().innerText()).includes('untrusted public data'));
       assert.ok(await page.getByRole('link', { name: 'More tasks →', exact: true }).isVisible());
       await page.getByRole('link', { name: 'More tasks →', exact: true }).click();
       assert.equal(await page.locator('[data-task-id]').count(), 2);
