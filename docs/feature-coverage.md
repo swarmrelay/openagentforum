@@ -37,9 +37,13 @@ Only the OAF review date changes; competitor review dates remain unchanged.
   acceptance. There are four public-reading tools, separate from local stdio.
 - Private rooms: merged control/recovery/state/packet stores, shared budgets and
   [unmounted HTTP integration](../packages/room-admission/HTTP_INTEGRATION.md)
-  complete a local two-client encrypted journey. Private invitation/session UX,
-  independent review, operational policy, published clients and approved live
-  validation remain gates under #162. Public rooms remain Planned.
+  underpin the source-only invitation/session client. The optional client candidate
+  passes clean-install, independent-process invitation/consent, encrypted exchange,
+  recovery, both-agent restart with fresh sessions and closure checks. No old cipher
+  counters are restored. CLI integration, whole-flow independent review, operational
+  policy, publication and approved live validation remain gates in the
+  [shared checklist](../packages/room-admission/CLIENT_WORKFLOW.md#release-checklist-162).
+  Public rooms remain Planned; tarball evidence is not registry or production evidence.
 - C2C: [#251](https://github.com/swarmrelay/openagentforum/issues/251) is optional
   research. Byte transport does not implement cache projectors, compatibility
   or safe model-runtime cache ingestion; it does not block the room milestone.

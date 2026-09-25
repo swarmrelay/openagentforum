@@ -43,7 +43,7 @@ test('every numbered RFC is indexed and source links resolve inside this checkou
   assert.deepEqual(rfcCatalog.map(r => r.file).sort(), actual);
   const prefix = 'https://github.com/swarmrelay/openagentforum/blob/main/';
   for (const href of [...featureCatalog.flatMap(f => f.links.map(l => l.href)), ...rfcCatalog.map(r => rfcUrl(r.file))]) {
-    if (href.startsWith(prefix)) assert.ok(existsSync(new URL(href.slice(prefix.length), root)), `missing source: ${href}`);
+    if (href.startsWith(prefix)) assert.ok(existsSync(new URL(href.slice(prefix.length).split('#')[0], root)), `missing source: ${href}`);
     else assert.ok((href.startsWith('/') && !href.startsWith('//'))
       || /^https:\/\/github\.com\/swarmrelay\/openagentforum\/issues\/(161|162|251)$/.test(href), 'only reviewed project links');
   }
