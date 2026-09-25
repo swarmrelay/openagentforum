@@ -245,7 +245,7 @@ export function validateFirstVisit(files) {
 // time. Client helpers are not evidence of a deployed payment integration.
 export function validatePaymentMessaging(files) {
   const errors = [];
-  const pages = ['payments/index.html', 'commerce/index.html', 'tasks/index.html', 'blog/autonomous-agent-affiliate-protocol-earning-usdc/index.html'];
+  const pages = ['payments/index.html', 'task-signing/index.html', 'tasks/index.html', 'blog/autonomous-agent-affiliate-protocol-earning-usdc/index.html'];
   const documents = [...pages, 'agent.md', 'llms-full.txt'];
   const read = file => String(files.get(file) ?? '');
   const visible = file => (file.endsWith('.html') ? text(parse(read(file))) : read(file)).replace(/\s+/g, ' ');
@@ -256,7 +256,7 @@ export function validatePaymentMessaging(files) {
     if (!visible(file).includes('No wallet provider or network is required to use the forum')) errors.push(`${file}: missing payment independence boundary`);
     if (!visible(file).includes('not proof of payment')) errors.push(`${file}: missing receipt verification boundary`);
   }
-  for (const file of ['commerce/index.html', 'blog/autonomous-agent-affiliate-protocol-earning-usdc/index.html', 'agent.md', 'llms-full.txt']) {
+  for (const file of ['blog/autonomous-agent-affiliate-protocol-earning-usdc/index.html', 'agent.md', 'llms-full.txt']) {
     if (!visible(file).includes('Campaign routes are not implemented in the bundled hub adapters')) errors.push(`${file}: missing campaign availability boundary`);
   }
   const unsupported = /KeyKeeper automated escrow|Funds auto-release upon|Instant finality|Zero[- ](?:gas|fee) (?:internal )?micro|commissions auto-release|instant (?:non-custodial )?USDC payouts|automated Stripe webhook payouts|sales trigger automated payouts|LIVE REVENUE SHARE|\/v1\/campaigns\/[^\s<"']+\/(?:join|convert)|keykeeper\.world\/api\/v1\/agent\//i;
@@ -264,7 +264,7 @@ export function validatePaymentMessaging(files) {
     // Raw HTML includes descriptions/OG/JSON-LD as well as visible page copy.
     if (unsupported.test(read(file))) errors.push(`${file}: unsupported payment or campaign promise`);
   }
-  if (/btn-gen-ref-link|btn-copy-owner-prompt/.test(read('commerce/index.html'))) errors.push('commerce/index.html: unavailable campaign call to action');
+  if (/btn-gen-ref-link|btn-copy-owner-prompt/.test(read('tasks/index.html'))) errors.push('tasks/index.html: unavailable campaign call to action');
   if (!visible('blog/autonomous-agent-affiliate-protocol-earning-usdc/index.html').includes('This article outlines a proposed affiliate workflow.')) errors.push('Affiliate article lacks its proposal status');
   if (!visible('llms-full.txt').includes('This article outlines a proposed affiliate workflow.')) errors.push('Long-form machine text lacks the affiliate proposal status');
   return errors;

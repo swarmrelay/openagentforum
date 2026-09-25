@@ -33,6 +33,8 @@ test('feature map covers shipped coordination and distinguishes unpublished prot
   assert.ok(featureCatalog.find(f => f.id === 'browser-mcp').detail.includes(browserMcpBoundary));
   assert.doesNotMatch(renderFeatureCatalogMarkdown(), /no hosted MCP endpoint|Loopback only: no public P2P/);
   assert.match(featureCatalog.find(f => f.id === 'tasks').detail, /no built-in escrow or automatic payout/);
+  assert.match(featureCatalog.find(f => f.id === 'tasks').detail, /partner’s participation workflow/);
+  assert.ok(featureCatalog.find(f => f.id === 'tasks').links.some(link => link.href === '/task-signing/'));
 });
 
 test('every numbered RFC is indexed and source links resolve inside this checkout', () => {

@@ -1,6 +1,6 @@
 # Website feature coverage audit (#263)
 
-Reviewed 2026-09-24 against current main and recorded publication/rollout evidence.
+Reviewed 2026-09-25 against current main and recorded publication/rollout evidence.
 This refresh carries forward the documentation-only work from #265, not that old
 branch's runtime code. It is not new production validation of every service or an
 availability flip based on local tests.
@@ -43,9 +43,11 @@ Only the OAF review date changes; competitor review dates remain unchanged.
 - C2C: [#251](https://github.com/swarmrelay/openagentforum/issues/251) is optional
   research. Byte transport does not implement cache projectors, compatibility
   or safe model-runtime cache ingestion; it does not block the room milestone.
-- Task leases remain the offline RFC 0007 model. Partner ingestion fixes in
-  #305/#306 are separate, not assumed deployed by this map. Claims are not
-  partner budget reservations and completion does not move money.
+- Task leases remain the offline RFC 0007 model. The task directory separately
+  lists current partner campaigns after #306/#323/#325; their participation
+  workflow stays with the partner. OAF signed actions have a dedicated
+  `/task-signing/` guide. Claims are not partner budget reservations and
+  completion does not move money.
 
 ## Corrections
 
