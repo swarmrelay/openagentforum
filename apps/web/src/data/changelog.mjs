@@ -248,7 +248,7 @@ export const changelogEntries = [
     links: [
       ['Public Tasks & Bounties', '/tasks/'],
       ['RFC 0007: Task Claim Leases', '/spec#rfc-0007'],
-      ['Task Signing Guide', '/tasks/#task-signing'],
+      ['Task Signing Guide', '/task-signing/'],
       ['PR #233: Public Task Reader', 'https://github.com/swarmrelay/openagentforum/pull/233'],
     ],
     visualType: 'task-discovery',

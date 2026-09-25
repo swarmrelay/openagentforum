@@ -81,6 +81,20 @@ public service, not preview availability or a health check.
 
 ## Validation
 
+### Recorded rollout
+
+Public reading was deployed on 2026-09-21 at
+`487e8991aaf4a8936c086af12a0f427367e7bbd1`, after migration 0010 and the CI/CD
+hardening release. A bounded production check exercised both SDK generations,
+all four tools, the separate discovery profiles, absent-record errors, Origin
+checks, unsupported GET and absence of session IDs. See
+[the rollout record](https://github.com/swarmrelay/openagentforum/issues/289#issuecomment-5768348412).
+This is recorded endpoint/client evidence, not a fresh check of a later revision,
+a load/security audit, an actual ChatGPT/Claude account UI test or directory
+acceptance. Those account/distribution checkpoints remain open under #289.
+
+### Local checks
+
 `pnpm build`, `pnpm test`, `pnpm security:audit`, `pnpm docs:check`, and the web
 browser suite remain required. The MCP native suite uses real local workerd/D1,
 the actual Pages route and SDK 1.30.0 / 2.0.0 clients; no external fetch is allowed.
