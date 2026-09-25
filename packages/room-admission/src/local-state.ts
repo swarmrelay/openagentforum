@@ -14,14 +14,18 @@ import { packetReceipt, type RoomPacketReceipt } from './packet-storage-contract
 import type { AdmissionReceipt } from './storage-types.js';
 import { verifyRoomKeyBindings, type RoomKeyBundle, type RoomKeyPins } from './key-bindings.js';
 import { RoomSessionClient, type RoomSessionJournal } from './session-client.js';
+import { RoomInvitationMailbox } from './invitation-mailbox.js';
+import { invitationScope, ROOM_INVITATION_LIMITS } from './invitation-wire.js';
 
 const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite') as typeof import('node:sqlite');
-const VERSION = 'oaf-room-client-state-v1';
+const VERSION = 'oaf-room-client-state-v2';
 type Kind = 'control' | 'packet';
-export interface RoomLocalPolicy { rooms: number; sessions: number; controls: number; packets: number; packetBytes: number }
+export interface RoomLocalPolicy { rooms: number; sessions: number; controls: number; packets: number; packetBytes: number;
+  setups: number; setupBytes: number }
 export interface RoomLocalScope { hub: string; signingPublicKey: string; policy: RoomLocalPolicy }
 type KeyPair = { publicKey: string; privateKey: string };
-type Usage = { rooms: number; sessions: number; controls: number; closes: number; packets: number; packet_bytes: number };
+type Usage = { rooms: number; sessions: number; controls: number; closes: number; packets: number; packet_bytes: number;
+  setups: number; setup_bytes: number };
 type Row = { kind: Kind; request_id: string; room_id: string; wire: string; digest: string; is_close: number; receipt: string | null };
 type Proof = { kind: Kind; wire: string; roomId: string; requestId: string; digest: string; actor: string;
   revision: number; close: boolean; sessionId?: string; packetIndex?: number; action?: string };
@@ -29,8 +33,9 @@ const room = (value: unknown): value is string => typeof value === 'string' && /
 const id = (value: unknown): value is string => typeof value === 'string' && /^[0-9a-f]{32}$/.test(value);
 const randomId = () => randomBytes(16).toString('hex');
 function policySnapshot(value: RoomLocalPolicy): Readonly<RoomLocalPolicy> {
-  const bounds = { rooms: 1000, sessions: 10000, controls: 10000, packets: 65536, packetBytes: 64 * 1024 * 1024 };
-  if (!value || Object.keys(value).length !== 5 || Object.entries(bounds).some(([name, max]) => {
+  const bounds = { rooms: 1000, sessions: 10000, controls: 10000, packets: 65536, packetBytes: 64 * 1024 * 1024,
+    setups: 1000, setupBytes: 32 * 1024 * 1024 };
+  if (!value || Object.keys(value).length !== 7 || Object.entries(bounds).some(([name, max]) => {
     const v = value[name as keyof RoomLocalPolicy]; return !Number.isSafeInteger(v) || v < 1 || v > max;
   })) localFailure();
   return Object.freeze({ ...value });
@@ -54,7 +59,8 @@ function keyPair(raw: string): Readonly<KeyPair> {
 const SCHEMA = `
 CREATE TABLE client_meta (singleton INTEGER PRIMARY KEY CHECK(singleton=1), scope TEXT NOT NULL,
  signing_key TEXT NOT NULL, rooms INTEGER NOT NULL, sessions INTEGER NOT NULL, controls INTEGER NOT NULL,
- closes INTEGER NOT NULL, packets INTEGER NOT NULL, packet_bytes INTEGER NOT NULL) STRICT;
+ closes INTEGER NOT NULL, packets INTEGER NOT NULL, packet_bytes INTEGER NOT NULL,
+ setups INTEGER NOT NULL, setup_bytes INTEGER NOT NULL) STRICT;
 CREATE TABLE client_rooms (room_id TEXT PRIMARY KEY, key_json TEXT NOT NULL, bundle_json TEXT, pins_json TEXT) STRICT;
 CREATE TABLE client_sessions (room_id TEXT NOT NULL REFERENCES client_rooms(room_id), session_id TEXT NOT NULL,
  PRIMARY KEY(room_id,session_id)) STRICT;
@@ -63,7 +69,9 @@ CREATE TABLE client_ops (kind TEXT NOT NULL CHECK(kind IN ('control','packet')),
  is_close INTEGER NOT NULL CHECK(is_close IN (0,1)), receipt TEXT, PRIMARY KEY(kind,request_id)) STRICT;
 CREATE INDEX client_pending ON client_ops(receipt,kind);
 CREATE INDEX client_closes ON client_ops(room_id,is_close,kind);
-PRAGMA user_version=1;`;
+CREATE TABLE client_setups (channel TEXT PRIMARY KEY, peer_key TEXT NOT NULL, role TEXT NOT NULL,
+ key_wire TEXT, sealed_wire TEXT) STRICT;
+PRAGMA user_version=2;`;
 
 export class RoomLocalState {
   readonly #files: RoomLocalFiles;
@@ -75,6 +83,7 @@ export class RoomLocalState {
   #closed = false;
   #busy = false;
   readonly #sessions = new Set<RoomSessionClient>();
+  readonly #mailboxes = new Set<RoomInvitationMailbox>();
 
   private constructor(files: RoomLocalFiles, db: Database, scope: RoomLocalScope) {
     this.#files = files; this.#db = db; this.#hub = scope.hub; this.#signingPublicKey = scope.signingPublicKey;
@@ -110,12 +119,12 @@ export class RoomLocalState {
       if (privateKey !== undefined) {
         db.exec('BEGIN IMMEDIATE');
         db.exec(SCHEMA);
-        db.prepare('INSERT INTO client_meta VALUES (1,?,?,0,0,0,0,0,0)').run(state.#scope, privateKey);
+        db.prepare('INSERT INTO client_meta VALUES (1,?,?,0,0,0,0,0,0,0,0)').run(state.#scope, privateKey);
         db.exec('COMMIT'); files.syncDirectory();
       }
       state.#check(); state.#identity();
       // Detect missing schema even in an otherwise valid metadata file.
-      for (const table of ['client_rooms', 'client_sessions', 'client_ops']) db.prepare(`SELECT 1 FROM ${table} LIMIT 1`).get();
+      for (const table of ['client_rooms', 'client_sessions', 'client_ops', 'client_setups']) db.prepare(`SELECT 1 FROM ${table} LIMIT 1`).get();
       return state;
     } catch {
       try { db?.close(); } catch {} files?.close(); return localFailure();
@@ -123,15 +132,16 @@ export class RoomLocalState {
   }
   #check(): Usage {
     if (this.#closed) localFailure(); this.#files.check();
-    if (this.#db.prepare('PRAGMA user_version').get()?.user_version !== 1) localFailure();
-    const meta = this.#db.prepare('SELECT scope,rooms,sessions,controls,closes,packets,packet_bytes FROM client_meta WHERE singleton=1').get();
+    if (this.#db.prepare('PRAGMA user_version').get()?.user_version !== 2) localFailure();
+    const meta = this.#db.prepare('SELECT scope,rooms,sessions,controls,closes,packets,packet_bytes,setups,setup_bytes FROM client_meta WHERE singleton=1').get();
     const caps = this.#caps();
     if (!meta || meta.scope !== this.#scope || Object.entries(caps).some(([name, cap]) =>
       !Number.isSafeInteger(meta[name]) || Number(meta[name]) < 0 || Number(meta[name]) > cap)) localFailure();
     return meta as unknown as Usage;
   }
   #caps(): Usage { return { rooms: this.#policy.rooms, sessions: this.#policy.sessions, controls: this.#policy.controls,
-    closes: this.#policy.rooms * 4, packets: this.#policy.packets, packet_bytes: this.#policy.packetBytes }; }
+    closes: this.#policy.rooms * 4, packets: this.#policy.packets, packet_bytes: this.#policy.packetBytes,
+    setups: this.#policy.setups, setup_bytes: this.#policy.setupBytes }; }
   #charge(field: keyof Usage, count = 1): void {
     if (this.#db.prepare(`UPDATE client_meta SET ${field}=${field}+? WHERE singleton=1 AND ${field}+?<=?`)
       .run(count, count, this.#caps()[field]).changes !== 1) localFailure();
@@ -262,6 +272,40 @@ export class RoomLocalState {
     const result = await http.submit(wire, this.#signingPublicKey);
     await this.confirmControl(wire, result.receipt); return result;
   }
+  /** Reserve this channel once, even if no post happens. Reopening never resumes old setup keys. */
+  createInvitationMailbox(peer: string, role: 'owner' | 'peer', channel: string, fetchImpl: typeof fetch = fetch): Promise<RoomInvitationMailbox> {
+    return this.#async(async () => {
+      const scope = invitationScope({ hub: this.#hub, channel });
+      if (!/^[0-9a-f]{64}$/.test(peer) || peer === this.#signingPublicKey || !['owner', 'peer'].includes(role)) localFailure();
+      this.#sync(() => {
+        this.#charge('setups');
+        this.#db.prepare('INSERT INTO client_setups VALUES (?,?,?,NULL,NULL)').run(channel, peer, role);
+      }, true);
+      const mailbox = await RoomInvitationMailbox.create(this.#identity(), peer, role, scope, {
+        reserve: (slot, wire) => this.#async(async () => {
+          if (!['key', 'sealed'].includes(slot) || typeof wire !== 'string' || Buffer.byteLength(wire) > ROOM_INVITATION_LIMITS.envelopeBytes) localFailure();
+          this.#sync(() => {
+            const row = this.#db.prepare('SELECT * FROM client_setups WHERE channel=?').get(channel);
+            if (!row || row.peer_key !== peer || row.role !== role || row[`${slot}_wire`] !== null
+              || (slot === 'sealed' && row.key_wire === null)) localFailure();
+            this.#charge('setup_bytes', Buffer.byteLength(wire));
+            this.#db.prepare(`UPDATE client_setups SET ${slot}_wire=? WHERE channel=?`).run(wire, channel);
+          }, true);
+        }),
+      }, fetchImpl);
+      if (this.#closed) { mailbox.close(); localFailure(); }
+      for (const old of this.#mailboxes) if (old.closed) this.#mailboxes.delete(old);
+      this.#mailboxes.add(mailbox); return mailbox;
+    });
+  }
+  /** Exact public ciphertext/key records for manual reconciliation, never a resend permit. */
+  invitationAttempt(channel: string) {
+    return this.#sync(() => {
+      invitationScope({ hub: this.#hub, channel });
+      const row = this.#db.prepare('SELECT peer_key AS peerSigningPublicKey,role,key_wire AS keyWire,sealed_wire AS sealedWire FROM client_setups WHERE channel=?').get(channel);
+      if (!row) localFailure(); return { ...row };
+    });
+  }
   /** A durable once-only session reservation; never reacquire an old ID after restart. */
   async createSession(roomId: string, sessionId: string, http: RoomHttpClient): Promise<RoomSessionClient> {
     return this.#async(async () => {
@@ -321,6 +365,7 @@ export class RoomLocalState {
   close(): void {
     if (this.#closed) return; this.#closed = true;
     for (const session of this.#sessions) session.dispose(); this.#sessions.clear();
+    for (const mailbox of this.#mailboxes) mailbox.close(); this.#mailboxes.clear();
     try { this.#db.close(); } catch {} this.#files.close();
   }
 }

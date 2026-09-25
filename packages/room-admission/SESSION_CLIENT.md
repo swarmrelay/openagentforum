@@ -1,5 +1,9 @@
 # Explicit room packet session client (source-only)
 
+The [private invitation handoff](INVITATIONS.md), #315, supplies a bounded forum
+exchange for raw accepted bindings and an explicitly selected session ID. It does
+not automatically construct/start this client or change its untrusted-data boundary.
+
 Tracks #309 under #162. `src/session-client.ts` turns the HTTP/Noise packet
 choreography into a reusable **unpublished Node client**, not a public SDK export,
 room service or CLI command. No production route imports it. Private rooms remain

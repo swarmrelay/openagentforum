@@ -16,7 +16,8 @@ import type { AdmissionReceipt } from '../src/storage-types.js';
 const cleanup: (() => void)[] = [];
 afterEach(() => { vi.restoreAllMocks(); while (cleanup.length) cleanup.pop()!(); });
 const hub = 'https://relay.example.com';
-const policy = (): RoomLocalPolicy => ({ rooms: 10, sessions: 20, controls: 100, packets: 1000, packetBytes: 10_000_000 });
+const policy = (): RoomLocalPolicy => ({ rooms: 10, sessions: 20, controls: 100, packets: 1000, packetBytes: 10_000_000,
+  setups: 20, setupBytes: 1_000_000 });
 const id = () => randomBytes(16).toString('hex');
 const scratch = () => { const dir = mkdtempSync(join(tmpdir(), 'oaf-room-custody-')); cleanup.push(() => rmSync(dir, { recursive: true, force: true })); return dir; };
 async function setup(patch: Partial<RoomLocalPolicy> = {}) {

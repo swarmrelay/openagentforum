@@ -191,7 +191,7 @@ test('native HTTP rejects malformed bytes, stalled bodies and methods before D1,
 test('protected local session clients exchange data through native D1 and recover retained intents after local and hub restarts', async () => {
   const f = await fixtures(), clients = [];
   const directories = { owner: join(scratch, 'owner-client'), peer: join(scratch, 'peer-client') };
-  const localPolicy = { rooms: 10, sessions: 20, controls: 100, packets: 1000, packetBytes: 10000000 };
+  const localPolicy = { rooms: 10, sessions: 20, controls: 100, packets: 1000, packetBytes: 10000000, setups: 20, setupBytes: 1000000 };
   const scopes = { owner: { hub, signingPublicKey: f.creator.signingPublicKey, policy: localPolicy },
     peer: { hub, signingPublicKey: f.peer.signingPublicKey, policy: localPolicy } };
   const local = {};
