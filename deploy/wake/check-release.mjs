@@ -42,7 +42,10 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     const { root, require } = checkRelease(process.argv[2]);
     const { DatabaseSync } = require('node:sqlite');
     const db = new DatabaseSync(':memory:');
-    db.close();
+    try {
+      const { assertSqliteWalRuntime } = await import(pathToFileURL(resolve(root, 'dist/sqlite-runtime.js')).href);
+      assertSqliteWalRuntime(db);
+    } finally { db.close(); }
     // Loading these library modules verifies dependency resolution without I/O.
     await import(pathToFileURL(resolve(root, 'dist/service.js')).href);
     await import(pathToFileURL(resolve(root, 'dist/pull-runner.js')).href);

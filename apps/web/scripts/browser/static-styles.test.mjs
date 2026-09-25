@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
 import { historyPath, historyEntries, historySections, entryPath } from '../../src/data/swarm-history.mjs';
 import { communicationCapabilities } from '../../src/data/communication-capabilities.mjs';
+import { featureCatalog, rfcCatalog } from '../../src/data/feature-catalog.mjs';
 
 const dist = fileURLToPath(new URL('../../dist/', import.meta.url));
 const origin = 'https://styles.test';
@@ -52,7 +53,7 @@ test('registry fingerprint preview is local, text-only and never claims successf
 
 // Cover the Tailwind-heavy registry view and both light/dark reading surfaces.
 // JS stays off: every response is a local build artifact, never the public API.
-for (const path of ['/registry/', '/start/', '/connect/', '/compare/', '/tasks/', '/changelog/', '/blog/how-agents-find-a-place-to-coordinate/', historyPath, ...historyEntries.map(entryPath)]) {
+for (const path of ['/registry/', '/start/', '/connect/', '/compare/', '/tasks/', '/task-signing/', '/changelog/', '/spec/', '/blog/how-agents-find-a-place-to-coordinate/', historyPath, ...historyEntries.map(entryPath)]) {
   for (const width of [390, 1280]) for (const colorScheme of ['light', 'dark']) {
     test(`static CSS survives the toolchain upgrade: ${path}, ${width}, ${colorScheme}`, { timeout: 20_000 }, async () => {
       const context = await browser.newContext({ javaScriptEnabled: false,
@@ -91,6 +92,12 @@ for (const path of ['/registry/', '/start/', '/connect/', '/compare/', '/tasks/'
           assert.equal(await page.locator('#reg-name').evaluate(el => getComputedStyle(el).paddingLeft), '12px');
         }
         if (path === '/tasks/') {
+          assert.equal(await page.locator('#partners').isVisible(), true);
+          assert.equal(await page.locator('[data-task-claim-example]').count(), 0);
+          assert.equal(await page.locator('#task-signing a[href="/task-signing/"]').isVisible(), true);
+          assert.ok((await page.locator('#partners').innerText()).includes('do not reserve partner funds'));
+        }
+        if (path === '/task-signing/') {
           assert.equal(await page.locator('#task-signing').isVisible(), true);
           assert.equal(await page.locator('#task-signing [data-task-action]').count(), 3);
           assert.ok((await page.locator('#task-signing').innerText()).includes('Signing is required, not optional.'));
@@ -128,6 +135,18 @@ for (const path of ['/registry/', '/start/', '/connect/', '/compare/', '/tasks/'
           }
           assert.match(await page.locator('#capability-private-rooms dt').innerText(), /Planned/);
           assert.match(await page.locator('#capability-peer-streams dt').innerText(), /Planned/);
+        }
+        if (path === '/spec/') {
+          assert.equal(await page.locator('#feature-map').isVisible(), true);
+          assert.equal(await page.locator('#feature-peer-streams').isVisible(), true);
+          for (const feature of featureCatalog) {
+            assert.ok((await page.locator(`#feature-${feature.id}`).innerText()).includes(feature.status));
+          }
+          assert.equal(await page.locator('#rfc-index li').count(), rfcCatalog.length);
+          const mapLink = page.locator('.sp-toc a[href="#feature-map"]');
+          await mapLink.click();
+          assert.ok(page.url().endsWith('#feature-map'));
+          assert.equal(await page.locator('#feature-map').evaluate(el => el.getBoundingClientRect().top >= 0), true);
         }
         assert.ok(await page.locator('[data-participation-invite] a[href="/start/"]').count() > 0);
         assert.deepEqual(unexpected, []);

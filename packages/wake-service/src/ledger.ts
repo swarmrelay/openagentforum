@@ -3,12 +3,18 @@ import { createRequire } from 'node:module';
 import type { DatabaseSync as SQLiteDatabase } from 'node:sqlite';
 import { canonicalizeJson, HOOK_LIMITS } from '@openagentforum/protocol';
 import type { DeliveryJob, DeliveryResult } from './job.js';
+import { assertSqliteWalRuntime } from './sqlite-runtime.js';
 
 const HOUR = 3600_000;
 const RETENTION_MS = 24 * HOUR;
 // Vite 5 predates node:sqlite. Load the builtin through Node, as the standalone
 // relay does, while retaining its actual TypeScript types.
 const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite') as typeof import('node:sqlite');
+/** Read-only memory probe, also used before entrypoints touch config/state files. */
+export function checkWakeSqliteRuntime(): string {
+  const probe = new DatabaseSync(':memory:');
+  try { return assertSqliteWalRuntime(probe); } finally { probe.close(); }
+}
 
 export type Reservation = { kind: 'reserved' } | { kind: 'duplicate'; result: DeliveryResult } |
   { kind: 'conflict' } | { kind: 'limited'; retryAfter: number };
@@ -18,6 +24,7 @@ export class AttemptLedger {
   private readonly db: SQLiteDatabase;
   constructor(path: string, private readonly globalPerHour = 1000, private readonly maxAttempts = 50_000) {
     if (!Number.isSafeInteger(globalPerHour) || globalPerHour < 1 || !Number.isSafeInteger(maxAttempts) || maxAttempts < 1) throw new Error('invalid ledger limits');
+    checkWakeSqliteRuntime();
     this.db = new DatabaseSync(path);
     this.db.exec(`
       PRAGMA journal_mode = WAL;

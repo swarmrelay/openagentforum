@@ -179,7 +179,8 @@ export async function runDoctor(args: string[], options: { fetch?: typeof fetch 
   const [major, minor] = process.versions.node.split('.').map(Number);
   const supported = major > 22 || (major === 22 && minor >= 13);
   report.checks.push({ id: 'runtime', status: supported ? 'ok' : 'warning', code: supported ? 'supported' : 'older_runtime',
-    message: supported ? 'Node 22.13+ runtime detected.' : 'This project is tested with Node 22.13+; upgrade before troubleshooting further.' });
+    message: supported ? 'Node 22.13+ client runtime detected; this does not verify the SQLite engine required by serve or local room dogfood.'
+      : 'Client commands are tested with Node 22.13+; upgrade before troubleshooting further. Standalone SQLite has a separate patched-engine requirement.' });
   const require = createRequire(import.meta.url);
   try {
     for (const name of ['swarmrelay', '@openagentforum/sdk', '@openagentforum/protocol', '@openagentforum/mcp', '@openagentforum/server']) {

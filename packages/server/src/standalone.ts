@@ -1,6 +1,6 @@
 /**
  * Standalone Self-Hosted SwarmRelay Server
- * Powered by Node.js 22.13+, Hono, built-in SQLite (node:sqlite), and WebSockets.
+ * Powered by a maintained Node build with patched SQLite, Hono and WebSockets.
  * Zero external database dependencies — runs anywhere (Docker, VPS, Localhost, K8s, Raspberry Pi).
  */
 
@@ -21,6 +21,7 @@ import {
 } from '@openagentforum/protocol';
 import fs from 'node:fs';
 import path from 'node:path';
+import { assertSqliteWalRuntime } from './sqlite-runtime.js';
 
 const require = createRequire(import.meta.url);
 const { DatabaseSync } = require('node:sqlite');
@@ -48,6 +49,9 @@ export interface StandaloneInstance {
 }
 
 export function createStandaloneServer(config: StandaloneConfig = {}): StandaloneInstance {
+  // Probe only an in-memory database before opening or creating the operator's file.
+  const probe = new DatabaseSync(':memory:');
+  try { assertSqliteWalRuntime(probe); } finally { probe.close(); }
   const port = config.port || parseInt(process.env.PORT || '8787', 10);
   const dbPath = config.dbPath || process.env.DB_PATH || 'swarmrelay.sqlite';
   const relayName = config.relayName || process.env.RELAY_NAME || 'SwarmRelay Local Node';

@@ -11,7 +11,7 @@ const proposal = 'This article outlines a proposed affiliate workflow.';
 function fixture() {
   const prose = [boundary, independence, receipt, campaigns, proposal].join(' ');
   return new Map([
-    ...['payments/index.html', 'commerce/index.html', 'tasks/index.html', 'blog/autonomous-agent-affiliate-protocol-earning-usdc/index.html'].map(file => [file, `<article>${prose}</article>`]),
+    ...['payments/index.html', 'task-signing/index.html', 'tasks/index.html', 'blog/autonomous-agent-affiliate-protocol-earning-usdc/index.html'].map(file => [file, `<article>${prose}</article>`]),
     ['agent.md', prose], ['llms-full.txt', prose], ['blog/index.html', ''], ['llms.txt', ''],
   ]);
 }
@@ -41,7 +41,7 @@ test('rejects stale payment promises even when a disclaimer is also present', ()
 });
 
 test('checks metadata, discovery snippets and generated article text for old claims', () => {
-  for (const file of ['commerce/index.html', 'blog/index.html', 'llms.txt', 'llms-full.txt']) {
+  for (const file of ['task-signing/index.html', 'blog/index.html', 'llms.txt', 'llms-full.txt']) {
     const files = fixture();
     files.set(file, files.get(file) + '<meta name="description" content="instant non-custodial USDC payouts">');
     assert.ok(validatePaymentMessaging(files).some(error => error.startsWith(`${file}: unsupported`)), file);
@@ -53,21 +53,21 @@ test('requires proposal status in both the article and machine text and rejects 
   const article = 'blog/autonomous-agent-affiliate-protocol-earning-usdc/index.html';
   files.set(article, files.get(article).replace(proposal, ''));
   files.set('llms-full.txt', files.get('llms-full.txt').replace(proposal, ''));
-  files.set('commerce/index.html', files.get('commerce/index.html') + '<button id="btn-gen-ref-link">Join</button>');
+  files.set('tasks/index.html', files.get('tasks/index.html') + '<button id="btn-gen-ref-link">Join</button>');
   const errors = validatePaymentMessaging(files).join('\n');
   assert.match(errors, /Affiliate article lacks its proposal status/);
   assert.match(errors, /Long-form machine text lacks the affiliate proposal status/);
   assert.match(errors, /unavailable campaign call to action/);
 });
 
-test('commerce copy and discovery describe current workflows without retrospective merchant commentary', () => {
+test('task guidance and discovery describe current workflows without retrospective merchant commentary', () => {
   const read = path => readFileSync(new URL(path, import.meta.url), 'utf8');
   const slug = 'autonomous-agent-affiliate-protocol-earning-usdc';
   const listing = read('../src/pages/blog/index.astro').split(`slug: '${slug}',`)[1]?.split('\n  },')[0];
   const discovery = read('../public/llms.txt').split('\n').find(line => line.includes(`/blog/${slug}`));
   assert.ok(listing, 'affiliate blog listing exists');
   assert.ok(discovery, 'affiliate discovery link exists');
-  for (const source of [read('../src/pages/commerce.astro'), read(`../src/pages/blog/${slug}.astro`), listing, discovery]) {
+  for (const source of [read('../src/pages/task-signing.astro'), read(`../src/pages/blog/${slug}.astro`), listing, discovery]) {
     assert.doesNotMatch(source, /BookTemplatesPro|previously presented|earlier (?:version|article)|claims have been withdrawn|correct(?:ion|ed)/i);
   }
 });

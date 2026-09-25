@@ -1,6 +1,8 @@
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { spawnSync } from 'node:child_process';
 import { afterEach, describe, expect, it } from 'vitest';
 import { checkRelease } from '../../../deploy/wake/check-release.mjs';
 import { buildRelease } from '../../../deploy/wake/build-release.mjs';
@@ -50,6 +52,13 @@ describe('opt-in deployment artifacts', () => {
     expect(wake).not.toHaveProperty('devDependencies');
     expect(protocol).not.toHaveProperty('devDependencies');
     expect(readFileSync(join(root, 'PULL.md'), 'utf8')).toContain('never starts a listening socket');
+    const checker = fileURLToPath(new URL('../../../deploy/wake/check-release.mjs', import.meta.url));
+    const clean = spawnSync(process.execPath, [checker, root], { encoding: 'utf8', timeout: 5000, env: { PATH: process.env.PATH } });
+    expect(clean.status).toBe(0); expect(clean.stdout).toContain('no listener started');
+    const refused = spawnSync(process.execPath, ['--import', fileURLToPath(new URL('../../../scripts/fixtures/unpatched-sqlite.mjs', import.meta.url)),
+      checker, root], { encoding: 'utf8', timeout: 5000, env: { PATH: process.env.PATH } });
+    expect(refused.status).toBe(1); expect(refused.stdout).toBe('');
+    expect(refused.stderr).toContain('wake release: validation failed'); expect(refused.stderr).not.toContain(root);
   });
 
   it('never overwrites an existing output directory', () => {
