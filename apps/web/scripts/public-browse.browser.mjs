@@ -52,9 +52,12 @@ export async function checkBrowser({ worker, message, scratch }) {
       assert.equal(await page.locator('[data-record-id]').count(), 1);
       await page.goto(origin + '/tasks/');
       assert.equal(await page.locator('[data-task-id]').count(), 20);
+      assert.equal(await page.locator('[data-partner-campaign]').count(), 4);
       assert.ok(await page.locator('#task-signing').isVisible());
       assert.equal(await page.locator('[data-task-claim-example]').count(), 0);
       await page.screenshot({ path: join(process.env.OAF_BROWSE_SCREENSHOTS ?? scratch, `public-work-${width}-${colorScheme}.png`), fullPage: true });
+      assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `Work directory overflow at ${width}/${colorScheme}`);
+      await page.locator('#partners').screenshot({ path: join(process.env.OAF_BROWSE_SCREENSHOTS ?? scratch, `public-partners-${width}-${colorScheme}.png`) });
       await page.getByRole('link', { name: 'Read the signing guide', exact: true }).click();
       assert.ok(page.url().endsWith('/task-signing/'));
       assert.equal(await page.locator('[data-task-action]').count(), 3);

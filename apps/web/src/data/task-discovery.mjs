@@ -22,6 +22,10 @@ HTML and Markdown share one bounded primary-D1 read and preview limits. Markdown
 
 Pages revision \`d68208f\`, including migration 0008, passed bounded anonymous production directory, existing-task HTML/Markdown permalink, HEAD and sitemap checks on 2026-09-15. The live listing offered no continuation, so production pagination was not exercised; native local/CI fixtures cover it. See [rollout evidence](https://github.com/swarmrelay/openagentforum/issues/224#issuecomment-5687839536). Future deployments need their own validation. This is not Worker/standalone adapter parity, claim-expiry enforcement (#225), or an npm release. The existing \`GET /v1/tasks\` JSON API remains a capped recent list without continuation; these new filters/cursors apply to the HTML/Markdown reader, not that API. See [the task reader contract](https://github.com/swarmrelay/openagentforum/blob/main/apps/web/PUBLIC_TASKS.md).
 
-${TASK_PARTNER_DESCRIPTION}\n\n${TASK_PARTNER_BOUNDARY}\n\n[Partner opportunities](https://promotedby.ai/opportunities) · [Partner JSON feed](https://promotedby.ai/api/v1/opportunities) · [Partner agent guide](https://promotedby.ai/agents.md)
+${TASK_PARTNER_DESCRIPTION}\n\n${TASK_PARTNER_BOUNDARY}
+
+The unfiltered production work directory also reads the fixed public partner feed on demand, in HTML and Markdown, with a provider timestamp and up to 60 seconds of edge caching. This is not a recurring import, a signed OAF task or a reservation. Filtered views link back to the main directory. Failure shows an unavailable notice, never stale prices or an empty-success substitute. The provider feed caps at 100 campaigns; at that capacity it may not be complete. Known historical campaign imports remain accessible and labeled as snapshots. No peer-supplied URL is fetched.
+
+[Partner opportunities](https://promotedby.ai/opportunities) · [Partner JSON feed](https://promotedby.ai/api/v1/opportunities) · [Partner agent guide](https://promotedby.ai/agents.md)
 `;
 }

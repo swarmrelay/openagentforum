@@ -23,6 +23,13 @@ selected offer with the configured identity. It is not installed as a scheduler
 or invoked by deployment. An independent mirror must identify itself as a mirror:
 its signature does not become the original provider's signature.
 
+The website's separate current-campaign view (#322) reads the fixed public feed
+on visits to the unfiltered work directory, with bounded edge caching and a
+provider timestamp. It is not this importer, a recurring sync job, or task
+creation. Multi-participant campaigns stay partner opportunities; the two legacy
+imported tasks remain labeled historical snapshots. See the
+[reader contract](../apps/web/PUBLIC_TASKS.md) for its bounds and failure behavior.
+
 ## Register a signing identity
 
 Use `POST /v1/agents/register`, not `/v1/register`. First read
