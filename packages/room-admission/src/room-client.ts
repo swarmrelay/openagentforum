@@ -118,11 +118,22 @@ export class RoomClient {
     this.#require('waiting-peer');
     return this.#run(async () => { await this.#wait(() => this.#mailbox!.findPeerKey()); this.#phase = 'peer-ready'; });
   }
-  async #control(action: RoomControlAction): Promise<string> {
-    this.#check(); const identity = this.#local.identity();
-    const wire = await signRoomControl(action, identity.signingPrivateKey); this.#check();
+  async #control(action: RoomControlAction, consentExpiresAt?: number): Promise<string> {
+    const beforeSubmit = () => {
+      this.#check();
+      if (consentExpiresAt !== undefined
+        && (Date.now() >= consentExpiresAt || Date.now() >= this.#mailbox!.expiresAt)) {
+        throw new RoomClientError('invalid_input', this.recovery);
+      }
+    };
+    beforeSubmit(); const identity = this.#local.identity();
+    // Bind the consent deadline into the proof, so expiry after dispatch also fails at admission.
+    if (consentExpiresAt !== undefined) action = { ...action,
+      expiresAt: Math.min(action.expiresAt, consentExpiresAt, this.#mailbox!.expiresAt) };
+    const wire = await signRoomControl(action, identity.signingPrivateKey); beforeSubmit();
     this.#recovery = { kind: 'control', roomId: action.roomId, requestId: action.requestId };
-    await this.#local.retainControl(wire); this.#check();
+    await this.#local.retainControl(wire); beforeSubmit();
+    // Once dispatched, confirm a successful receipt even if consent has since expired.
     const result = await this.#http.submit(wire, this.#own); this.#check();
     await this.#local.confirmControl(wire, result.receipt); this.#check(); this.#recovery = null; return wire;
   }
@@ -179,7 +190,7 @@ export class RoomClient {
       const offer = this.#offer!, key = this.#local.createRoomKey(this.#roomId!);
       const invite = JSON.parse(offer.invite);
       const accept = await this.#control(await this.#action('accept', this.#roomId!, invite.expectedRevision + 1,
-        { invitationDigest: this.#decision!.invitationDigest, encryptionPublicKey: key.publicKey }));
+        { invitationDigest: this.#decision!.invitationDigest, encryptionPublicKey: key.publicKey }), this.#decision!.expiresAt);
       // Retain accepted bindings BEFORE an uncertain forum delivery can end this process.
       await this.#bindings({ create: offer.create, invite: offer.invite, accept });
       const sealed = await this.#mailbox!.prepare({ ...offer, kind: 'oaf.room.accept.v1', accept }); this.#check();
@@ -244,8 +255,14 @@ export async function recoverRoomOperation(local: RoomLocalState, reference: Roo
     return await local.recover(ref.kind, ref.requestId, new RoomHttpClient({ hub: local.scope().hub, fetch: fetchImpl }));
   } catch { throw new RoomClientError('needs_recovery', ref); }
 }
+// Local single-flight covers status through confirmation, including the gap after an intent is cleared.
+// This is not distributed authority; primary admission and durable pending-close checks still apply.
+const closing = new WeakSet<RoomLocalState>();
 /** Either admitted agent may explicitly close. A pending close blocks a fresh mutation, even after restart. */
 export async function closeRoom(local: RoomLocalState, roomId: string, fetchImpl: typeof fetch = fetch) {
+  if (!(local instanceof RoomLocalState)) throw new RoomClientError('invalid_input');
+  if (closing.has(local)) throw new RoomClientError('busy');
+  closing.add(local);
   let reference: RoomRecoveryReference | null = null;
   try {
     const pending = local.pendingClose(roomId);
@@ -256,12 +273,12 @@ export async function closeRoom(local: RoomLocalState, roomId: string, fetchImpl
     const wire = await signRoomControl({ protocol: ROOM_CONTROL_PROTOCOL, hub, roomId, requestId,
       actor: await deriveAgentId(signingPublicKey), ...fresh(), expectedRevision: state.revision, action: 'close', payload: {} }, identity.signingPrivateKey);
     reference = { kind: 'control', roomId, requestId };
-    // Recheck pending close after awaits: no concurrent call may invent a second close.
+    // Also catch pending intents introduced through lower-level local-state methods during awaits.
     const conflict = local.pendingClose(roomId);
     if (conflict) throw new RoomClientError('needs_recovery', { kind: 'control', roomId, requestId: conflict });
     return (await local.submitControl(wire, new RoomHttpClient({ hub, fetch: fetchImpl }))).receipt;
   } catch (error) {
     if (error instanceof RoomClientError) throw error;
     throw new RoomClientError(reference ? 'needs_recovery' : 'unavailable', reference);
-  }
+  } finally { closing.delete(local); }
 }
