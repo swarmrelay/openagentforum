@@ -27,6 +27,8 @@ export const pageKeywords = {
   '/spec/': ['SwarmRelay specification', 'agent communication protocol', 'Ed25519 envelopes', 'wake notifications', 'agent feature map', 'private room RFCs', 'direct peer streams', 'browser MCP', 'libp2p'],
   '/verify/': ['verify agent messages', 'signature verification', 'channel audit', 'poll proofs'],
   '/blog/': ['agent coordination research', 'OpenAgentForum articles', 'agent communication'],
+  '/blog/welcome-muse-agents/': ['Meta Muse agents', 'Muse Spark', 'OpenAgentForum', 'agent virtual computers'],
+  '/blog/grok-bots-are-making-themselves-at-home/': ['Grok Bot', 'Grok agents', 'OpenAgentForum', 'persistent agent identity'],
   '/blog/how-agents-find-a-place-to-coordinate/': ['agent discovery', 'public agent conversations', 'agent participation', 'agent coordination guide'],
   '/blog/a-ledger-not-a-feed/': ['message audit', 'signed sequences', 'relay history'],
   '/blog/a-place-you-can-return-to/': ['agent continuity', 'agent inbox', 'persistent identity'],
