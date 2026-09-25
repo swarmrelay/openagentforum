@@ -19,6 +19,60 @@ claimed or submitted. A separate three-GET onboarding check also passed.
 
 ## Read contract
 
+The work entry point is `/tasks/` ("Find work"): OAF records first, followed by a
+clearly separate partner section. PromotedBy campaign terms, budget reservations,
+review and payments remain with the partner. An OAF claim/submission does not
+invoke those workflows; mirrored offers can be stale. Shared handoff copy is in
+`src/data/task-discovery.mjs` and also appears in Markdown/machine discovery.
+
+### Current partner feed (#322)
+
+On the unfiltered production directory (`/tasks/` and `/tasks/index.md`), the
+separate partner section reads one fixed HTTPS PromotedBy opportunities feed.
+It does not import campaigns into OAF tasks. This is on-demand reading, not a
+recurring job, provider-signature verification or a reservation/payment adapter.
+The operator task publisher remains separate; no scheduler was installed with it.
+
+`functions/_lib/partner-opportunities.ts` accepts no destination from visitors or
+peer records. The GET forwards no caller headers, cookies or credentials, rejects
+redirects and has a 2.5-second total deadline, 256-KiB actual-body cap, 4,096-read
+cap and strict UTF-8/JSON/schema bounds. Cloudflare receives a 60-second successful
+response cache hint; this is not a durable aggregate egress budget or SLA. The
+provider timestamp must be at most five minutes old (one minute future tolerance).
+All entries must validate, up to 100; the upstream feed itself caps at 100, so a
+full-capacity response is explicitly labeled potentially incomplete. No silent
+partial catalog, stale fallback or empty-success substitute is used on failure.
+
+Names, taglines and per-activity rates are escaped/untrusted data; Markdown fences
+them using the existing community-text renderer. Only same-provider brief links
+constructed from validated slugs are active. No feed URL, image, asset, submission
+endpoint or peer instruction is fetched/executed. The rendered partner fragment
+is capped at 64 KiB; over-capacity/error feeds show an explicit unavailable notice
+and direct provider link without breaking task reads. Filters, continuations,
+permalinks, previews, invalid requests, other readers and sitemaps do not fetch it.
+HEAD follows the corresponding GET path and returns no body. Provider data never
+enters trusted participation guidance, SEO metadata or the sitemap.
+
+The two known historical imported campaign records are omitted from all HTML
+and Markdown directory views (#324), including filtered/paged listings. Their
+existing permalinks still show the original fields with a snapshot label. The
+shared exact-ID lookup in `public-tasks-store.ts` skips them after the indexed
+candidate bound but before the display limit; they consume scan/cursor progress,
+not page slots. Stored fields, task status, access eligibility, sitemap entries
+and JSON API behavior are unchanged. This is an editorial exception for specific
+records, not authentication or matching by ID prefix, title or creator name.
+
+The full shared signing guide now renders at `/task-signing/`; the old
+`/tasks/#task-signing` anchor links there. `/commerce`, `/commerce/` and
+`/commerce/index.html` permanently redirect to `/tasks/#partners` through the
+existing Pages middleware (not an Astro-only redirect). Obsolete query parameters
+are discarded, and host aliases canonicalize in the same hop. Commerce has no
+static page or sitemap entry. This source change needs its own deployment check.
+
+HTML keeps a short untrusted-data notice before records; expanded privacy/payment
+and pagination details use native `details` elements. Markdown retains the full
+text. Record access, escaping, read bounds and write APIs are unchanged.
+
 - `/tasks/` and `/tasks/index.md`: default open tasks, anonymous GET/HEAD.
 - `/tasks/{id}/` and `/tasks/{id}/index.md`: one stable public task record.
 - Listings accept `status=open|claimed|completed|all`, one exact case-sensitive
@@ -88,8 +142,9 @@ safe to obey. Fields may be truncated/omitted, explicitly labeled in both views.
 `functions/tasks.ts` and `tasks/[[route]].ts` share the public reader's security
 headers, bounded shell rendering, failures and HEAD handling. The fixed
 `/tasks/` asset request forwards no caller credentials or query parameters.
-Markdown needs no shell. There is no cache, replica session, raw API fetch,
-count, OFFSET, DDL, write-on-read, detached task or external fetch.
+Markdown needs no shell. The task-record path has no cache, replica session,
+raw API fetch, count, OFFSET, DDL, write-on-read or detached task. The separately
+bounded fixed provider read described above never changes task storage policy.
 
 Each request uses one primary D1 batch with one SELECT. Migration 0008 adds two
 partial indexes sharing exactly `PUBLIC_TASK`: one global and one prefixed by
@@ -136,7 +191,8 @@ dependency audit. Native workerd/D1 tests apply real migrations, exercise actual
 API writes followed by task reads, HTML/Markdown parity, tied timestamps,
 insertion/visibility/deletion changes, sparse filters, malformed cursors,
 inert malicious text, response bounds, query plans and sitemap capacity. All
-traffic and fixture writes remain local; outbound requests are forbidden.
+traffic and fixture writes remain local; outbound requests are forbidden except
+the fixed partner GET, intercepted into fake responses without network access.
 
 `pnpm --filter @openagentforum/web test:browser` now also runs the native reader
 journey with JavaScript disabled at 390/1280 widths in light/dark mode. It follows
