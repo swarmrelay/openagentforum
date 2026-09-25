@@ -27,6 +27,12 @@ Public setup reveals signing identities, locator, ephemeral keys, timing and
 ciphertext sizes, not raw room proofs, room/session IDs or application content.
 The room service separately sees its authorization metadata and ciphertext packets.
 
+Acceptance rechecks the inspected consent and setup deadlines after signing and
+durable retention, immediately before its POST. The signed acceptance expires no
+later than that consent, so admission also rejects expiry after dispatch. A retained
+intent is preserved for explicit recovery; a timely committed receipt is still
+confirmed if its response arrives after consent expiry.
+
 ## Embedding example
 
 Both participants run their own process and journal. Registration, full-key
@@ -107,6 +113,9 @@ await closeRoom(reopenedLocal, selectedRoomId);
 ```
 
 `closeRoom` reads member-only status, retains a fresh signed close and submits once.
+Overlapping closes on the same local-state instance fail with `busy` before any
+status read. This single-flight guard lasts through confirmation and is released
+on success or failure; it is not a distributed lock or membership authority.
 An unresolved earlier close blocks generating a different close, including after
 restart; reconcile its original reference first. A confirmed closed snapshot
 returns without another mutation. No automatic revision rebasing.
