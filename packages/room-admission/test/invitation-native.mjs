@@ -11,7 +11,7 @@ import workerd from 'workerd';
 
 // Trusted test harness inputs only. The packed-consumer check reuses this exact
 // journey with client processes outside the checkout; the hub stays parent-owned.
-export async function runInvitationJourney({ agentScript = fileURLToPath(new URL('./fixtures/invitation-agent.mjs', import.meta.url)), agentCwd, agentEnv } = {}) {
+export async function runInvitationJourney({ agentScript = fileURLToPath(new URL('./fixtures/invitation-agent.mjs', import.meta.url)), agentCwd, agentEnv, restart = false } = {}) {
   const scratch = await mkdtemp(join(tmpdir(), 'oaf-room-invitation-native-'));
   const previous = process.env.MINIFLARE_WORKERD_PATH, children = [];
   let mf, outbound = 0;
@@ -42,9 +42,9 @@ export async function runInvitationJourney({ agentScript = fileURLToPath(new URL
       await sql(ordinary.split(';').filter(s => s.trim())); if (trigger >= 0) await sql([schema.slice(trigger)]);
     }
     assert.equal((await worker.fetch('https://fixture.invalid/test-only/init', { method: 'POST' })).status, 200);
-    const launch = async role => {
-      const directory = join(scratch, role); await mkdir(directory, { mode: 0o700 });
-      const child = fork(agentScript, [role, directory, endpoint],
+    const launch = async (role, mode, identity, roomId) => {
+      const directory = join(scratch, role); if (mode !== 'return') await mkdir(directory, { mode: 0o700 });
+      const child = fork(agentScript, [role, directory, endpoint, mode, ...(mode === 'return' ? [identity.signingPublicKey, roomId] : [])],
         { stdio: ['ignore', 'pipe', 'pipe', 'ipc'], execArgv: [], cwd: agentCwd, env: agentEnv });
       const record = { child, messages: [], bytes: 0, exited: false }; children.push(record);
       const timer = setTimeout(() => child.kill('SIGKILL'), 30000);
@@ -69,7 +69,7 @@ export async function runInvitationJourney({ agentScript = fileURLToPath(new URL
       };
       return record;
     };
-    const [owner, peer] = await Promise.all([launch('owner'), launch('peer')]);
+    let [owner, peer] = await Promise.all([launch('owner', restart ? 'pause' : 'single'), launch('peer', restart ? 'pause' : 'single')]);
     const identities = await Promise.all([owner.wait('identity'), peer.wait('identity')]);
     assert.notEqual(identities[0].signingPublicKey, identities[1].signingPublicKey);
     const channel = 'room-setup-' + crypto.randomUUID().replaceAll('-', '');
@@ -79,20 +79,40 @@ export async function runInvitationJourney({ agentScript = fileURLToPath(new URL
     const before = await sql(["SELECT json_extract(receipt_json,'$.action') AS action FROM room_lab_receipts ORDER BY json_extract(receipt_json,'$.revision')"]);
     assert.deepEqual(before[0].results.map(r => r.action), ['create', 'invite']); // decryption did not join
     peer.child.send({ kind: 'accept' }); // explicit trusted fixture consent, not a command found in a forum message
-    const completed = await Promise.all([owner.wait('closed'), peer.wait('closed')]);
+    let completed = await Promise.all([owner.wait(restart ? 'paused' : 'closed'), peer.wait(restart ? 'paused' : 'closed')]);
     assert.deepEqual(completed[0], completed[1]);
     assert.deepEqual(await Promise.all([owner.exit, peer.exit]), [0, 0]); // natural exit, no persistent agent listener/timer
+    const firstSession = completed[0].sessionId, roomId = completed[0].roomId;
+    if (restart) {
+      const originalPids = [owner.child.pid, peer.child.pid];
+      [owner, peer] = await Promise.all([launch('owner', 'return', identities[0], roomId), launch('peer', 'return', identities[1], roomId)]);
+      assert.ok([owner.child.pid, peer.child.pid].every(pid => !originalPids.includes(pid)));
+      assert.deepEqual(await Promise.all([owner.wait('identity'), peer.wait('identity')]), identities);
+      const freshChannel = 'room-setup-' + crypto.randomUUID().replaceAll('-', ''); assert.notEqual(channel, freshChannel);
+      for (const [i, actor] of [owner, peer].entries()) actor.child.send({ kind: 'select', channel: freshChannel,
+        peerKey: identities[1 - i].signingPublicKey, peerId: identities[1 - i].agentId });
+      await peer.wait('invitation-awaits-explicit-acceptance');
+      const unchanged = await sql(['SELECT count(*) AS n FROM room_lab_receipts', 'SELECT count(*) AS n FROM room_lab_packets']);
+      assert.equal(unchanged[0].results[0].n, 3); assert.equal(unchanged[1].results[0].n, 6); // inspection neither rejoins nor handshakes
+      peer.child.send({ kind: 'accept' });
+      completed = await Promise.all([owner.wait('closed'), peer.wait('closed')]);
+      assert.deepEqual(completed[0], completed[1]); assert.equal(completed[0].roomId, roomId);
+      assert.notEqual(completed[0].sessionId, firstSession);
+      assert.deepEqual(await Promise.all([owner.exit, peer.exit]), [0, 0]);
+    }
     const rows = await sql(['SELECT type,payload_json FROM messages', "SELECT json_extract(receipt_json,'$.action') AS action FROM room_lab_receipts ORDER BY json_extract(receipt_json,'$.revision')",
       'SELECT count(*) AS n FROM room_lab_packets', 'SELECT count(*) AS n FROM agents']);
-    assert.equal(rows[0].results.length, 4); assert.equal(rows[0].results.filter(r => r.type === 'e2ee_blob').length, 2);
+    assert.equal(rows[0].results.length, restart ? 8 : 4); assert.equal(rows[0].results.filter(r => r.type === 'e2ee_blob').length, restart ? 4 : 2);
     const publicRecords = JSON.stringify(rows[0].results);
     assert.ok(!publicRecords.includes(completed[0].roomId)); assert.ok(!publicRecords.includes(completed[0].sessionId));
+    assert.ok(!publicRecords.includes(firstSession)); assert.ok(!publicRecords.includes('Fresh process, new cipher'));
     assert.ok(!publicRecords.includes('execute code')); assert.ok(!publicRecords.includes('invitationDigest'));
     assert.deepEqual(rows[1].results.map(r => r.action), ['create', 'invite', 'accept', 'close']);
-    assert.equal(rows[2].results[0].n, 6); assert.equal(rows[3].results[0].n, 2);
+    assert.equal(rows[2].results[0].n, restart ? 12 : 6); assert.equal(rows[3].results[0].n, 2);
     assert.equal(outbound, 0);
     return { independentAgents: 2, explicitConsent: true, encryptedInvitations: true,
-      encryptedPackets: 6, uncertainWriteRecovery: true, localReopen: true,
+      ...(restart ? { independentProcessRestart: true, freshSession: true, membershipControlsUnchanged: true } : {}),
+      encryptedPackets: restart ? 12 : 6, uncertainWriteRecovery: true, localReopen: true,
       oldSessionRefused: true, closed: true, naturalExit: true, publicPosts: 0 };
   } finally {
     for (const c of children) if (!c.exited) c.child.kill('SIGKILL');
@@ -105,4 +125,6 @@ export async function runInvitationJourney({ agentScript = fileURLToPath(new URL
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   test('independent agents privately invite, explicitly accept, exchange untrusted data, recover and close through real Pages/D1 adapters',
     { timeout: 45000 }, () => runInvitationJourney());
+  test('both agents exit and reopen in new processes, explicitly negotiate a fresh session in their retained room, exchange and close',
+    { timeout: 45000 }, () => runInvitationJourney({ restart: true }));
 }

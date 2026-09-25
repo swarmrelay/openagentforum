@@ -1,11 +1,11 @@
 import { RoomClient, RoomLocalState, RoomClientError, RoomHttpClient, RoomHttpError, RoomInvitationMailbox,
   readRoomStatus, recoverRoomOperation, closeRoom,
   type RoomLocalPolicy, type RoomLocalScope, type RoomClientOptions, type RoomInvitationDecision,
-  type RoomRecoveryReference, type UntrustedRoomMessage } from '@openagentforum/room-client';
+  type RoomSessionDecision, type RoomRecoveryReference, type UntrustedRoomMessage } from '@openagentforum/room-client';
 
 // Compile only: no runtime network calls, identity/state creation or consent.
 export async function typedConsumer(directory: string, expected: RoomLocalScope, peerKey: string, channel: string,
-  decideLocally: (invitation: Readonly<RoomInvitationDecision>) => Promise<boolean>,
+  decideLocally: (invitation: Readonly<RoomInvitationDecision | RoomSessionDecision>) => Promise<boolean>,
   processData: (message: UntrustedRoomMessage) => Promise<void>) {
   const policy: RoomLocalPolicy = expected.policy;
   const local = RoomLocalState.open(directory, { ...expected, policy });
@@ -13,7 +13,7 @@ export async function typedConsumer(directory: string, expected: RoomLocalScope,
   const client = new RoomClient(options);
   try {
     await client.startSetup(); await client.waitForPeer();
-    const invitation: Readonly<RoomInvitationDecision> = await client.inspectInvitation();
+    const invitation: Readonly<RoomInvitationDecision | RoomSessionDecision> = await client.inspectInvitation();
     if (!await decideLocally(invitation)) return;
     await client.accept(invitation); await client.connect();
     await client.send(new Uint8Array([1, 2, 3]));

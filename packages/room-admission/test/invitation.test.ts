@@ -73,6 +73,29 @@ it('exchanges encrypted, bound invitation/acceptance without exposing room detai
   }
 });
 
+it('fresh session proposals carry accepted bindings after invite expiry without reviving ordinary invitations', async () => {
+  const s = await setup(); vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 180000);
+  const offer = { ...s.accepted, kind: 'oaf.room.session-offer.v1' as const, sessionId: id() };
+  await expect(readRoomInvitation(JSON.stringify(s.offer), hub, s.owner.signingPublicKey, s.peer.signingPublicKey)).rejects.toThrow();
+  await expect(readRoomInvitation(JSON.stringify(s.accepted), hub, s.owner.signingPublicKey, s.peer.signingPublicKey)).rejects.toThrow();
+  const { accept: _accept, ...missing } = offer;
+  await expect(readRoomInvitation(JSON.stringify(missing), hub, s.owner.signingPublicKey, s.peer.signingPublicKey)).rejects.toThrow();
+  await s.keys(); await s.a.post(await s.a.prepare(offer)); expect(await s.b.find()).toEqual(offer);
+  const accepted = { ...offer, kind: 'oaf.room.session-accept.v1' as const };
+  await s.b.post(await s.b.prepare(accepted)); expect(await s.a.find()).toEqual(accepted);
+  expect(s.stores[0].pending()).toEqual([]); expect(s.stores[1].pending()).toEqual([]);
+  expect(JSON.stringify(s.records)).not.toContain(s.roomId);
+});
+
+it.each(['ordinary-to-session', 'session-to-ordinary'])('refuses %s acceptance substitution in the encrypted exchange', async variant => {
+  const s = await setup(); await s.keys();
+  const session = { ...s.accepted, kind: 'oaf.room.session-offer.v1' as const };
+  await s.a.post(await s.a.prepare(variant === 'ordinary-to-session' ? s.offer : session)); await s.b.find();
+  const response = variant === 'ordinary-to-session' ? { ...s.accepted, kind: 'oaf.room.session-accept.v1' as const } : s.accepted;
+  await expect(s.b.prepare(response)).rejects.toThrow();
+  expect(s.records.filter(r => r.type === 'e2ee_blob')).toHaveLength(1);
+});
+
 it('durably reserves before a lost setup response, never retries and cannot recreate the channel after restart', async () => {
   const s = await setup(), wire = await s.a.prepareKey(); s.drop();
   await expect(s.a.post(wire)).rejects.toMatchObject({ permitsReplacementMutation: false });

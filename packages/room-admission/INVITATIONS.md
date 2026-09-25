@@ -54,6 +54,9 @@ Raw handoff objects, always **inside ciphertext**:
 { kind: 'oaf.room.offer.v1', sessionId, create: originalCreateWire, invite: originalInviteWire }
 { kind: 'oaf.room.accept.v1', sessionId, create: originalCreateWire,
   invite: originalInviteWire, accept: originalAcceptWire }
+// Separate explicit session proposals for an already selected accepted room (#321):
+{ kind: 'oaf.room.session-offer.v1', sessionId, create, invite, accept }
+{ kind: 'oaf.room.session-accept.v1', sessionId, create, invite, accept }
 ```
 
 The reader preserves canonical RFC 0003 wires and verifies signatures, derived room
@@ -63,6 +66,15 @@ digest; it uses the existing RFC 0005 key-binding verifier. Historical signature
 are **not** evidence of committed controls or current membership. When deriving an
 invitation digest, use the verifier's `proofDigest`; never hash the full signed wire
 as if it were the unsigned action. No incoming proof becomes an automatic mutation.
+
+Session proposals require all three historically valid accepted bindings; only
+those distinct kinds may outlive the original invitation expiry. Fresh setup-key,
+outer-envelope and mailbox expiry still apply. A response must repeat the exact
+session, controls **and proposal kind**; no ordinary/session downgrade is accepted.
+The [combined client](CLIENT_WORKFLOW.md) additionally requires an independently
+selected existing room, exact local retained bindings, renewed explicit consent
+and current member-only status. The low-level mailbox alone never proves current
+membership or commits a control action.
 
 ## Encryption and metadata
 
@@ -113,7 +125,8 @@ forward-secrecy audit, zeroization or delivery guarantee is claimed.
   evidence that earlier work failed.
 - 60-second monotonic mailbox lifetime; signed key expiry at most 60 seconds;
   exclusive expiry checked after awaits. Both key bindings and invitation expiry
-  further limit sealed messages. No cipher restore or automatic reconnect.
+  further limit ordinary invitation messages. Accepted-room session proposals are
+  bounded by fresh setup expiry, not their historical invite. No cipher restore or automatic reconnect.
 - 32 KiB envelope, 14 KiB plaintext, 256 KiB HTTP response, fewer than 100 history
   records per GET. Full pages fail closed, not truncated-then-filtered. One operation
   at a time, 4,096 body-read iterations, fatal UTF-8, five-second header/body deadline,
@@ -140,9 +153,10 @@ reopen local state/recover, refuse old-session reuse and close. Both exit natura
 Stored public rows are checked for absent room/session IDs and plaintext.
 
 This is not an independent security audit or published one-command journey. The
-HTTPS-to-loopback mapping is fixture code, not TLS deployment evidence. The new
-journey reopens local state within its owner process; existing local-state tests
-separately cover killed-process persistence, and the earlier native session test
-covers fresh Noise after local/hub restart. Resumed invitation/session UX,
-retention/restore/ingress policy, whole-flow review, CLI/packaging and approved live
-verification remain work. #162/#168 stay open. No public availability flag changes.
+HTTPS-to-loopback mapping is fixture code, not TLS deployment evidence. The
+original journey reopens local state within its creator process; the #321 variant
+exits both clients and relaunches them to explicitly negotiate a fresh session in
+the same room. Existing local-state tests separately cover killed-process persistence,
+and the earlier native session test covers fresh Noise after local/hub restart.
+Remaining work is tracked in the [shared #162 release checklist](CLIENT_WORKFLOW.md#release-checklist-162).
+#162/#168 stay open. No public availability flag changes.
