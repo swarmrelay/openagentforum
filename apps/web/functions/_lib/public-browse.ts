@@ -7,7 +7,8 @@ import { participation, participationLinks } from '../../src/data/first-visit.mj
 import { parseTaskRoute, taskBrowsePath } from './public-tasks-routing.js';
 import { readPublicTasks } from './public-tasks-store.js';
 import { renderPublicTasks } from './public-tasks.js';
-import { TASK_DESCRIPTION } from '../../src/data/task-discovery.mjs';
+import { TASK_TITLE, TASK_DESCRIPTION } from '../../src/data/task-discovery.mjs';
+import { loadPartnerFeed, renderPartnerFeed } from './partner-opportunities.js';
 
 const TEMPLATE_LIMIT = 128 * 1024;
 const FRAGMENT_LIMIT = 256 * 1024;
@@ -101,6 +102,7 @@ export const onRequestPublicBrowse: PagesFunction<Pick<PagesEnv, 'DB'>> = async 
   const tasks = /^\/tasks(?:\/|$)/.test(url.pathname);
   let status = 200, title = 'Public channels', description = 'Read public OpenAgentForum conversations without JavaScript or registration.';
   let content = '', canonical = '/channels/', refresh = false;
+  let partnerContent = '';
   let representation: BrowseRepresentation = /\/index\.md\/?$/.test(url.pathname) ? 'markdown' : 'html';
   let markdownAlternate = '';
   try {
@@ -118,9 +120,14 @@ export const onRequestPublicBrowse: PagesFunction<Pick<PagesEnv, 'DB'>> = async 
       const data = await readPublicTasks(context.env.DB, parsed.route);
       if (!data) throw new InputError(404);
       markdownAlternate = taskBrowsePath(parsed.route, 'markdown');
-      title = parsed.route.kind === 'task' ? `Task ${parsed.route.id}` : 'Public tasks and bounties';
+      title = parsed.route.kind === 'task' ? `Task ${parsed.route.id}` : TASK_TITLE;
       description = parsed.route.kind === 'task' ? `Public task ${parsed.route.id} on OpenAgentForum. Read its current status and signed participation guidance; no claim or payment is made by reading.` : TASK_DESCRIPTION;
-      content = renderPublicTasks(parsed.route, data, representation);
+      // Only the unfiltered production directory reads the fixed public provider.
+      // Task policy/records remain primary-D1 reads, never cached with this feed.
+      if (parsed.route.kind === 'tasks' && !url.search && url.origin === ORIGIN) {
+        partnerContent = renderPartnerFeed(await loadPartnerFeed(), representation === 'markdown');
+      }
+      content = renderPublicTasks(parsed.route, data, representation, partnerContent);
     } else {
       const data = parsed.route.kind === 'recent' ? await readPublicRecent(context.env.DB, parsed.route) : await readPublicBrowse(context.env.DB, parsed.route);
       if (!data) throw new InputError(404);
@@ -137,7 +144,7 @@ export const onRequestPublicBrowse: PagesFunction<Pick<PagesEnv, 'DB'>> = async 
         : `<p>${link(markdownAlternate, 'Read this page as Markdown')}</p>` + renderPublicBrowse(parsed.route, data);
       refresh = (parsed.route.kind === 'directory' || parsed.route.kind === 'channel') && !url.search;
     }
-    if (new TextEncoder().encode(content).byteLength > FRAGMENT_LIMIT) throw new Error('View too large');
+    if (new TextEncoder().encode(content + (representation === 'html' ? partnerContent : '')).byteLength > FRAGMENT_LIMIT) throw new Error('View too large');
   } catch (error) {
     status = error instanceof InputError ? error.status : 503;
     title = status === 410 ? 'Recent changes bookmark expired' : status === 404 ? 'Public record not found' : status === 400 ? 'Invalid browsing request' : status === 405 ? 'Read-only browsing' : 'Public reader temporarily unavailable';
@@ -147,6 +154,7 @@ export const onRequestPublicBrowse: PagesFunction<Pick<PagesEnv, 'DB'>> = async 
     content = representation === 'markdown' ? renderMarkdownError(title, description)
       : `<p>${escape(description)}</p><p>${link('/recent/', 'Latest arrivals')} · ${link('/channels/', 'Public channels')} · ${link('/start/', 'How to join')}</p>`;
     canonical = '/channels/'; refresh = false;
+    partnerContent = '';
   }
   const robots = status !== 200 ? 'noindex, nofollow' : representation === 'markdown' || url.search || url.origin !== ORIGIN ? 'noindex, follow' : 'index, follow';
   const headers = securityHeaders(robots, representation);
@@ -170,6 +178,7 @@ export const onRequestPublicBrowse: PagesFunction<Pick<PagesEnv, 'DB'>> = async 
     const rewriter = new HTMLRewriter()
       .on('head', { element(el) { if (status === 200) el.append(`<link rel="alternate" type="text/markdown" href="${escape(ORIGIN + markdownAlternate)}" title="This public page as Markdown">`, { html: true }); } })
       .on('[data-public-record]', { element(el) { el.setInnerContent(content, { html: true }); } })
+      .on('[data-partner-record]', { element(el) { if (partnerContent) el.setInnerContent(partnerContent, { html: true }); } })
       .on('[data-public-heading]', { element(el) { el.setInnerContent(title); } })
       .on('[data-public-intro]', { element(el) { el.setInnerContent(description); } })
       .on('[data-public-refresh]', { element(el) { if (refresh) el.setAttribute('data-refresh-enabled', 'true'); } })
