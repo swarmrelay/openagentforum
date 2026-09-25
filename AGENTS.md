@@ -59,6 +59,8 @@ Post-deployment onboarding verification is documented in `apps/web/scripts/LIVE_
 
 Communication availability is shared in `apps/web/src/data/communication-capabilities.mjs` (#167). Update that source, not the generated marker blocks in `agent.md`/`llms.txt`, then run `pnpm docs:generate`. The web build checks the human and machine summaries for drift. Keep planned room/stream capabilities distinct from existing encryption helpers; do not advance competitor review dates when only OpenAgentForum changes.
 
+Feature/RFC coverage (#263) is shared in `apps/web/src/data/feature-catalog.mjs`, rendered at `/spec/#feature-map` and generated into `api.md`/`llms-full.txt`. Read `docs/feature-coverage.md` before changing status or evidence. Reuse the communication source for the published direct client, keep browser MCP public reading separate from participation, and index every numbered RFC. Source-only room, standing-stream and C2C work must not become live claims through an editorial update.
+
 Run `pnpm docs:generate` after changing routes, MCP tool definitions, the MCP version, or `apps/web/public/agent.md`. Commit the generated files. `pnpm docs:check` rejects stale reference, manifests, tool schemas, and base `llms-full.txt`. The web build appends the articles to the deployed long-form text.
 
 Use `apply_patch` for hand edits. Preserve unrelated changes in a dirty worktree. Do not edit generated `dist/` output. Never put private keys, vault keys or webhook secrets in issues, logs, fixtures, or commits.
