@@ -13,7 +13,7 @@ function fixture() {
     + `<pre><code>${escape(taskSigningProof)}</code></pre><pre><code>${escape(taskClaimExample)}</code></pre>`
     + taskSigningActions.map(a => `<div data-task-action="${a.action}">${a.label}<p>${escape(a.detail)}</p>${[a.route, a.payload, a.body].map(c => `<code>${escape(c)}</code>`).join('')}</div>`).join('')
     + `<a href="${taskSigningReference}">Reference</a><a href="/payments/">Payments</a></section>`;
-  return new Map([['tasks/index.html', html], ['agent.md', renderTaskSigningMarkdown()], ['llms-full.txt', renderTaskSigningMarkdown()]]);
+  return new Map([['task-signing/index.html', html], ['agent.md', renderTaskSigningMarkdown()], ['llms-full.txt', renderTaskSigningMarkdown()]]);
 }
 
 test('shared task guide matches the signed protocol format for all three actions', async () => {
@@ -37,28 +37,28 @@ test('task guidance build gate accepts matching rendered and machine guidance', 
 
 test('task guidance gate detects missing sections, boundaries and reference links', () => {
   for (const value of ['id="task-signing"', taskSigningParagraphs[0], taskSigningParagraphs[1], taskSigningPaymentBoundary, `href="${taskSigningReference}"`]) {
-    const files = fixture(); files.set('tasks/index.html', files.get('tasks/index.html').replace(value, 'removed'));
-    assert.ok(validateTaskSigning(files).some(e => e.startsWith('tasks/index.html:')), value);
+    const files = fixture(); files.set('task-signing/index.html', files.get('task-signing/index.html').replace(value, 'removed'));
+    assert.ok(validateTaskSigning(files).some(e => e.startsWith('task-signing/index.html:')), value);
   }
 });
 
 test('task guidance gate checks every action payload, route and body', () => {
   for (const action of taskSigningActions) for (const value of [action.route, action.payload, action.body]) {
-    const files = fixture(); files.set('tasks/index.html', files.get('tasks/index.html').replace(`<code>${escape(value)}</code>`, '<code>wrong contract</code>'));
+    const files = fixture(); files.set('task-signing/index.html', files.get('task-signing/index.html').replace(`<code>${escape(value)}</code>`, '<code>wrong contract</code>'));
     assert.ok(validateTaskSigning(files).some(e => e.includes('task action contract differs')), `${action.action}: ${value}`);
   }
 });
 
 test('task proof and executable excerpt must survive HTML escaping unchanged', () => {
   for (const value of [taskSigningProof, taskClaimExample]) {
-    const files = fixture(); files.set('tasks/index.html', files.get('tasks/index.html').replace(escape(value), 'different bytes'));
+    const files = fixture(); files.set('task-signing/index.html', files.get('task-signing/index.html').replace(escape(value), 'different bytes'));
     assert.ok(validateTaskSigning(files).some(e => e.includes('proof or claim example differs')));
   }
 });
 
 test('task guide cannot be satisfied by hidden or script-only content', () => {
   for (const wrap of [html => `<script>${html}</script>`, html => `<template>${html}</template>`, html => `<div hidden>${html}</div>`, html => `<div aria-hidden="true">${html}</div>`]) {
-    const files = fixture(); files.set('tasks/index.html', wrap(files.get('tasks/index.html')));
+    const files = fixture(); files.set('task-signing/index.html', wrap(files.get('task-signing/index.html')));
     assert.ok(validateTaskSigning(files).some(e => e.includes('expected one task-signing section')));
   }
 });
@@ -71,7 +71,7 @@ test('machine guidance must appear exactly once in both agent and long-form text
 });
 
 test('stale instructions fail even when correct task guidance is also present', () => {
-  for (const file of ['tasks/index.html', 'agent.md', 'llms-full.txt']) for (const stale of ['optionally signing', 'signature is optional', 'claim|taskId|agentId|timestamp']) {
+  for (const file of ['task-signing/index.html', 'agent.md', 'llms-full.txt']) for (const stale of ['optionally signing', 'signature is optional', 'claim|taskId|agentId|timestamp']) {
     const files = fixture(); files.set(file, files.get(file) + `<p>${stale}</p>`);
     assert.ok(validateTaskSigning(files).some(e => e.startsWith(`${file}: obsolete`)));
   }

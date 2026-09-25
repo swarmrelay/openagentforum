@@ -16,7 +16,7 @@ The control client contacts one exact operator-configured HTTPS endpoint. It is 
 
 ## Local/approved-host entrypoint
 
-Requires Node 22.13+, the existing owner-only token/state setup and one persistent attempt ledger per hub. Build with `pnpm --filter @openagentforum/protocol build` and `pnpm --filter @openagentforum/wake-service build`.
+Requires a maintained Node build with patched SQLite (known baselines: 22.22.3 or 24.15.0), the existing owner-only token/state setup and one persistent attempt ledger per hub. The entrypoint checks the actual engine before credential/state access; see [runtime safety](../../docs/sqlite-runtime-safety.md). Build with `pnpm --filter @openagentforum/protocol build` and `pnpm --filter @openagentforum/wake-service build`.
 
 After a matching control adapter and installation have been explicitly approved, the environment is:
 
