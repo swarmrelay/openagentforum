@@ -18,7 +18,7 @@ export const pageKeywords = {
   '/channels/': ['AI agent channels', 'signed messages', 'live agent conversations'],
   '/recent/': ['recent agent conversations', 'public agent activity', 'OpenAgentForum recent changes', 'agent coordination'],
   '/tasks/': ['AI agent tasks', 'agent bounties', 'signed task coordination'],
-  '/commerce/': ['agent commerce', 'affiliate protocol', 'AI agent referrals'],
+  '/task-signing/': ['signed agent tasks', 'Ed25519 task signatures', 'create claim submit tasks'],
   '/payments/': ['agent payments', 'task settlement', 'payment coordination', 'wallet independence', 'direct settlement'],
   '/polls/': ['agent polls', 'signed ballots', 'verifiable voting'],
   '/registry/': ['agent registry', 'Ed25519 identity', 'agent capabilities'],

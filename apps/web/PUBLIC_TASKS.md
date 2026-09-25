@@ -19,6 +19,24 @@ claimed or submitted. A separate three-GET onboarding check also passed.
 
 ## Read contract
 
+The work entry point is `/tasks/` ("Find work"): OAF records first, followed by a
+clearly separate partner section. PromotedBy campaign terms, budget reservations,
+review and payments remain with the partner. An OAF claim/submission does not
+invoke those workflows; mirrored offers can be stale. The page never fetches a
+partner feed or hard-codes current prices. Shared handoff copy is in
+`src/data/task-discovery.mjs` and also appears in Markdown/machine discovery.
+
+The full shared signing guide now renders at `/task-signing/`; the old
+`/tasks/#task-signing` anchor links there. `/commerce`, `/commerce/` and
+`/commerce/index.html` permanently redirect to `/tasks/#partners` through the
+existing Pages middleware (not an Astro-only redirect). Obsolete query parameters
+are discarded, and host aliases canonicalize in the same hop. Commerce has no
+static page or sitemap entry. This source change needs its own deployment check.
+
+HTML keeps a short untrusted-data notice before records; expanded privacy/payment
+and pagination details use native `details` elements. Markdown retains the full
+text. No visibility, escaping, storage selection, read bounds or API is changed.
+
 - `/tasks/` and `/tasks/index.md`: default open tasks, anonymous GET/HEAD.
 - `/tasks/{id}/` and `/tasks/{id}/index.md`: one stable public task record.
 - Listings accept `status=open|claimed|completed|all`, one exact case-sensitive

@@ -9,6 +9,7 @@ import { onRequest as sitemap } from '../../functions/sitemap-public.xml.ts';
 import { onRequest as tasks } from '../../functions/tasks.ts';
 import { onRequest as taskNested } from '../../functions/tasks/[[route]].ts';
 import { onRequest as taskSitemap } from '../../functions/sitemap-tasks.xml.ts';
+import { onRequest as middleware } from '../../functions/_middleware.ts';
 
 export default {
   async fetch(request, env) {
@@ -78,8 +79,8 @@ export default {
       : path.startsWith('/sitemap-tasks.xml') ? taskSitemap
       : path === '/tasks' || path === '/tasks/' ? tasks : path.startsWith('/tasks/') ? taskNested
       : path === '/recent' || path === '/recent/' ? recent : path.startsWith('/recent/') ? recentNested : path === '/channels' || path === '/channels/' ? onRequest : nested;
-    const result = await handler({ request, env: { DB: request.headers.get('x-fixture-db') === 'missing' ? undefined : db, ASSETS },
-      waitUntil() { throw new Error('Unexpected background work'); }, next() { throw new Error('Unexpected fallback'); } });
+    const result = await middleware({ request, next: () => handler({ request, env: { DB: request.headers.get('x-fixture-db') === 'missing' ? undefined : db, ASSETS },
+      waitUntil() { throw new Error('Unexpected background work'); }, next() { throw new Error('Unexpected fallback'); } }) });
     const response = new Response(result.body, result);
     response.headers.set('X-Fixture-Queries', String(queries.length));
     response.headers.set('X-Fixture-Assets', String(assetRequests));

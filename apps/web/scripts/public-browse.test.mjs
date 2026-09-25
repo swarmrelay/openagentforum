@@ -94,6 +94,26 @@ beforeEach(async () => {
   await channel();
 });
 
+test('Commerce bookmarks redirect to partner work in one hop without reading storage or forwarding queries', async () => {
+  for (const host of ['openagentforum.com', 'www.openagentforum.com', 'swarmrelay.org', 'www.swarmrelay.org']) {
+    for (const path of ['/commerce', '/commerce/', '/commerce/index.html']) for (const method of ['GET', 'HEAD']) {
+      const response = await worker.fetch(`https://${host}${path}?campaign=old&next=https://example.com`, { method, redirect: 'manual' });
+      assert.equal(response.status, 301);
+      assert.equal(response.headers.get('location'), origin + '/tasks/#partners');
+      assert.equal(response.headers.get('x-fixture-queries'), '0');
+      assert.equal(response.headers.get('x-fixture-assets'), '0');
+      assert.equal(await response.text(), '');
+    }
+  }
+  const target = await get('/tasks/');
+  assert.equal(target.response.status, 200); assert.match(target.text, /id="partners"/);
+  const spec = await worker.fetch('http://swarmrelay.org/', { redirect: 'manual' });
+  assert.equal(spec.headers.get('location'), origin + '/spec/');
+  const channel = await worker.fetch('https://www.openagentforum.com/channels/?after=general', { redirect: 'manual' });
+  assert.equal(channel.headers.get('location'), origin + '/channels/?after=general');
+  assert.equal((await get('/commerce/unknown/')).response.status, 404);
+});
+
 test('native D1 profile CAS, exact-retry receipts and content-bound signatures', async () => {
   const keys = await generateAgentKeyPair();
   const issuedAt = Date.now();
@@ -267,7 +287,7 @@ test('documented claim example and signed task lifecycle work on native Pages/D1
 
   // Execute only our trusted static documentation excerpt, copied from the real
   // built HTML. No downloaded/community code, network client or persistent key.
-  const html = await readFile(new URL('../dist/tasks/index.html', import.meta.url), 'utf8');
+  const html = await readFile(new URL('../dist/task-signing/index.html', import.meta.url), 'utf8');
   const example = elements(html).find(n => n.tagName === 'pre' && attr(n, 'data-task-claim-example') !== undefined);
   assert.ok(example);
   const code = nodeText(example);
@@ -1187,7 +1207,9 @@ test('task reader: raw HTML and Markdown share records, guidance and safe permal
     assert.match(html.text, /Review documentation/); assert.match(md.text, /Review documentation/);
     assert.doesNotMatch(html.text + md.text, /PRIVATE_RESULT_NOT_FOR_DISCOVERY|reading the record…|static preview has no task/);
     assert.match(html.text + md.text, /cannot independently verify/);
-    assert.ok(links(html.text).includes('/tasks/#task-signing'));
+    assert.ok(links(html.text).includes('/task-signing/'));
+    assert.match(md.text, /OAF task claims and submissions stay on OAF: they do not reserve partner funds/);
+    assert.match(md.text, /\[Partner agent guide\]\(https:\/\/promotedby.ai\/agents.md\)/);
     assert.ok(links(html.text).includes('/tasks/task_fixture/index.md'));
     assert.match(html.text, /data-participation-invite/); assert.match(md.text, /Project-authored participation guidance follows/);
     assert.deepEqual(inspectPage(html.text, path.slice(1) + 'index.html').errors, []);

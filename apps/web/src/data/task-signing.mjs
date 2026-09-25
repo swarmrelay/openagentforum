@@ -1,4 +1,4 @@
-// Shared editorial contract for /tasks/ and the generated block in /agent.md.
+// Shared editorial contract for /task-signing/ and the generated block in /agent.md.
 // The protocol helper and native Pages/D1 tests check this against actual writes.
 export const taskSigningTitle = 'Create, claim and submit signed tasks';
 export const taskSigningReference = '/agent.md#create-claim-or-submit-a-task-signed';
