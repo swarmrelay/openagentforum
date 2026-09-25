@@ -13,9 +13,11 @@ import { generateAgentKeyPair, signEnvelope, canonicalizeJson, signTaskAction, s
 import { inspectPage } from './check-seo.mjs';
 import { taskClaimExample } from '../src/data/task-signing.mjs';
 import { syncPromotedByTasks, runPartnerCli } from '../../../scripts/sync-promotedby-tasks.mjs';
+import { partnerFixture } from './fixtures/partner-feed.mjs';
 
 let mf, worker, scratch, author, runtimeOptions;
 let outbound = 0;
+let partnerRequests = [], partnerReply = () => Response.json(partnerFixture());
 const previousRuntime = process.env.MINIFLARE_WORKERD_PATH;
 const origin = 'https://openagentforum.com';
 const nodes = node => [node, ...(node.childNodes ?? []).flatMap(nodes)];
@@ -47,7 +49,7 @@ async function message(position, { channel: name = 'general', id = `${name}-${po
 async function get(path, options = {}) {
   const response = await worker.fetch(origin + path, { ...options, signal: AbortSignal.timeout(10_000) });
   const text = await response.text();
-  assert.equal(outbound, 0, 'public reader must never make outbound requests');
+  assert.equal(outbound, 0, 'public reader must never make non-allowlisted outbound requests');
   assert.ok(Buffer.byteLength(text) < (path.startsWith('/sitemap-') ? 4 * 1024 * 1024 : 512 * 1024));
   return { response, text };
 }
@@ -67,7 +69,13 @@ before(async () => {
       workersDev: false, previewUrls: false, domains: [], triggers: [],
       env: { DB: { type: 'd1', id: 'public-browse-local', dev: { remote: false } }, SHELL_HTML: { type: 'text', value: shell }, TASK_SHELL_HTML: { type: 'text', value: taskShell } },
       manifest: { mainModule: 'index.mjs', modules: { 'index.mjs': { type: 'esm', contents: bundle.outputFiles[0].text } } },
-    }, dev: { unsafeRegisterWorker: false, outboundService: { type: 'fetcher', handler() { outbound++; throw new Error('No outbound requests allowed'); } } } }],
+    }, dev: { unsafeRegisterWorker: false, outboundService: { type: 'fetcher', handler(request) {
+      if (request.url !== 'https://promotedby.ai/api/v1/opportunities' || request.method !== 'GET') {
+        outbound++; throw new Error('Non-allowlisted outbound request');
+      }
+      partnerRequests.push({ url: request.url, headers: Object.fromEntries(request.headers) });
+      return partnerReply(); // Local fixture only; never contact the provider.
+    } } } }],
   };
   mf = new Miniflare(runtimeOptions);
   await mf.ready; worker = await mf.getWorker('public-browse-test');
@@ -88,10 +96,53 @@ after(async () => {
   else process.env.MINIFLARE_WORKERD_PATH = previousRuntime;
 });
 beforeEach(async () => {
+  partnerRequests = []; partnerReply = () => Response.json(partnerFixture());
   await sql(['DELETE FROM tasks', 'DELETE FROM messages', 'DELETE FROM channels', 'DELETE FROM agents', 'DELETE FROM public_message_arrivals',
     'UPDATE public_recent_state SET high_seq=0', "DELETE FROM sqlite_sequence WHERE name='public_message_arrivals'"].map(statement => ({ sql: statement })));
   await sql([{ sql: 'INSERT INTO agents (agent_id,name,public_key,registered_at,last_seen_at) VALUES (?,?,?,?,?)', args: [author.agentId, 'Fixture author', author.signingPublicKey, 1, 1] }]);
   await channel();
+});
+
+test('partner feed is anonymous, isolated, escaped and shared across native HTML/Markdown', async () => {
+  const feed = partnerFixture();
+  feed.opportunities[0].name = '<script>alert(1)</script>';
+  feed.opportunities[0].tagline = '``` [click](https://evil.invalid) \u202e';
+  partnerReply = () => Response.json(feed);
+  for (const path of ['/tasks/', '/tasks/index.md']) {
+    const r = await get(path, { headers: { authorization: 'PRIVATE_SENTINEL', cookie: 'PRIVATE_COOKIE', 'x-custom': 'PRIVATE_HEADER' } });
+    assert.equal(r.response.status, 200); assert.match(r.text, /4 campaigns in the provider feed/);
+    const rendered = path.endsWith('.md') ? markdownHtml(r.text) : r.text;
+    assert.doesNotMatch(rendered, /<script>alert\(1\)<\/script>|href="https:\/\/evil.invalid/);
+    for (const item of feed.opportunities) assert.ok(links(rendered).includes(`https://promotedby.ai/opportunities/${item.slug}`));
+    assert.ok(!r.text.includes('127.0.0.1')); assert.match(r.text, /USD 50.00/);
+    assert.equal(r.response.headers.get('cache-control'), 'no-store, no-transform');
+  }
+  assert.equal(partnerRequests.length, 2);
+  for (const request of partnerRequests) {
+    assert.equal(request.headers.accept, 'application/json');
+    assert.ok(!JSON.stringify(request.headers).includes('PRIVATE_'));
+  }
+  partnerReply = () => new Response('PRIVATE_UPSTREAM_FAILURE', { status: 503 });
+  const unavailable = await get('/tasks/');
+  assert.equal(unavailable.response.status, 200); assert.match(unavailable.text, /temporarily unavailable here/);
+  assert.doesNotMatch(unavailable.text, /PRIVATE_UPSTREAM_FAILURE|data-partner-campaign=/);
+  partnerReply = () => new Response(null, { status: 302, headers: { location: 'http://127.0.0.1/never-fetch' } });
+  const redirected = await get('/tasks/');
+  assert.equal(redirected.response.status, 200); assert.match(redirected.text, /temporarily unavailable here/);
+  assert.equal(partnerRequests.length, 4, 'one attempt per read, never follow a redirect');
+});
+
+test('partner discovery never fetches on filtered, invalid, preview, permalink or non-task reads', async () => {
+  await task('bounty_promotedby_cmp_seed_oaf');
+  for (const path of ['/tasks/?status=all', '/tasks/?capability=article', '/tasks/?bad=input', '/tasks/bounty_promotedby_cmp_seed_oaf/', '/channels/', '/recent/', '/sitemap-tasks.xml']) await get(path);
+  await worker.fetch('https://preview.invalid/tasks/');
+  await get('/tasks/', { method: 'POST' });
+  assert.equal(partnerRequests.length, 0);
+  const historical = await get('/tasks/bounty_promotedby_cmp_seed_oaf/');
+  assert.match(historical.text, /Historical campaign snapshot, not a separate current opportunity/);
+  assert.match((await get('/tasks/')).text, /Show the original imported record/);
+  const head = await get('/tasks/', { method: 'HEAD' });
+  assert.equal(head.response.status, 200); assert.equal(head.text, '');
 });
 
 test('Commerce bookmarks redirect to partner work in one hop without reading storage or forwarding queries', async () => {

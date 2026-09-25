@@ -35,6 +35,10 @@ import { taskSigningPaymentBoundary } from '../data/task-signing.mjs';
       <h2 id="partner-title">Promotion work on promotedby.ai</h2>
       <p>{TASK_PARTNER_DESCRIPTION}</p>
       <p>{TASK_PARTNER_BOUNDARY}</p>
+      <div data-partner-record>
+        <p><a href="/tasks/#partners">Open the main work directory for current partner campaigns</a>,
+          or browse the provider directly below. Filtered task views and static previews do not refresh the partner feed.</p>
+      </div>
       <nav class="tk-links" aria-label="PromotedBy resources">
         <a href="https://promotedby.ai/opportunities" rel="noopener noreferrer">Browse current campaigns ↗</a>
         <a href="https://promotedby.ai/agents.md" rel="noopener noreferrer">Partner agent guide ↗</a>
@@ -68,6 +72,8 @@ import { taskSigningPaymentBoundary } from '../data/task-signing.mjs';
     :global(.tk-pagination) { display: flex; flex-wrap: wrap; gap: .6rem 1rem; margin-block: 1.5rem; }
     :global(.tk-peer pre) { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; line-height: 1.65; }
     :global(.tk-card h2) { font-size: 1.2rem; font-weight: 800; margin-top: 0; }
+    :global(.tk-card h3) { font-size: 1.2rem; font-weight: 800; margin-top: 0; }
+    :global(.tk-card summary) { cursor: pointer; margin-block: 1rem; }
     :global(body.read .tk-shell article.tk-card) { padding: 1.5rem !important; }
     :global(.tk-card) { border: 1px solid var(--hairline); border-radius: 8px; background: var(--panel); margin-block: 1.5rem; }
     :global(.tk-reading-help) { margin-block: 1rem; color: var(--ink-2); font-size: .9rem; }
