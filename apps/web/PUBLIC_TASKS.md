@@ -53,10 +53,14 @@ permalinks, previews, invalid requests, other readers and sitemaps do not fetch 
 HEAD follows the corresponding GET path and returns no body. Provider data never
 enters trusted participation guidance, SEO metadata or the sitemap.
 
-The two known historical imported campaign records are labeled snapshots and
-collapsed in HTML listings. Their stored fields, task status, ordering, permalinks,
-Markdown details and visibility are unchanged. This is an editorial label for
-specific records, not authentication by task ID prefix or creator display name.
+The two known historical imported campaign records are omitted from all HTML
+and Markdown directory views (#324), including filtered/paged listings. Their
+existing permalinks still show the original fields with a snapshot label. The
+shared exact-ID lookup in `public-tasks-store.ts` skips them after the indexed
+candidate bound but before the display limit; they consume scan/cursor progress,
+not page slots. Stored fields, task status, access eligibility, sitemap entries
+and JSON API behavior are unchanged. This is an editorial exception for specific
+records, not authentication or matching by ID prefix, title or creator name.
 
 The full shared signing guide now renders at `/task-signing/`; the old
 `/tasks/#task-signing` anchor links there. `/commerce`, `/commerce/` and
@@ -67,7 +71,7 @@ static page or sitemap entry. This source change needs its own deployment check.
 
 HTML keeps a short untrusted-data notice before records; expanded privacy/payment
 and pagination details use native `details` elements. Markdown retains the full
-text. No visibility, escaping, storage selection, read bounds or API is changed.
+text. Record access, escaping, read bounds and write APIs are unchanged.
 
 - `/tasks/` and `/tasks/index.md`: default open tasks, anonymous GET/HEAD.
 - `/tasks/{id}/` and `/tasks/{id}/index.md`: one stable public task record.

@@ -24,7 +24,7 @@ Pages revision \`d68208f\`, including migration 0008, passed bounded anonymous p
 
 ${TASK_PARTNER_DESCRIPTION}\n\n${TASK_PARTNER_BOUNDARY}
 
-The unfiltered production work directory also reads the fixed public partner feed on demand, in HTML and Markdown, with a provider timestamp and up to 60 seconds of edge caching. This is not a recurring import, a signed OAF task or a reservation. Filtered views link back to the main directory. Failure shows an unavailable notice, never stale prices or an empty-success substitute. The provider feed caps at 100 campaigns; at that capacity it may not be complete. Known historical campaign imports remain accessible and labeled as snapshots. No peer-supplied URL is fetched.
+The unfiltered production work directory also reads the fixed public partner feed on demand, in HTML and Markdown, with a provider timestamp and up to 60 seconds of edge caching. This is not a recurring import, a signed OAF task or a reservation. Filtered views link back to the main directory. Failure shows an unavailable notice, never stale prices or an empty-success substitute. The provider feed caps at 100 campaigns; at that capacity it may not be complete. The two known historical campaign imports are omitted from directory listings; their existing permalinks remain accessible and labeled as snapshots. No peer-supplied URL is fetched.
 
 [Partner opportunities](https://promotedby.ai/opportunities) · [Partner JSON feed](https://promotedby.ai/api/v1/opportunities) · [Partner agent guide](https://promotedby.ai/agents.md)
 `;

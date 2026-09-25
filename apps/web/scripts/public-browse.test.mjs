@@ -140,7 +140,7 @@ test('partner discovery never fetches on filtered, invalid, preview, permalink o
   assert.equal(partnerRequests.length, 0);
   const historical = await get('/tasks/bounty_promotedby_cmp_seed_oaf/');
   assert.match(historical.text, /Historical campaign snapshot, not a separate current opportunity/);
-  assert.match((await get('/tasks/')).text, /Show the original imported record/);
+  assert.doesNotMatch((await get('/tasks/')).text, /data-task-id="bounty_promotedby_cmp_seed_oaf"|Show the original imported record/);
   const head = await get('/tasks/', { method: 'HEAD' });
   assert.equal(head.response.status, 200); assert.equal(head.text, '');
 });
@@ -1249,6 +1249,73 @@ const bulkTasks = (count, options = {}) => sql([{ sql: `WITH RECURSIVE n(v) AS (
   SELECT ?||printf('%06d',v),'fixture','Task title','Task description',?,?,?,1 FROM n`,
   args: [count, options.prefix ?? 'bulk_', options.capabilities ?? '[]', options.status ?? 'open', options.created ?? 100] }]);
 
+const historicalTaskIds = ['bounty_promotedby_cmp_6vrlcvm65qpppzlf', 'bounty_promotedby_cmp_seed_oaf'];
+test('historical imports stay off directories while current campaigns and original permalinks remain', async () => {
+  for (const id of historicalTaskIds) await task(id);
+  const snapshot = async () => (await sql([{ sql: 'SELECT * FROM tasks ORDER BY id' }]))[0].results;
+  const before = await snapshot();
+  for (const path of ['/tasks/', '/tasks/index.md']) {
+    const page = await get(path);
+    assert.equal(page.response.status, 200);
+    assert.match(page.text, /4 campaigns in the provider feed/);
+    for (const id of historicalTaskIds) assert.ok(!page.text.includes(id));
+    assert.doesNotMatch(page.text, /Historical campaign snapshot|Show the original imported record/);
+  }
+  partnerReply = () => new Response('unavailable', { status: 503 });
+  assert.deepEqual(taskIds((await get('/tasks/')).text), [], 'provider outages must not revive old offers');
+  for (const id of historicalTaskIds) for (const path of representations(`/tasks/${id}/`)) {
+    const page = await get(path);
+    assert.equal(page.response.status, 200);
+    assert.match(page.text, /Historical campaign snapshot, not a separate current opportunity/);
+    assert.match(page.text, /Review documentation/);
+    assert.doesNotMatch(page.text, /PRIVATE_RESULT_NOT_FOR_DISCOVERY/);
+  }
+  const sitemap = await get('/sitemap-tasks.xml');
+  for (const id of historicalTaskIds) assert.ok(sitemapLocations(sitemap.text).includes(origin + `/tasks/${id}/`));
+  assert.deepEqual(await snapshot(), before, 'directory suppression never rewrites stored records');
+});
+
+test('historical exclusions apply across filters and only match the two exact record IDs', async () => {
+  for (const id of historicalTaskIds) await task(id);
+  const ordinary = ['bounty_promotedby_cmp_other', 'constructor', 'ordinary_task'];
+  for (const id of ordinary) await task(id, { title: 'BookTemplatesPro' });
+  for (const status of ['open', 'claimed', 'completed']) {
+    await sql([{ sql: 'UPDATE tasks SET status=?', args: [status] }]);
+    for (const path of [`/tasks/?status=${status}`, `/tasks/?status=${status}&capability=research`, '/tasks/?status=all']) {
+      const html = await get(path), md = await get(markdownPath(path));
+      assert.equal(html.response.status, 200); assert.equal(md.response.status, 200);
+      assert.deepEqual(taskIds(html.text).sort(), [...ordinary].sort());
+      assert.deepEqual(mdTaskIds(md.text).sort(), [...ordinary].sort());
+    }
+  }
+});
+
+test('historical imports consume scan budget but not page slots or continuation matches', async () => {
+  await bulkTasks(22, { capabilities: '["research"]' });
+  for (const id of historicalTaskIds) await task(id, { created: 101 });
+  const first = await get('/tasks/'), firstMd = await get('/tasks/index.md');
+  assert.equal(taskIds(first.text).length, 20);
+  assert.deepEqual(taskIds(first.text), mdTaskIds(firstMd.text));
+  const next = attr(taskNext(first.text), 'href'); assert.ok(next);
+  const second = await get(next), secondMd = await get(markdownPath(next));
+  assert.deepEqual(taskIds(second.text), ['bulk_000002', 'bulk_000001']);
+  assert.deepEqual(taskIds(second.text), mdTaskIds(secondMd.text));
+  assert.equal(taskNext(second.text), undefined);
+  assert.equal(new Set([...taskIds(first.text), ...taskIds(second.text)]).size, 22);
+  // Leave the imports at the start, but make the only match lie past a full scan.
+  await sql([{ sql: "DELETE FROM tasks WHERE id LIKE 'bulk_%'" }]);
+  await bulkTasks(100);
+  await sql([{ sql: "UPDATE tasks SET required_capabilities_json='[\"research\"]' WHERE id='bulk_000001'" }]);
+  const empty = await get('/tasks/?capability=research');
+  assert.deepEqual(taskIds(empty.text), []);
+  assert.ok(Number(empty.response.headers.get('x-fixture-batch-rows-read')) <= 203);
+  const continuation = attr(taskNext(empty.text), 'href'); assert.ok(continuation);
+  const cursor = JSON.parse(Buffer.from(new URL(continuation, origin).searchParams.get('before'), 'base64url').toString());
+  assert.equal(cursor[4], 'bulk_000003', 'cursor must include the two omitted candidates in its 100-row budget');
+  const last = await get(continuation);
+  assert.deepEqual(taskIds(last.text), ['bulk_000001']); assert.equal(taskNext(last.text), undefined);
+});
+
 test('task reader: raw HTML and Markdown share records, guidance and safe permalink metadata', async () => {
   await task();
   for (const path of ['/tasks/', '/tasks/task_fixture/']) {
@@ -1584,6 +1651,7 @@ if (process.env.OAF_BROWSE_PLAYWRIGHT) {
   test('optional browser: no-JS links, narrow layouts and explicitly bounded live refresh', { timeout: 60_000 }, async () => {
     const { checkBrowser } = await import('./public-browse.browser.mjs');
     await bulkTasks(22, { capabilities: '["research"]' });
+    for (const id of historicalTaskIds) await task(id, { created: 101 });
     await checkBrowser({ worker, message, scratch });
   });
 }
