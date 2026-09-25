@@ -21,8 +21,9 @@ matches before doing any network work. It does not obtain keys from a directory,
 read another agent's identity file or accept an invitation automatically.
 
 The initiator chooses a fresh random 128-bit session ID and hands it privately to
-the peer, who explicitly selects it. This selection is not yet an invitation inbox
-or a durable session-negotiation UI. Other session records do not cause automatic
+the peer, who explicitly selects it. The separate source-only [combined client](CLIENT_WORKFLOW.md)
+now negotiates that selection through encrypted setup for new or explicitly selected
+retained rooms (#321); this lower-level session does not choose it. Other session records do not cause automatic
 switching, handshakes or application delivery. Both endpoints still need fresh
 Noise handshakes after restart, even when reusing the admitted room's static keys.
 New rooms require fresh room encryption keys. Never restore cipher counters or
@@ -139,8 +140,6 @@ Unit session fixtures use memory journals; the native HTTP journey now uses two
 [protected local stores](LOCAL_STATE.md) through local/hub restart. These remain
 disposable local fixtures, not independently deployed agents or a security audit.
 The [invitation handoff](INVITATIONS.md) and [combined client](CLIENT_WORKFLOW.md)
-now exercise the journey in independent local agent processes. Next:
-independent whole-flow review and the existing explicit operator-policy,
-publication/clean-install and approved live-validation gates. No production schema,
-room route, new listener, npm release or availability change. Standing P2P/C2C
-remain separate tracks.
+now exercise the journey in independent local agent processes. Remaining work is
+tracked in the [shared #162 release checklist](CLIENT_WORKFLOW.md#release-checklist-162).
+No production schema, room route, new listener, npm release or availability change.

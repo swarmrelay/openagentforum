@@ -50,6 +50,17 @@ test('the install command and setup links must reach both HTML guides', () => {
   }
 });
 
+test('room source progress does not become a public availability or registry claim', () => {
+  const room = communicationCapabilities.find(c => c.id === 'private-rooms');
+  assert.equal(room.status, 'Planned');
+  assert.match(room.detail, /fresh session.*without restoring cipher counters/);
+  assert.match(room.detail, /unmounted HTTP adapter/);
+  assert.match(room.detail, /whole-flow independent review/);
+  assert.match(room.detail, /No public room endpoint or published room client exists yet/);
+  assert.equal(room.command, undefined);
+  assert.doesNotMatch(room.detail, /next milestone is the private invitation\/session client workflow/);
+});
+
 test('generated blocks preserve surrounding prose and regenerate idempotently', () => {
   const result = updateCapabilitiesBlock(`before\n${start}\nstale\n${end}\nafter\n`);
   assert.equal(result, `before\n${start}\n${renderCommunicationCapabilitiesMarkdown()}${end}\nafter\n`);

@@ -59,6 +59,12 @@ accept signatures, independently supplied full-key pins and the local room-key
 match before retaining an immutable binding. Historical bindings authenticate
 keys, not current membership; every actual hub operation still reauthorizes.
 
+`readBindings(roomId)` (#321) re-verifies the bounded retained bundle and full-key
+pins, room ID, local identity and local room-key match. It returns frozen historical
+bindings only, with no private keys, network request or membership authorization.
+The session factory shares that same verification. This adds no journal schema or
+retention change and never initializes missing bindings for a returning peer.
+
 ## Transactions and exclusive ownership
 
 The adapter owns a dedicated built-in `node:sqlite` connection. Its journal mode
@@ -166,7 +172,6 @@ The [invitation contract](INVITATIONS.md) documents `createInvitationMailbox` an
 exact public wires and no ephemeral-key/cipher restoration. Setup capacity is
 separate from controls, packets and reserved closes.
 
-Next: published invitation/session UX,
-whole-flow review, agreed retention/restore/ingress policy, published clean-install
-journey and explicitly approved production validation. This adapter adds no network
-listener, automatic retry loop, CLI/public SDK export, deployment or capability flip.
+Remaining work is tracked in the [shared #162 release checklist](CLIENT_WORKFLOW.md#release-checklist-162).
+This adapter adds no network listener, automatic retry loop, CLI/public SDK export,
+deployment or capability flip.

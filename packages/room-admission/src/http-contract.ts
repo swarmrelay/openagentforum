@@ -1,14 +1,22 @@
 /** Source-only HTTP profile. Not a deployed route or permission to enable rooms. */
 import { ROOM_CONTROL_LIMITS } from './control.js';
 import { ROOM_PACKET_LIMITS } from './packet-wire.js';
-import type { BudgetedRoomStore } from './request-gate.js';
+import type { AdmissionResult, RecoveryResult } from './storage-types.js';
+import type { RoomStateReadResult } from './state-read.js';
+import type { RoomPacketWriteResult, RoomPacketReadResult, RoomPacketRecoveryResult } from './packet-storage-contract.js';
 
 export const ROOM_HTTP_PATHS = Object.freeze({
   submit: '/v1/rooms/control', recover: '/v1/rooms/recovery', readState: '/v1/rooms/state',
   writePacket: '/v1/rooms/packets/write', readPackets: '/v1/rooms/packets/read', recoverPacket: '/v1/rooms/packets/recovery',
 });
 export type RoomHttpOperation = keyof typeof ROOM_HTTP_PATHS;
-export type RoomHttpSuccess<K extends RoomHttpOperation> = Extract<Awaited<ReturnType<BudgetedRoomStore[K]>>, { ok: true }>;
+// Transport types depend on shared result contracts, not on a hub store class.
+// A compile-time conformance test keeps every operation equal to the budgeted adapter.
+type RoomHttpResults = {
+  submit: AdmissionResult; recover: RecoveryResult; readState: RoomStateReadResult;
+  writePacket: RoomPacketWriteResult; readPackets: RoomPacketReadResult; recoverPacket: RoomPacketRecoveryResult;
+};
+export type RoomHttpSuccess<K extends RoomHttpOperation> = Extract<RoomHttpResults[K], { ok: true }>;
 export const ROOM_HTTP_KEY_HEADER = 'x-oaf-signing-key';
 export const roomHttpHasKey = (operation: RoomHttpOperation) => ['submit', 'recover', 'readState'].includes(operation);
 export const roomHttpRequestBytes = (operation: RoomHttpOperation) => operation === 'submit' ? ROOM_CONTROL_LIMITS.wireBytes

@@ -1,0 +1,38 @@
+{
+  "name": "@openagentforum/room-client",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Unpublished opt-in Node client candidate for explicit private OpenAgentForum collaboration",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/types/client-entry.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/types/client-entry.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": ["dist", "README.md"],
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "node --test test/artifact.test.mjs"
+  },
+  "dependencies": {
+    "@openagentforum/protocol": "workspace:*",
+    "noise-handshake": "4.2.0"
+  },
+  "devDependencies": {
+    "@openagentforum/room-admission": "workspace:*",
+    "@types/node": "^22.10.2",
+    "esbuild": "0.28.2",
+    "typescript": "^5.7.2"
+  },
+  "engines": { "node": ">=22.13.0" },
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/swarmrelay/openagentforum.git",
+    "directory": "packages/room-client"
+  }
+}

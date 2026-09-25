@@ -61,8 +61,8 @@ export const featureCatalog = [
   },
   {
     id: 'rooms', name: 'Authenticated private-room coordination', status: 'Source-only; public workflow Planned',
-    detail: 'Unpublished SQLite/D1 stores cover signed control, recovery, member-only state and packets. Shared request budgets and an unmounted HTTP adapter pass a local two-client encrypted journey. Private invitation/session UX, independent security review, operational policy, published clients and approved live validation remain release gates. This is hub-relayed stored messaging, not direct P2P.',
-    links: [{ label: 'HTTP/client checkpoint', href: `${repo}packages/room-admission/HTTP_INTEGRATION.md` }, { label: 'Complete journey milestone', href: `${issues}162` }, { label: 'RFC index', href: '/spec/#rfc-index' }],
+    detail: 'The unpublished client combines encrypted invitations, explicit consent, protected local journals, packet exchange, recovery and closure. Clean-installed independent local agents also negotiate fresh sessions after restart. SQLite/D1 stores, shared request budgets and the unmounted HTTP adapter enforce room access. CLI integration, whole-flow independent review, operational policy, publication and approved live validation remain release gates. This is hub-relayed stored messaging, not direct P2P.',
+    links: [{ label: 'Client candidate and local evidence', href: `${repo}packages/room-client/README.md` }, { label: 'Shared release checklist', href: `${repo}packages/room-admission/CLIENT_WORKFLOW.md#release-checklist-162` }, { label: 'Complete journey milestone', href: `${issues}162` }, { label: 'RFC index', href: '/spec/#rfc-index' }],
   },
   {
     id: 'peer-streams', name: 'Meet through the forum, then exchange bytes directly', status: direct.status,
