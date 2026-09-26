@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createRequire } from 'node:module';
+import { createServer } from 'node:http';
+import { once } from 'node:events';
 import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -12,20 +14,30 @@ import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/cli
 import { browserMcp } from '../../../apps/web/src/data/browser-mcp.mjs';
 import { compilerEnvironment, runCompiler } from './helpers/compiler-process.mjs';
 
-test('actual Wrangler Pages bundle routes browser MCP, discovery and public reads in workerd', { timeout: 90_000 }, async t => {
+test('actual Wrangler Pages bundle compiles without registry access and routes browser MCP, discovery and public reads in workerd', { timeout: 90_000 }, async t => {
   const root = fileURLToPath(new URL('../../../', import.meta.url));
   const scratch = await mkdtemp(join(tmpdir(), 'oaf-pages-mcp-'));
   const oldRuntime = process.env.MINIFLARE_WORKERD_PATH;
-  let mf, client, outbound = 0;
+  let mf, client, outbound = 0, registryRequests = 0;
+  // A cold version-check cache plus a stalled LOCAL registry makes accidental
+  // update traffic deterministic without contacting npm. Never inspect/log headers.
+  // No response means the old update-check timeout leaves its socket referenced.
+  const registry = createServer(() => { registryRequests++; });
   try {
+    registry.listen(0, '127.0.0.1'); await once(registry, 'listening');
     const config = JSON.parse(await readFile(join(root, 'apps/web/wrangler.jsonc'), 'utf8'));
     // Run the installed CLI entry directly, avoiding pnpm + bin-wrapper descendants.
     const wrangler = createRequire(join(root, 'package.json')).resolve('wrangler');
     const compilation = await runCompiler(process.execPath, ['--no-warnings', wrangler, 'pages', 'functions', 'build', 'apps/web/functions',
       '--project-directory=apps/web', `--outdir=${scratch}/bundle`, `--metafile=${scratch}/meta.json`,
       `--compatibility-date=${config.compatibility_date}`, `--compatibility-flags=${config.compatibility_flags.join(',')}`,
-    ], { cwd: root, signal: t.signal, env: compilerEnvironment() });
+    ], { cwd: root, signal: t.signal, env: compilerEnvironment({ ...process.env,
+      TMPDIR: scratch, TMP: scratch, TEMP: scratch,
+      // The pinned registry-url dependency uses rc's npm_ prefix, not npm_config_.
+      npm_registry: `http://127.0.0.1:${registry.address().port}/`,
+    }) });
     t.diagnostic(`Pages compiler: ${JSON.stringify(compilation)}`);
+    assert.equal(registryRequests, 0, 'compilation must not request npm version metadata');
     const metadata = JSON.parse(await readFile(join(scratch, 'meta.json'), 'utf8'));
     const inputs = Object.keys(metadata.inputs);
     assert.ok(inputs.some(path => path.includes('/shimsWorkerd.mjs')));
@@ -89,7 +101,9 @@ test('actual Wrangler Pages bundle routes browser MCP, discovery and public read
       finally {
         if (oldRuntime === undefined) delete process.env.MINIFLARE_WORKERD_PATH;
         else process.env.MINIFLARE_WORKERD_PATH = oldRuntime;
-        await rm(scratch, { recursive: true, force: true });
+        registry.closeAllConnections();
+        try { await new Promise(resolve => registry.close(resolve)); }
+        finally { await rm(scratch, { recursive: true, force: true }); }
       }
     }
   }
