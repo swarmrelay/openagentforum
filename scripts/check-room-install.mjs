@@ -1,7 +1,7 @@
 /** Packed candidate only: anonymous npm downloads/audit, then loopback-only room traffic. */
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -35,13 +35,16 @@ try {
   const protocolArtifact = join(packed, `openagentforum-protocol-${protocol.version}.tgz`);
   phase = 'inspect exact packed contents';
   const manifest = JSON.parse(readFileSync(join(source, 'dist/build-manifest.json'), 'utf8'));
+  assert.deepEqual(Object.keys(manifest.commands).sort(), ['cli-driver.mjs', 'cli-io.mjs', 'cli.mjs']);
   const expected = ['package.json', 'README.md', 'dist/LICENSE', 'dist/index.js', 'dist/build-manifest.json',
+    ...Object.keys(manifest.commands).map(name => `dist/${name}`),
     ...manifest.declarations.map(name => `dist/types/${name}.d.ts`)];
   const { stdout: listing } = await exec('tar', ['-tzf', artifact], { env, timeout: 10000, maxBuffer: 64 * 1024 });
   assert.deepEqual(listing.trim().split('\n').sort(), expected.map(file => 'package/' + file).sort());
   const { stdout: packedJson } = await exec('tar', ['-xOzf', artifact, 'package/package.json'], { env, timeout: 10000, maxBuffer: 64 * 1024 });
   const packedManifest = JSON.parse(packedJson);
   assert.equal(packedManifest.private, true);
+  assert.deepEqual(packedManifest.bin, { 'oaf-room': './dist/cli.mjs' });
   assert.equal(packedManifest.dependencies['@openagentforum/protocol'], protocol.version);
   for (const spec of Object.values(packedManifest.dependencies)) assert(!spec.startsWith('workspace:'));
   phase = 'install candidate and native crypto dependencies';
@@ -68,6 +71,11 @@ try {
   const { stdout: resolved } = await exec(process.execPath, ['--input-type=module', '--eval',
     'console.log(import.meta.resolve("@openagentforum/room-client"))'], { cwd: consumer, env, timeout: 10000, maxBuffer: 65536 });
   assert.equal(realpathSync(fileURLToPath(resolved.trim())), realpathSync(join(installedRoot, 'dist/index.js')));
+  const commandPath = join(consumer, 'node_modules/.bin/oaf-room');
+  assert.equal(realpathSync(commandPath), realpathSync(join(installedRoot, 'dist/cli.mjs')));
+  assert.equal(statSync(commandPath).mode & 0o111, 0o111);
+  const { stdout: commandHelp } = await exec(commandPath, ['--help'], { cwd: consumer, env, timeout: 10000, maxBuffer: 65536 });
+  assert.match(commandHelp, /unpublished optional private-room command/);
   phase = 'installed import and natural exit';
   copyFileSync(join(source, 'test/consumer-import.mjs'), join(consumer, 'import.mjs'));
   const { stdout } = await exec(process.execPath, ['import.mjs'], { cwd: consumer, env, timeout: 10000, maxBuffer: 65536 });
@@ -106,11 +114,33 @@ test('packed room client journey', { timeout: 45000 }, async () => {
     independentProcessRestart: true, freshSession: true, membershipControlsUnchanged: true,
     encryptedPackets: 12, uncertainWriteRecovery: true, localReopen: true,
     oldSessionRefused: true, closed: true, naturalExit: true, publicPosts: 0 });
+  phase = 'two installed commands through local Pages/D1';
+  // Same native parent, but these agents drive the installed executable through
+  // pipes. The test-only network preload cannot enter the packed runtime.
+  for (const name of ['cli-agent.mjs', 'cli-network.mjs']) {
+    const text = readFileSync(join(source, 'test/fixtures', name), 'utf8');
+    assert(!/\.\.\//.test(text), 'Source fallback in command fixture');
+    copyFileSync(join(source, 'test/fixtures', name), join(consumer, name));
+  }
+  writeFileSync(join(consumer, 'command-journey.mjs'), `import { test } from 'node:test';
+import { runInvitationJourney } from ${JSON.stringify(journeyImport)};
+test('packed room command journey', { timeout: 45000 }, async () => {
+  const result = await runInvitationJourney({ agentScript: ${JSON.stringify(join(consumer, 'cli-agent.mjs'))}, agentCwd: ${JSON.stringify(consumer)},
+    agentEnv: { ...process.env, OAF_ROOM_FIXTURE_BIN: ${JSON.stringify(commandPath)} }, restart: true });
+  console.log('OAF_ROOM_COMMAND_JOURNEY ' + JSON.stringify(result));
+});\n`);
+  const { stdout: commandOutput } = await exec(process.execPath, ['--test', '--test-timeout=60000', 'command-journey.mjs'],
+    { cwd: consumer, env, timeout: 75000, killSignal: 'SIGKILL', maxBuffer: 256 * 1024 });
+  const commandRecords = commandOutput.split('\n').filter(line => line.startsWith('# OAF_ROOM_COMMAND_JOURNEY '));
+  assert.equal(commandRecords.length, 1); assert.match(commandOutput, /# pass 1\r?\n/); assert.match(commandOutput, /# skipped 0\r?\n/);
+  const commandJourney = JSON.parse(commandRecords[0].slice('# OAF_ROOM_COMMAND_JOURNEY '.length));
+  assert.deepEqual(commandJourney, journey);
   phase = 'consumer dependency audit';
   await exec('npm', ['audit', ...npmOptions, '--omit=dev', '--audit-level=low'],
     { cwd: consumer, env, timeout: 120000, maxBuffer: 2 * 1024 * 1024 });
   console.log(JSON.stringify({ ok: true, package: pkg.name, version: pkg.version, published: false,
-    clientSource: 'packed', protocolSource: 'packed', workspaceLinks: false, installedTypes: true, consumerAudit: true, journey }));
+    clientSource: 'packed', protocolSource: 'packed', workspaceLinks: false, installedTypes: true, installedCommand: true,
+    consumerAudit: true, journey, commandJourney }));
 } catch (error) {
   // Fixed diagnostics only: installer output may contain local paths or server
   // text, so never echo it. Distinguish availability from an artifact assertion.
@@ -120,7 +150,8 @@ test('packed room client journey', { timeout: 45000 }, async () => {
   const category = error?.killed ? 'subprocess_deadline' : error?.code === 'ERR_ASSERTION' ? 'artifact_or_contract_mismatch'
     : allowed.includes(code) ? code : 'subprocess_or_verification_failure';
   console.error(`Clean room client check failed during: ${phase} (${category}). No raw subprocess output was printed.`);
-  const diagnostic = phase === 'two installed agents through local Pages/D1' ? roomFailureFromOutput(error?.stdout) : null;
+  const diagnostic = ['two installed agents through local Pages/D1', 'two installed commands through local Pages/D1'].includes(phase)
+    ? roomFailureFromOutput(error?.stdout) : null;
   if (diagnostic) console.error(diagnostic);
   process.exitCode = 1;
 } finally {
