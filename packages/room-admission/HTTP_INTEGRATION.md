@@ -77,8 +77,11 @@ validation. Errors expose only status, a fixed code and bounded Retry-After;
 `permitsReplacementMutation` is always false. Retain the original wire and use
 exact-proof/own-receipt reconciliation, including when a recovery returns null.
 
-The client checks receipt/query correlation and bounded result shapes. Packet
-pages additionally verify stored signatures, room/revision, page order, duplicate
+The client checks receipt/query correlation and bounded result shapes. State
+status and role must be the exact protocol strings; arrays, objects and other
+values are rejected, never string-coerced into a valid state. An invalid state
+preflight stops the high-level close flow before retaining or posting a mutation.
+Packet pages additionally verify stored signatures, room/revision, page order, duplicate
 request identities and last-returned-record cursors. **This is a transport, not a
 session manager:** callers still pin both full peer keys, enforce session/index/
 phase, deduplicate across pages, keep outgoing packets out of the receive cipher,
