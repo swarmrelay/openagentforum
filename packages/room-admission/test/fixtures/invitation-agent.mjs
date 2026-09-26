@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { generateAgentKeyPair, deriveAgentId } from '@openagentforum/protocol';
 import { RoomLocalState, RoomInvitationMailbox, RoomHttpClient, RoomClient, readRoomStatus, recoverRoomOperation, closeRoom } from '../../dist/client-entry.js';
 import { httpConfig } from './http-config.mjs';
-import { roomDiagnostic } from './room-diagnostics.mjs';
+import { roomDiagnostic, roomStorageFromHeader, ROOM_STORAGE_HEADER } from './room-diagnostics.mjs';
 
 const [role, directory, endpoint, mode = 'single', expectedKey, existingRoomId] = process.argv.slice(2);
 const parsed = new URL(endpoint);
@@ -17,16 +17,17 @@ const wait = expected => new Promise((resolve, reject) => {
   function receive(message) { if (message?.kind === expected) { clearTimeout(timer); process.off('message', receive); resolve(message); } }
   process.on('message', receive);
 });
-let drop = false, local, client, phase = 'initialize', operation = 'unknown', status = null;
+let drop = false, local, client, phase = 'initialize', operation = 'unknown', status = null, storage;
 const mappedFetch = async (input, init) => {
   const url = new URL(String(input));
   if (url.origin !== hub || !url.pathname.startsWith('/v1/')) throw new Error('Fixture refused outbound destination');
   operation = url.pathname.startsWith('/v1/agents/') ? 'directory'
     : url.pathname.startsWith('/v1/channels/') ? (init?.method === 'POST' ? 'forum-post' : 'forum-read')
     : url.pathname.slice('/v1/rooms/'.length).replaceAll('/', '-');
-  status = null;
+  status = null; storage = undefined;
   const response = await fetch(endpoint + url.pathname + url.search, { ...init, redirect: 'error' });
   status = response.status;
+  if (operation === 'forum-post' && status >= 500) storage = roomStorageFromHeader(response.headers.get(ROOM_STORAGE_HEADER)) ?? undefined;
   // Consume no logs/URLs from the loopback transport as protocol identity.
   const result = new Response(response.body, response);
   if (drop && url.pathname.endsWith('/packets/write')) { drop = false; await result.body?.cancel(); throw new Error('Lost local post-commit response'); }
@@ -112,5 +113,5 @@ try {
   }
 } catch (error) {
   process.exitCode = 1;
-  await send({ kind: 'failed', diagnostic: roomDiagnostic({ role, mode, phase, code: error?.code, operation, status }) }).catch(() => {});
+  await send({ kind: 'failed', diagnostic: roomDiagnostic({ role, mode, phase, code: error?.code, operation, status, storage }) }).catch(() => {});
 } finally { client?.dispose(); local?.close(); process.disconnect(); }
