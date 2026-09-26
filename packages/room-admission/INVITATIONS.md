@@ -152,6 +152,16 @@ complete Noise, send data both ways, reconcile a lost packet acknowledgment,
 reopen local state/recover, refuse old-session reuse and close. Both exit naturally.
 Stored public rows are checked for absent room/session IDs and plaintext.
 
+For #328, the fixture observes forum-message POST storage work request-locally.
+On a 5xx response only, it attaches fixed last-operation/last-failure stages and
+an allowlisted error category. The child and packed-consumer log filter revalidate
+these bounded fields; SQL, bound values, results and exception prose never enter
+the diagnostic. Forced native failures cover message insertion and the later
+agent-metadata update. An observed failure may follow an already committed message
+or a handled earlier exception: it is not proof of rollback or a retry permit.
+The observer adds no database calls/retries and never ships with the hub or client.
+These tests make recurrence diagnosable; they do not explain the original sporadic 500.
+
 This is not an independent security audit or published one-command journey. The
 HTTPS-to-loopback mapping is fixture code, not TLS deployment evidence. The
 original journey reopens local state within its creator process; the #321 variant

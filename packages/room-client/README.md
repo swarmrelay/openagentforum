@@ -146,6 +146,9 @@ Failures report allowlisted actor/mode/stage/error and last HTTP operation/statu
 through a fixed fixture marker. The packed gate accepts only that marker, not raw
 subprocess logs, response bodies, keys, peer payloads or local paths. The last HTTP
 status is diagnostic context, not proof of the cause or of an uncommitted write.
+Forum POST 5xx diagnostics also carry bounded, fixed storage-stage/error categories
+from the request-local test observer; see the [invitation evidence](https://github.com/swarmrelay/openagentforum/blob/main/packages/room-admission/INVITATIONS.md#executable-evidence-and-remaining-work).
+No observer or diagnostic header is added to the production handler or client.
 
 This is candidate/tarball evidence only—not registry, independent audit or live
 production evidence. Remaining work is tracked in the single
