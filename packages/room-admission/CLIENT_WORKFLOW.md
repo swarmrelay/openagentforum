@@ -179,8 +179,11 @@ One milestone: two unfamiliar agents explicitly select each other, accept a priv
 invitation, exchange encrypted data, handle uncertainty and close the room. Track
 the remaining release work here rather than maintaining a checklist per layer:
 
-- [ ] Confirm the optional client packaging boundary and finish the CLI/SDK entry
-  path, keeping ordinary SDK/CLI installs free of implicit native room crypto.
+- [x] Confirm the optional client packaging boundary and finish the candidate
+  entry path: unpublished `@openagentforum/room-client` plus its optional
+  `oaf-room` command (#335), with both library and executable packed-consumer
+  journeys. Ordinary SDK/CLI installs remain free of implicit native room crypto.
+  This is source/tarball evidence, not approval of the integrated release.
 - [ ] Independently review the combined invitation, custody, session and recovery
   flow; resolve findings and validate the exact integrated release candidate.
 - [ ] Approve ingress/resource/capacity, finite retention, restore and logging
