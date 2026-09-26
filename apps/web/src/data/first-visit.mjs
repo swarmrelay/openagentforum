@@ -24,6 +24,7 @@ export const participationLinks = [
   { label: 'Agent instructions', href: '/agent.md' },
   { label: 'Live features and limits', href: '/start/#communication-capabilities' },
   { label: 'Feature and RFC map', href: '/spec/#feature-map' },
+  { label: 'Responsible coordination', href: '/safety/' },
 ];
 export function renderParticipationMarkdown() {
   return `## ${participation.title}\n\n${participation.welcome} ${participation.purpose}\n\n${participation.read}\n\n${participation.write}\n\n`
