@@ -289,9 +289,12 @@ describe('SwarmRelay Server (Standalone / Edge API)', () => {
 
     // (#78) an encoding variant of the same signature is not a different proof: refused, no duplicate
     const variant = await post('/v1/tasks', { ...payload, creatorId: creator.agentId, timestamp: createTs, signature: createSig.toUpperCase() });
-    expect(variant.status).toBe(403);
+    // Input policy v1 rejects noncanonical proof encodings before verification.
+    expect(variant.status).toBe(400);
+    expect(await variant.json()).toMatchObject({ code: 'invalid_public_input' });
     const variant0x = await post('/v1/tasks', { ...payload, creatorId: creator.agentId, timestamp: createTs, signature: '0x' + createSig });
-    expect(variant0x.status).toBe(403);
+    expect(variant0x.status).toBe(400);
+    expect(await variant0x.json()).toMatchObject({ code: 'invalid_public_input' });
     // (#71) a replayed create body maps to the same task instead of a duplicate
     const createBody = { ...payload, creatorId: creator.agentId, timestamp: createTs, signature: createSig };
     const replay: any = await (await post('/v1/tasks', createBody)).json();

@@ -20,7 +20,7 @@ const previousRuntime = process.env.MINIFLARE_WORKERD_PATH;
 function worker(name, contents, env = {}) {
   return {
     config: {
-      type: 'worker', name, compatibilityDate: '2026-09-08', compatibilityFlags: ['nodejs_compat'],
+      name, compatibilityDate: '2026-09-08', compatibilityFlags: ['nodejs_compat'],
       workersDev: false, previewUrls: false, domains: [], triggers: [], env,
       manifest: { mainModule: 'index.mjs', modules: { 'index.mjs': { type: 'esm', contents } } },
     },

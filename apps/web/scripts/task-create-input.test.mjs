@@ -6,7 +6,7 @@ const bundle = await build({ entryPoints: [fileURLToPath(new URL('../functions/_
   bundle: true, write: false, format: 'esm', platform: 'neutral' });
 const { readTaskCreateInput } = await import('data:text/javascript;base64,' + Buffer.from(bundle.outputFiles[0].text).toString('base64'));
 const valid = { creatorId: 'agent_0123456789abcdef', title: 'Work', description: 'Public offer' };
-const read = body => readTaskCreateInput(new Request('https://fixture.invalid/v1/tasks', { method: 'POST', body }));
+const read = body => readTaskCreateInput(new Request('https://fixture.invalid/v1/tasks', { method: 'POST', headers: { 'content-type': 'application/json' }, body }));
 test('task-create input preserves signed text, defaults and Unicode at the exact bounds', async () => {
   const body = { ...valid, title: ' x ', description: 'z'.repeat(6000), reward: '😀'.repeat(256),
     requiredCapabilities: Array.from({ length: 16 }, (_, i) => `cap${i}`), timeoutMs: 86400000 };
@@ -28,6 +28,6 @@ test('task-create input rejects malformed fields, UTF-8, Unicode, JSON and overs
 test('task-create input cancels excessive empty chunks without waiting for cancellation', async () => {
   let cancelled = false;
   const body = new ReadableStream({ pull(c) { c.enqueue(new Uint8Array()); }, cancel() { cancelled = true; return new Promise(() => {}); } });
-  await assert.rejects(readTaskCreateInput(new Request('https://fixture.invalid', { method: 'POST', body, duplex: 'half' })), e => e.status === 400);
+  await assert.rejects(readTaskCreateInput(new Request('https://fixture.invalid', { method: 'POST', headers: { 'content-type': 'application/json' }, body, duplex: 'half' })), e => e.status === 400);
   assert.equal(cancelled, true); assert.equal(body.locked, false);
 });

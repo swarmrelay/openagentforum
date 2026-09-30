@@ -88,7 +88,7 @@ jobs:
       - name: Apply D1 Migrations
         uses: cloudflare/wrangler-action@v3
         with:
-          wranglerVersion: '4.131.2'
+          wranglerVersion: '4.144.0'
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: apps/web
@@ -97,7 +97,7 @@ jobs:
       - name: Deploy to Cloudflare Pages
         uses: cloudflare/wrangler-action@v3
         with:
-          wranglerVersion: '4.131.2'
+          wranglerVersion: '4.144.0'
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: apps/web
@@ -140,7 +140,7 @@ jobs:
       - name: Deploy worker
         uses: cloudflare/wrangler-action@v3
         with:
-          wranglerVersion: '4.131.2'
+          wranglerVersion: '4.144.0'
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: packages/server

@@ -10,6 +10,7 @@ import { handleRegistration, handleRegistrationState, sqlRegistrationStore, type
 import { createMcpManifest } from './mcp-manifest.js';
 import { encryptionError, sameStoredEnvelope, storedEnvelope, type EnvelopeRow } from './envelopes.js';
 import { AGENT_DIRECTORY_SQL, agentDirectoryPage, parseAgentDirectoryQuery } from './agent-directory.js';
+import { readPublicWriteInput, PublicWriteInputError } from './public-write-input.js';
 import { verifyTaskAction, sha256Hex } from '@openagentforum/protocol';
 import { registerPollRoutes, pollIngestGate, type PollStore } from './polls-routes.js';
 import {
@@ -221,7 +222,7 @@ app.get('/v1/channels', async (c) => {
 
 app.post('/v1/channels', async (c) => {
   try {
-    const body = await c.req.json();
+    const body = await readPublicWriteInput(c.req.raw, 'channel');
     const { name, title, topic = '', isPrivate = false, e2eeRequired = false, allowedAgents = [], creatorId } = body;
 
     if (!Array.isArray(allowedAgents) || allowedAgents.length) {
@@ -272,6 +273,7 @@ app.post('/v1/channels', async (c) => {
 
     return c.json({ success: true, channel });
   } catch (err) {
+    if (err instanceof PublicWriteInputError) return err.getResponse();
     return c.json({ error: (err as Error).message }, 500);
   }
 });
@@ -380,7 +382,7 @@ app.get('/v1/channels/:name/messages', async (c) => {
 app.post('/v1/channels/:name/messages', async (c) => {
   try {
     const channelName = c.req.param('name').toLowerCase();
-    const envelope: MessageEnvelope = await c.req.json();
+    const envelope = await readPublicWriteInput(c.req.raw, 'message', channelName);
 
     if (!envelope.id || !envelope.sender || !envelope.type || !envelope.signature || !envelope.checksum) {
       return c.json({ error: 'Malformed MessageEnvelope. Required fields: id, sender, type, payload, signature, checksum' }, 400);
@@ -490,6 +492,7 @@ app.post('/v1/channels/:name/messages', async (c) => {
 
     return c.json({ success: true, envelope: saved });
   } catch (err) {
+    if (err instanceof PublicWriteInputError) return err.getResponse();
     return c.json({ error: (err as Error).message }, 500);
   }
 });
@@ -584,7 +587,7 @@ app.get('/v1/tasks', async (c) => {
 
 app.post('/v1/tasks', async (c) => {
   try {
-    const body = await c.req.json();
+    const body = await readPublicWriteInput(c.req.raw, 'task-create');
     const { creatorId, title, description, requiredCapabilities = [], timeoutMs = 3600000, reward, signature, timestamp } = body;
 
     if (!creatorId || !title || !description) {
@@ -626,13 +629,14 @@ app.post('/v1/tasks', async (c) => {
       requiredCapabilities,
       status: 'open',
       timeoutMs,
-      reward,
+      reward: reward ?? undefined,
       createdAt: now,
       updatedAt: now,
     };
 
     return c.json({ success: true, task });
   } catch (err) {
+    if (err instanceof PublicWriteInputError) return err.getResponse();
     return c.json({ error: (err as Error).message }, 500);
   }
 });
@@ -640,7 +644,7 @@ app.post('/v1/tasks', async (c) => {
 app.post('/v1/tasks/:id/claim', async (c) => {
   try {
     const taskId = c.req.param('id');
-    const { agentId, signature, timestamp } = await c.req.json();
+    const { agentId, signature, timestamp } = await readPublicWriteInput(c.req.raw, 'task-claim', taskId);
 
     if (!agentId) {
       return c.json({ error: 'agentId required' }, 400);
@@ -663,6 +667,7 @@ app.post('/v1/tasks/:id/claim', async (c) => {
 
     return c.json({ success: true, taskId, claimedBy: agentId, status: 'claimed' });
   } catch (err) {
+    if (err instanceof PublicWriteInputError) return err.getResponse();
     return c.json({ error: (err as Error).message }, 500);
   }
 });
@@ -670,7 +675,7 @@ app.post('/v1/tasks/:id/claim', async (c) => {
 app.post('/v1/tasks/:id/submit', async (c) => {
   try {
     const taskId = c.req.param('id');
-    const { agentId, resultPayload, signature, timestamp } = await c.req.json();
+    const { agentId, resultPayload, signature, timestamp } = await readPublicWriteInput(c.req.raw, 'task-submit', taskId);
 
     if (!agentId || !resultPayload) {
       return c.json({ error: 'agentId and resultPayload required' }, 400);
@@ -696,6 +701,7 @@ app.post('/v1/tasks/:id/submit', async (c) => {
 
     return c.json({ success: true, taskId, status: 'completed' });
   } catch (err) {
+    if (err instanceof PublicWriteInputError) return err.getResponse();
     return c.json({ error: (err as Error).message }, 500);
   }
 });

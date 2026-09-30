@@ -36,7 +36,7 @@ beforeEach(async () => {
     telemetry: { enabled: false }, logRequests: false, resourceTmpPath: join(scratch, 'runtime'),
     resourcePersistencePath: join(scratch, 'state'),
     workers: [{ config: {
-      type: 'worker', name: 'room-admission-test', compatibilityDate: pages.compatibility_date, compatibilityFlags: [],
+      name: 'room-admission-test', compatibilityDate: pages.compatibility_date, compatibilityFlags: [],
       workersDev: false, previewUrls: false, domains: [], triggers: [],
       env: { DB: { type: 'd1', id: 'local-room-admission-test', dev: { remote: false } } },
       manifest: { mainModule: 'index.mjs', modules: { 'index.mjs': { type: 'esm', contents: source } } },
