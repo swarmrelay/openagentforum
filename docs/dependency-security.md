@@ -181,6 +181,57 @@ message visibility and limited-circuit connectivity from payload encryption and
 actual gossip delivery. Review, npm publication, clean registry validation and
 any subsequent installed-service rollout remain separate from this source fix.
 
+## Weekly audit follow-up — #339 (2026-10-05)
+
+The scheduled all-severity audit failed on unchanged `main` at `96183bde`
+([run 37373973668](https://github.com/swarmrelay/openagentforum/actions/runs/37373973668)).
+The same commit passed on 2026-09-28. Reproduced locally: 24 findings
+(9 high, 11 moderate, 4 low). No advisory ignore, audit-level change, or
+`--ignore-registry-errors` is added. Published package manifests are unchanged,
+so this lockfile refresh does not by itself require an npm release.
+
+| Package | Before | After | Why this version |
+| --- | --- | --- | --- |
+| `hono` | 4.13.5 | 4.13.7 | Smallest release that clears [GHSA-hxh3-vqpv-xpqv](https://github.com/advisories/GHSA-hxh3-vqpv-xpqv). Existing `^4.7.1` ranges in `apps/web` and `@openagentforum/server` already allowed it. |
+| `fast-uri` | 3.1.6 | 3.1.8 | Latest 3.x. Clears the 3.1.7 and 3.1.8 advisories. `ajv@8.20.0` already depends on `^3.0.1`. |
+| `ip-address` | 10.7.0 | 10.7.3 | Advisory floor is 10.7.1. 10.7.2 and 10.7.3 are later 10.x patches inside `express-rate-limit`'s `^10.2.0`. |
+| `devalue` | 5.9.2 | 5.9.3 | Smallest release that clears the devalue advisories. Astro 7.3.2–7.3.5 all depend on `^5.8.1`, so an Astro bump was not required. 5.9.4 is a tree-shake annotation; 6.x is a new major. |
+| `undici` | 7.29.0 | 7.29.1 | Same-major override `undici@7.29.0` → `7.29.1`. Direct `miniflare@5.20260911.1-alpha` and `wrangler@4.131.2` still declare undici 7.29.0 exactly. `undici@8.10.2` is unchanged. |
+
+`fast-uri` and `ip-address` resolve through `@modelcontextprotocol/sdk@1.30.0`
+(`ajv`, `express-rate-limit`). That SDK release, including 1.32.1, still uses
+ranges that already admit these versions, so the MCP package version and
+generated discovery metadata stay at 1.2.1. A fresh install of the published
+package is not updated by this lockfile; consumers who re-resolve within those
+ranges can already select the patched versions.
+
+Hono JSX check: `apps/web` lists `hono` directly, and no file under `apps/web`
+imports it. `@openagentforum/server` imports the `Hono` router and `hono/cors`
+only. Nothing in the repository imports `hono/jsx`, `Suspense`, `ErrorBoundary`,
+`Context.Provider`, or `hono/jsx/dom/server`. The advisory applies to plain
+strings rendered in those server-rendering positions. This repository does not
+use that path. The dependency is still bumped because the audit records the
+installed package.
+
+Undici is the development Miniflare HTTP client used by local Pages/D1 fixtures,
+not the live Pages request handler. Newer Miniflare `5.20261001.0-alpha` and
+Wrangler `4.147.0` depend on undici 7.29.1 together with workerd
+`1.20261001.1`. Those parents were not adopted here: deployment workflow inputs
+remain Wrangler `4.131.2`, and moving them is a separate deployment-tooling
+change. The override is a resolution pin to the patched 7.29.1 release, not an
+advisory suppression.
+
+Two findings remain, with no ignore entry:
+
+| Package | Installed | Advisory | Upstream status on 2026-10-05 | Maintainer decision still required |
+| --- | --- | --- | --- | --- |
+| `http-cache-semantics` | 4.2.0 via `astro@7.3.2` | [GHSA-ch52-4w7c-c8xp](https://github.com/advisories/GHSA-ch52-4w7c-c8xp) (high) | No patched version. `4.3.0` (2026-10-04) changes Vary matching and exposes response status; the max-stale logic is unchanged, and the advisory still lists `<=4.2.0` with no first patched version. Left at 4.2.0 so a newer version cannot hide the finding. | Accept the risk, wait for a fix that the advisory names, or replace Astro's remote-asset cache. Astro imports this package from `dist/assets/build/remote.js`. This site does not configure `astro:assets` or a remote image service, and Pages Functions do not import Astro. |
+| `braces` | 3.0.3 via `tailwindcss` → `chokidar` | [GHSA-vfj7-8cjw-p6xm](https://github.com/advisories/GHSA-vfj7-8cjw-p6xm) (high) | No release after 3.0.3, and the advisory lists no patched version. | Accept the risk, wait for a braces release, or replace the Tailwind 3 file watcher. The path is build/dev glob expansion, not a request handler. |
+
+`pnpm audit --audit-level low` after this change reports those 2 high findings
+and nothing else. The PR audit job will stay red until a maintainer chooses one
+of those options. Do not weaken `.github/workflows` to merge past them.
+
 ## Upstream references
 
 The separate [Node SQLite runtime assessment](sqlite-runtime-safety.md), #312,
