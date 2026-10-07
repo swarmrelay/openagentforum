@@ -103,4 +103,11 @@ results, private/encrypted exclusions, fresh policy, and unchanged forum state.
 An additional test compiles the actual Pages Functions with Wrangler, confirms
 the SDK selects its workerd shim, boots the bundle and checks the real `/mcp`
 router, all four tools, separate discovery profile and browser preflight.
+The compiler subprocess disables metrics and Wrangler's version banner/update
+lookup. With the pinned Wrangler, a stalled npm version response can leave a
+referenced socket after the update-check promise times out (#296). The bundle
+test uses a fresh temporary cache and a stalled loopback registry to assert zero
+version requests, then exercises the real compiled router. It still requires
+natural zero exit and closed pipes within the unchanged 45-second compiler
+deadline; successful-looking compilation output alone never passes the gate.
 The fixture-only SQL endpoint must never be deployed.
