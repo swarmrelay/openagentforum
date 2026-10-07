@@ -107,12 +107,15 @@ test('native complete record boundary, overflow sentinel, cutoff and no-write re
   await sql([insert(h, limits.records)]);
   const before = (await sql([{ sql: 'SELECT count(*) AS n FROM messages' }]))[0].results[0].n;
   for (const adapter of ['Pages', 'Worker']) {
-    for (const path of [route, route + '/audit', route + '/proof/missing', `/v1/polls?channel=${h.poll.channel}`]) {
+    for (const path of [route, route + '/audit', route + '/proof/missing']) {
       const r = await request(path, undefined, adapter); assert.equal(r.status, 503);
       assert.equal(r.headers.get('cache-control'), 'no-store'); assert.equal(r.headers.get('x-fixture-last-payloads'), '0');
       assert.ok(Number(r.headers.get('x-fixture-rows-read')) <= 8 * limits.records + 256);
       assert.deepEqual(await r.json(), { error: 'poll_work_limit', code: 'poll_work_limit' });
     }
+    const catalog = await request(`/v1/polls?channel=${h.poll.channel}`, undefined, adapter);
+    assert.equal(catalog.status, 200);
+    assert.deepEqual((await catalog.json()).unavailable, [{ pollId: h.poll.id, channel: h.poll.channel, status: 'unavailable', code: 'poll_work_limit' }]);
     assert.equal((await request(route + '?atSeq=2', undefined, adapter)).status, 200);
     const close = await signEnvelope({ channel: h.poll.channel, sender: h.creator.agentId, type: 'poll', sequence: 701,
       payload: { kind: 'close', pollId: h.poll.id, pollHash: h.poll.checksum } }, h.creator.signingPrivateKey);
@@ -124,7 +127,7 @@ test('native complete record boundary, overflow sentinel, cutoff and no-write re
   assert.equal((await sql([{ sql: 'SELECT count(*) AS n FROM messages' }]))[0].results[0].n, before);
 });
 
-test('native byte and tree limits fail without partial lists or oversized SQL responses', async () => {
+test('native byte and tree limits produce explicit catalog markers without oversized SQL responses', async () => {
   for (const mode of ['single', 'aggregate', 'depth', 'nodes']) {
     const h = await history('native-poll-' + mode);
     let statements;
@@ -138,9 +141,41 @@ test('native byte and tree limits fail without partial lists or oversized SQL re
       assert.equal((await r.json()).code, 'poll_work_limit');
       if (mode === 'single' || mode === 'aggregate') assert.equal(r.headers.get('x-fixture-last-payloads'), '0');
       assert.equal((await request(`/v1/polls/${h.poll.id}?atSeq=1`, undefined, adapter)).status, 200);
-      assert.equal((await request(`/v1/polls?channel=${h.poll.channel}`, undefined, adapter)).status, 503);
+      const catalog = await request(`/v1/polls?channel=${h.poll.channel}`, undefined, adapter);
+      assert.equal(catalog.status, 200);
+      const body = await catalog.json(); assert.deepEqual(body.polls, []);
+      assert.deepEqual(body.unavailable, [{ pollId: h.poll.id, channel: h.poll.channel, status: 'unavailable', code: 'poll_work_limit' }]);
     }
   }
+});
+
+test('native catalog isolates oversized roots and histories while 48 ordinary tallies retain their shares', async () => {
+  // All data belongs to this outbound-denied local fixture.
+  await sql([{ sql: 'DELETE FROM messages' }]);
+  const bad = await history('catalog-large-history'), root = await history('catalog-large-root');
+  await sql([{ sql: 'UPDATE messages SET stored_seq = 1000000 WHERE id = ?', args: [bad.poll.id] },
+    { sql: 'UPDATE messages SET stored_seq = 1000001, payload_json = ? WHERE id = ?', args: [JSON.stringify({ ...root.poll.payload, padding: 'x'.repeat(limits.recordBytes) }), root.poll.id] }]);
+  const statements = Array.from({ length: limits.records }, (_, n) => insert(bad, n));
+  const ordinary = [];
+  for (let i = 0; i < 48; i++) {
+    const h = await history(`catalog-ordinary-${i}`); ordinary.push(h.poll.id);
+    statements.push(...Array.from({ length: 19 }, (_, n) => insert(h, n)));
+  }
+  for (let i = 0; i < statements.length; i += 100) await sql(statements.slice(i, i + 100));
+  const before = (await sql([{ sql: 'SELECT count(*) AS n FROM messages' }]))[0].results[0].n;
+  for (const adapter of ['Pages', 'Worker']) {
+    const response = await request('/v1/polls?status=open', undefined, adapter);
+    assert.equal(response.status, 200); assert.equal(response.headers.get('cache-control'), 'no-store');
+    assert.ok(Number(response.headers.get('x-fixture-primary-sessions')) <= 101);
+    assert.ok(Number(response.headers.get('x-fixture-retained-bytes')) <= limits.bytes);
+    const body = await response.json();
+    assert.deepEqual(body.polls.map(p => p.pollId).sort(), ordinary.sort());
+    assert.deepEqual(body.unavailable.map(p => p.pollId), [root.poll.id, bad.poll.id]);
+    assert.ok(body.unavailable.every(p => p.code === 'poll_work_limit' && p.status === 'unavailable'));
+    const closed = await (await request('/v1/polls?status=closed', undefined, adapter)).json();
+    assert.deepEqual(closed.polls, []); assert.deepEqual(closed.unavailable, body.unavailable);
+  }
+  assert.equal((await sql([{ sql: 'SELECT count(*) AS n FROM messages' }]))[0].results[0].n, before);
 });
 
 test('native missing required index returns a generic unavailable response', async () => {

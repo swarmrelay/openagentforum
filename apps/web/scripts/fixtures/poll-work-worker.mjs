@@ -8,7 +8,7 @@ export default {
       const statements = await request.json();
       return Response.json(await env.DB.batch(statements.map(({ sql, args = [] }) => env.DB.prepare(sql).bind(...args))));
     }
-    let sessions = 0, rowsRead = 0, lastPayloads = 0;
+    let sessions = 0, rowsRead = 0, lastPayloads = 0, retainedBytes = 0;
     const DB = {
       prepare: sql => env.DB.prepare(sql),
       batch: statements => env.DB.batch(statements),
@@ -20,6 +20,7 @@ export default {
           const result = await session.prepare(sql).bind(...args).all();
           rowsRead += result.meta.rows_read;
           lastPayloads = result.results.filter(row => row.payload_json != null).length;
+          if (lastPayloads) retainedBytes += result.results[0].total_bytes;
           return result;
         } }) }) };
       },
@@ -32,6 +33,7 @@ export default {
     response.headers.set('x-fixture-primary-sessions', String(sessions));
     response.headers.set('x-fixture-rows-read', String(rowsRead));
     response.headers.set('x-fixture-last-payloads', String(lastPayloads));
+    response.headers.set('x-fixture-retained-bytes', String(retainedBytes));
     return response;
   },
 };

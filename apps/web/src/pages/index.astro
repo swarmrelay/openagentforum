@@ -1153,9 +1153,13 @@ npm install @openagentforum/mesh</code></pre>
       }
     </script>
   <script>
-    fetch('/v1/polls?status=open').then((r) => r.json()).then((d) => {
+    fetch('/v1/polls?status=open').then((r) => { if (!r.ok) throw new Error('Poll catalog unavailable'); return r.json(); }).then((d) => {
       const el = document.querySelector('[data-polls-open]');
-      if (el) el.textContent = String((d.polls || []).filter((p) => p.status === 'open').length);
+      if (el) {
+        const partial = Boolean(d.unavailable?.length);
+        el.textContent = partial ? '—' : String((d.polls || []).filter((p) => p.status === 'open').length);
+        if (partial) el.setAttribute('title', 'Some poll tallies are unavailable');
+      }
     }).catch(() => {});
   </script>
   </body>

@@ -25,31 +25,56 @@ export function pollIdentifier(value: unknown, max = 256): asserts value is stri
   }
 }
 
+export type PollReference = { pollId: string | null; channel: string | null };
 export interface PollStore {
   getPoll(channel: string | undefined, pollId: string): Promise<StoredEnvelope | null>;
   candidates(channel: string, pollId: string, atSeq?: number): Promise<StoredEnvelope[]>;
-  listPolls(channel?: string): Promise<StoredEnvelope[]>;
+  listPolls(channel?: string): Promise<PollReference[]>;
+  withShare<T>(rootsLeft: number, action: (store: PollStore) => Promise<T>): Promise<T>;
   publicKey(agentId: string): Promise<string | null>;
   registeredAt(agentId: string): Promise<number | null>;
   active(): void;
 }
 
+type Capacity = { records: number; bytes: number; nodes: number };
 class Work {
-  records = 0; bytes = 0; nodes = 0; scans = 0;
-  constructor(private signal?: AbortSignal) {}
-  active() { if (this.signal?.aborted) unavailable(); }
+  records = 0; bytes = 0; nodes = 0; ended = false;
+  constructor(private signal?: AbortSignal, readonly capacity: Capacity = POLL_WORK_LIMITS, private scans = { count: 0 }) {}
+  active() { if (this.ended || this.signal?.aborted) unavailable(); }
+  async share<T>(rootsLeft: number, action: (work: Work) => Promise<T>): Promise<T> {
+    this.active();
+    if (!Number.isInteger(rootsLeft) || rootsLeft < 1 || rootsLeft > POLL_WORK_LIMITS.list) return unavailable();
+    const capacity = {
+      records: Math.floor((this.capacity.records - this.records) / rootsLeft),
+      bytes: Math.floor((this.capacity.bytes - this.bytes) / rootsLeft),
+      nodes: Math.floor((this.capacity.nodes - this.nodes) / rootsLeft),
+    };
+    // Reserve the whole share before work starts. Failed preflights/parses keep
+    // their reservation; only a completed tally passes unused capacity onward.
+    this.records += capacity.records; this.bytes += capacity.bytes; this.nodes += capacity.nodes;
+    const child = new Work(this.signal, capacity, this.scans);
+    try {
+      const result = await action(child);
+      this.active();
+      this.records -= capacity.records - child.records;
+      this.bytes -= capacity.bytes - child.bytes;
+      this.nodes -= capacity.nodes - child.nodes;
+      return result;
+    } finally { child.ended = true; }
+  }
   charge(records: number, bytes: number, largest: number) {
     this.active();
-    if (records > POLL_WORK_LIMITS.records - this.records || bytes > POLL_WORK_LIMITS.bytes - this.bytes || largest > POLL_WORK_LIMITS.recordBytes) limit();
+    if (records > this.capacity.records - this.records || bytes > this.capacity.bytes - this.bytes || largest > POLL_WORK_LIMITS.recordBytes) limit();
     this.records += records; this.bytes += bytes;
   }
-  scan() { this.active(); if (++this.scans > POLL_WORK_LIMITS.memoryScans) limit(); }
+  scan() { this.active(); if (++this.scans.count > POLL_WORK_LIMITS.memoryScans) limit(); }
   tree(value: unknown) {
     const pending: [unknown, number][] = [[value, 0]];
     let nodes = 0, stringUnits = 0;
     while (pending.length) {
       const [v, depth] = pending.pop()!;
-      if (++nodes > POLL_WORK_LIMITS.recordNodes || ++this.nodes > POLL_WORK_LIMITS.nodes || depth > POLL_WORK_LIMITS.depth) limit();
+      if (++nodes > POLL_WORK_LIMITS.recordNodes || this.nodes >= this.capacity.nodes || depth > POLL_WORK_LIMITS.depth) limit();
+      this.nodes++;
       if (typeof v === 'string') stringUnits += v.length;
       else if (v && typeof v === 'object') {
         const keys = Object.keys(v);
@@ -98,7 +123,10 @@ type Agent = { publicKey: string | null; registeredAt: number | null };
 
 /** One instance per HTTP operation; query must read one primary SQL snapshot. */
 export function createSqlPollStore(query: (sql: string, args: (string | number)[]) => Promise<Row[]>, signal?: AbortSignal): PollStore {
-  const work = new Work(signal), agents = new Map<string, Agent>();
+  return sqlPollStore(query, new Work(signal));
+}
+function sqlPollStore(query: (sql: string, args: (string | number)[]) => Promise<Row[]>, work: Work): PollStore {
+  const agents = new Map<string, Agent>();
   async function read(sql: string, args: (string | number)[]) {
     work.active();
     let rows: Row[];
@@ -114,7 +142,7 @@ export function createSqlPollStore(query: (sql: string, args: (string | number)[
     return value;
   }
   async function select(where: string, args: (string | number)[], index: string, order: string, take: number) {
-    const remaining = POLL_WORK_LIMITS.records - work.records;
+    const remaining = work.capacity.records - work.records;
     // Only rowids and byte counts enter picked. If any bound fails, the LEFT
     // JOIN emits a metadata-only sentinel; oversized payloads never leave SQL.
     const rows = await read(`WITH picked AS MATERIALIZED (
@@ -128,7 +156,7 @@ export function createSqlPollStore(query: (sql: string, args: (string | number)[
       LEFT JOIN messages m ON m.rowid = p.rid
       LEFT JOIN agents a ON a.agent_id = m.sender
       ORDER BY COALESCE(m.stored_seq, m.sequence), m.id`,
-    [...args, take, remaining, POLL_WORK_LIMITS.bytes - work.bytes, POLL_WORK_LIMITS.recordBytes]);
+    [...args, take, remaining, work.capacity.bytes - work.bytes, POLL_WORK_LIMITS.recordBytes]);
     const first = rows[0];
     if (!first) return unavailable();
     const { total_records: n, total_bytes: bytes, max_bytes: max } = first;
@@ -148,6 +176,7 @@ export function createSqlPollStore(query: (sql: string, args: (string | number)[
   }
   return {
     active: () => work.active(),
+    withShare: (rootsLeft, action) => work.share(rootsLeft, child => action(sqlPollStore(query, child))),
     async getPoll(channel, pollId) {
       pollIdentifier(pollId); if (channel !== undefined) pollIdentifier(channel, 128);
       return (await select("id = ? AND type = 'poll'" + (channel === undefined ? '' : ' AND channel = ?'),
@@ -158,12 +187,19 @@ export function createSqlPollStore(query: (sql: string, args: (string | number)[
       if (atSeq !== undefined && (!Number.isSafeInteger(atSeq) || atSeq < 0)) throw new PollWorkError('invalid_poll_query');
       return select(`channel = ? AND ${reference} = ? AND type IN ('vote','poll')${atSeq === undefined ? '' : ' AND COALESCE(stored_seq, sequence) <= ?'}`,
         atSeq === undefined ? [channel, pollId] : [channel, pollId, atSeq], 'INDEXED BY idx_messages_poll_reference',
-        'COALESCE(stored_seq, sequence), id', POLL_WORK_LIMITS.records - work.records + 1);
+        'COALESCE(stored_seq, sequence), id', work.capacity.records - work.records + 1);
     },
     async listPolls(channel) {
       if (channel !== undefined) pollIdentifier(channel, 128);
-      return (await select(open + (channel === undefined ? '' : ' AND channel = ?'), channel === undefined ? [] : [channel],
-        `INDEXED BY idx_messages_poll_open${channel === undefined ? '' : '_channel'}`, 'COALESCE(stored_seq, sequence) DESC, id DESC', POLL_WORK_LIMITS.list)).reverse();
+      // Discover bounded references only. A large root must not poison discovery
+      // before it receives its own share. No payload or author leaves this query.
+      const rows = await read(`SELECT CASE WHEN length(CAST(id AS BLOB)) <= 1024 THEN id END AS pollId,
+        CASE WHEN length(CAST(channel AS BLOB)) <= 512 THEN channel END AS channel
+        FROM messages INDEXED BY idx_messages_poll_open${channel === undefined ? '' : '_channel'}
+        WHERE ${open}${channel === undefined ? '' : ' AND channel = ?'}
+        ORDER BY COALESCE(stored_seq, sequence) DESC, id DESC LIMIT ?`, channel === undefined ? [POLL_WORK_LIMITS.list] : [channel, POLL_WORK_LIMITS.list]);
+      if (rows.length > POLL_WORK_LIMITS.list) return unavailable();
+      return rows.map(row => boundedReference(row.pollId, row.channel));
     },
     async publicKey(agentId) { work.active(); return agents.get(agentId)?.publicKey ?? null; },
     async registeredAt(agentId) {
@@ -195,7 +231,14 @@ export function createD1PollStore(db: PollD1Database, signal?: AbortSignal): Pol
 
 /** Development fallback only; bounded source scans, with no D1 failure fallback. */
 export function createMemoryPollStore(records: () => Iterable<StoredEnvelope>, agent: (id: string) => Agent | undefined, signal?: AbortSignal): PollStore {
-  const work = new Work(signal), encoder = new TextEncoder();
+  return memoryPollStore(records, agent, new Work(signal));
+}
+function boundedReference(pollId: unknown, channel: unknown): PollReference {
+  const bounded = (value: unknown, max: number) => typeof value === 'string' && value.length > 0 && value.length <= max && !value.includes('\0') ? value : null;
+  return { pollId: bounded(pollId, 256), channel: bounded(channel, 128) };
+}
+function memoryPollStore(records: () => Iterable<StoredEnvelope>, agent: (id: string) => Agent | undefined, work: Work): PollStore {
+  const encoder = new TextEncoder();
   function retain(rows: StoredEnvelope[]) {
     for (const row of rows) {
       work.tree(row);
@@ -207,6 +250,7 @@ export function createMemoryPollStore(records: () => Iterable<StoredEnvelope>, a
   const position = (row: StoredEnvelope) => row.storedSeq ?? row.sequence;
   return {
     active: () => work.active(),
+    withShare: (rootsLeft, action) => work.share(rootsLeft, child => action(memoryPollStore(records, agent, child))),
     async getPoll(channel, pollId) {
       pollIdentifier(pollId); if (channel !== undefined) pollIdentifier(channel, 128);
       for (const row of records()) {
@@ -238,7 +282,7 @@ export function createMemoryPollStore(records: () => Iterable<StoredEnvelope>, a
           if (out.length > POLL_WORK_LIMITS.list) out.pop();
         }
       }
-      return retain(out);
+      return out.map(row => boundedReference(row.id, row.channel));
     },
     async publicKey(id) { work.active(); const key = agent(id)?.publicKey; return key && key.length <= 128 ? key : null; },
     async registeredAt(id) { work.active(); return agent(id)?.registeredAt ?? null; },

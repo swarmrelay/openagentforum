@@ -110,7 +110,7 @@ describe('bounded poll SQL and verification work', () => {
       const store = createSqlPollStore(async (sql, args) => {
         // Inspect just the unbounded-source selection. The outer sort is over
         // the already bounded materialized result and is intentionally allowed.
-        const picked = sql.slice(sql.indexOf('SELECT rowid'), sql.indexOf('), bounds'));
+        const picked = sql.includes('SELECT rowid') ? sql.slice(sql.indexOf('SELECT rowid'), sql.indexOf('), bounds')) : sql;
         const count = (picked.match(/\?/g) ?? []).length;
         plans.push(f.db.prepare('EXPLAIN QUERY PLAN ' + picked).all(...args.slice(0, count)).map(r => String(r.detail)));
         return f.db.prepare(sql).all(...args);
@@ -132,9 +132,101 @@ describe('bounded poll SQL and verification work', () => {
         const h = await signedHistory(channel); seed(f.db, [h.poll, ...Array.from({ length: 600 }, (_, n) => filler(h.poll, n))], h.keys);
         expect((await f.request(`/v1/polls/${h.poll.id}`)).status).toBe(200);
       }
-      const response = await f.request('/v1/polls'); expect(response.status).toBe(503);
-      expect(await response.json()).toEqual({ error: 'poll_work_limit', code: 'poll_work_limit' });
+      const response = await f.request('/v1/polls'); expect(response.status).toBe(200);
+      const body = await response.json() as any;
+      expect(body.polls).toEqual([]); expect(body.unavailable).toHaveLength(2);
+      expect(body.unavailable.every((p: any) => p.code === 'poll_work_limit' && p.status === 'unavailable')).toBe(true);
     } finally { f.close(); }
+  });
+
+  it('keeps 49 ordinary catalog tallies available beside one over-limit history within the aggregate allowance', async () => {
+    const f = adapterFixture('standalone');
+    let verification: ReturnType<typeof vi.spyOn> | undefined;
+    try {
+      const bad = await signedHistory('catalog-bad'); bad.poll.storedSeq = 1000000;
+      seed(f.db, [bad.poll, ...Array.from({ length: limits.records }, (_, n) => filler(bad.poll, n))], bad.keys);
+      for (let i = 0; i < 49; i++) {
+        const h = await signedHistory(`catalog-${i}`);
+        seed(f.db, [h.poll, ...Array.from({ length: 19 }, (_, n) => ({ ...h.votes[0], id: `${h.poll.id}-ballot-${n}`, storedSeq: n + 2 }))], h.keys);
+      }
+      let returnedBytes = 0, queries = 0;
+      const store = createSqlPollStore(async (sql, args) => {
+        queries++;
+        const rows = f.db.prepare(sql).all(...args);
+        if (rows[0]?.payload_json != null) returnedBytes += Number(rows[0].total_bytes);
+        return rows;
+      });
+      verification = vi.spyOn(crypto.subtle, 'verify');
+      const response = await handlePollRead(new Request(`${origin}/v1/polls?status=open`), store);
+      expect(response?.status).toBe(200);
+      const body = await response!.json() as any;
+      expect(body.polls).toHaveLength(49); expect(body.count).toBe(49);
+      expect(body.unavailable).toEqual([{ pollId: bad.poll.id, channel: bad.poll.channel, status: 'unavailable', code: 'poll_work_limit' }]);
+      expect(verification).toHaveBeenCalledTimes(49 * 20);
+      expect(returnedBytes).toBeLessThanOrEqual(limits.bytes); expect(queries).toBe(101);
+      const closed = await (await f.request('/v1/polls?status=closed')).json() as any;
+      expect(closed.polls).toEqual([]); expect(closed.unavailable).toEqual(body.unavailable);
+    } finally { verification?.mockRestore(); f.close(); }
+  });
+
+  it.each(['SQL', 'memory'] as const)('%s catalog isolates oversized roots and bounds unavailable identifiers', async adapter => {
+    const f = adapterFixture('standalone');
+    try {
+      const h = await signedHistory(), bad = await signedHistory('bad-root');
+      const rows = [h.poll, ...h.votes, { ...bad.poll, storedSeq: 10, payload: { ...bad.poll.payload, padding: 'x'.repeat(limits.recordBytes) } },
+        { ...bad.poll, id: 'x'.repeat(2000), channel: 'y'.repeat(2000), storedSeq: 11 }];
+      const keys = new Map([...h.keys, ...bad.keys]); seed(f.db, rows, keys);
+      let discovery: Record<string, unknown>[] = [];
+      const store = adapter === 'memory' ? createMemoryPollStore(() => rows, id => ({ publicKey: keys.get(id) ?? null, registeredAt: 1 })) :
+        createSqlPollStore(async (sql, args) => { const result = f.db.prepare(sql).all(...args); if (!discovery.length) discovery = result; return result; });
+      const response = await handlePollRead(new Request(`${origin}/v1/polls`), store);
+      expect(response?.status).toBe(200);
+      const body = await response!.json() as any;
+      expect(body.polls).toHaveLength(1); expect(body.polls[0].counts).toEqual([0, 1]);
+      expect(body.unavailable).toEqual([
+        { pollId: null, channel: null, status: 'unavailable', code: 'poll_work_limit' },
+        { pollId: bad.poll.id, channel: bad.poll.channel, status: 'unavailable', code: 'poll_work_limit' },
+      ]);
+      if (adapter === 'SQL') expect(discovery.every(row => Object.keys(row).sort().join(',') === 'channel,pollId')).toBe(true);
+    } finally { f.close(); }
+  });
+
+  it('does not reuse failed shares or let a completed child access storage', async () => {
+    const f = adapterFixture('standalone');
+    try {
+      const h = await signedHistory(); seed(f.db, [h.poll], h.keys);
+      let child: ReturnType<typeof createSqlPollStore> | undefined, reads = 0;
+      const store = createSqlPollStore(async (sql, args) => { reads++; return f.db.prepare(sql).all(...args); });
+      await store.withShare(1, async selected => { child = selected; await selected.getPoll(undefined, h.poll.id); });
+      await expect(child!.getPoll(undefined, h.poll.id)).rejects.toMatchObject({ code: 'poll_work_unavailable' });
+      expect(reads).toBe(1);
+      await expect(store.withShare(1, async () => { throw new Error('failed tally'); })).rejects.toThrow('failed tally');
+      await expect(store.getPoll(undefined, h.poll.id)).rejects.toMatchObject({ code: 'poll_work_limit' });
+    } finally { f.close(); }
+  });
+
+  it.each(['bytes', 'nodes'] as const)('keeps failed catalog %s reservations inside the aggregate budget', async kind => {
+    const f = adapterFixture('standalone');
+    let verification: ReturnType<typeof vi.spyOn> | undefined;
+    try {
+      for (let i = 0; i < 3; i++) {
+        const h = await signedHistory(`share-${kind}-${i}`);
+        const padding = kind === 'bytes' ? 'x'.repeat(160000) : Array.from({ length: 8 }, () => Array(1000).fill(0));
+        seed(f.db, [h.poll, ...Array.from({ length: kind === 'bytes' ? 9 : 3 }, (_, n) => filler(h.poll, n, { padding }))], h.keys);
+        expect((await f.request(`/v1/polls/${h.poll.id}`)).status).toBe(200);
+      }
+      verification = vi.spyOn(crypto.subtle, 'verify');
+      let returnedBytes = 0;
+      const store = createSqlPollStore(async (sql, args) => {
+        const rows = f.db.prepare(sql).all(...args);
+        if (rows[0]?.payload_json != null) returnedBytes += Number(rows[0].total_bytes);
+        return rows;
+      });
+      const response = await handlePollRead(new Request(`${origin}/v1/polls`), store);
+      const body = await response!.json() as any;
+      expect(response?.status).toBe(200); expect(body.polls).toEqual([]); expect(body.unavailable).toHaveLength(3);
+      expect(returnedBytes).toBeLessThanOrEqual(limits.bytes); expect(verification).not.toHaveBeenCalled();
+    } finally { verification?.mockRestore(); f.close(); }
   });
 
   it('uses fresh primary sessions, fails closed on missing indexes/storage errors, and contains cancellation', async () => {
@@ -223,9 +315,11 @@ describe.each(['Worker', 'standalone', 'Pages D1', 'Pages memory'] as const)('%s
       if (adapter !== 'Pages memory') {
         seed(f.db, [filler(h.poll, 100, { padding: 'x'.repeat(limits.recordBytes) })]);
         const before = f.db.prepare('SELECT count(*) AS n FROM messages').get()!.n, broadcasts = f.broadcasts.length;
-        for (const path of [route, route + '/audit', route + '/proof/' + h.votes[0].id, `/v1/polls?channel=${h.poll.channel}`]) {
+        for (const path of [route, route + '/audit', route + '/proof/' + h.votes[0].id]) {
           const r = await request(path); expect(r.status).toBe(503); expect(await r.json()).toMatchObject({ code: 'poll_work_limit' });
         }
+        const catalog = await request(`/v1/polls?channel=${h.poll.channel}`); expect(catalog.status).toBe(200);
+        expect((await catalog.json() as any).unavailable).toEqual([{ pollId: h.poll.id, channel: h.poll.channel, status: 'unavailable', code: 'poll_work_limit' }]);
         for (const envelope of [h.votes[3], await signEnvelope({ channel: h.poll.channel, sender: h.creator.agentId, type: 'poll', sequence: 703,
           payload: { kind: 'close', pollId: h.poll.id, pollHash: h.poll.checksum } }, h.creator.signingPrivateKey)]) {
           const r = await request(`/v1/channels/${h.poll.channel}/messages`, envelope); expect(r.status).toBe(503);

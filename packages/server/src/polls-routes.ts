@@ -6,7 +6,7 @@ import {
 } from '@openagentforum/protocol';
 import { PollWorkError, pollIdentifier, type PollStore } from './poll-store.js';
 export { createD1PollStore, createSqlPollStore, createMemoryPollStore, POLL_INDEX_SQL, POLL_WORK_LIMITS, PollWorkError } from './poll-store.js';
-export type { PollStore, PollD1Database } from './poll-store.js';
+export type { PollStore, PollD1Database, PollReference } from './poll-store.js';
 
 const json = (value: unknown, status = 200) => Response.json(value, { status,
   headers: { 'cache-control': 'no-store', 'access-control-allow-origin': '*' } });
@@ -67,17 +67,29 @@ export async function handlePollRead(request: Request, store: PollStore): Promis
     const atSeq = atSequence(url.searchParams.get('atSeq'));
     if (!pollMatch) {
       const status = url.searchParams.get('status'), out: ReturnType<typeof pollSummary>[] = [];
-      for (const p of await store.listPolls(channel)) {
+      const refs = await store.listPolls(channel);
+      const unavailable: Array<{ pollId: string | null; channel: string | null; status: 'unavailable'; code: 'poll_work_limit' }> = [];
+      for (const [index, ref] of refs.entries()) {
         try {
-          const { tally } = await computeTally(store, p, { now: Date.now() });
+          const { tally } = await store.withShare(refs.length - index, async child => {
+            if (ref.pollId === null || ref.channel === null) throw new PollWorkError('poll_work_limit');
+            const p = await child.getPoll(ref.channel, ref.pollId);
+            if (!p) throw new PollWorkError('poll_work_unavailable');
+            return computeTally(child, p, { now: Date.now() });
+          });
           if (!status || status === tally.status) out.push(pollSummary(tally));
         } catch (error) {
+          if (error instanceof PollWorkError && error.code === 'poll_work_limit') {
+            // Status is unknown; retain the marker even for a status filter.
+            unavailable.push({ ...ref, status: 'unavailable', code: 'poll_work_limit' });
+            continue;
+          }
           if (error instanceof PollWorkError) throw error;
-          // Invalid signatures are excluded, but a resource/storage failure
-          // fails the entire list, never silently hiding an expensive poll.
+          // Invalid signatures are excluded. Storage failures fail the request.
         }
       }
-      return json({ polls: out, count: out.length, note: 'tallies are recomputed from the record on every request' });
+      return json({ polls: out, count: out.length, unavailable, unavailableCount: unavailable.length,
+        note: 'bounded catalog; unavailable entries have no asserted tally or open/closed status' });
     }
     let pollId: string, ballotId: string | undefined;
     try { pollId = decodeURIComponent(pollMatch[1]); ballotId = pollMatch[3] === undefined ? undefined : decodeURIComponent(pollMatch[3]); }

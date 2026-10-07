@@ -29,13 +29,35 @@ envelopes before serialization; it is not a scalable production index.
 
 All selected history fits before its tally starts. Each selected envelope can
 cause at most one signature-verification attempt per tally, so the request's
-record limit also bounds historical verification attempts. Roots in a list share
-the same allowance with all their histories. Invalid signatures remain invalid;
-they do not gain permission by consuming capacity. A failed limit aborts the
-whole response rather than producing a prefix tally, proof or shortened list.
+record limit also bounds historical verification attempts. Invalid signatures
+remain invalid; they do not gain permission by consuming capacity. Individual
+tallies and proofs are complete or fail; they never describe a prefix as complete.
 
-`503` with `code: "poll_work_limit"` means the complete selected history does not
-fit. `503 poll_work_unavailable` covers storage/index failures or an interrupted
+The catalog first discovers at most 50 bounded ID/channel references, without
+loading payloads. Each root receives `floor(remaining / rootsLeft)` of each
+record/byte/node allowance. It reserves that share before loading the root and
+history. A completed tally passes unused capacity to later roots; a failed
+preflight, parse or verification keeps its whole reservation. This bounds failed
+work as well as successful tallies and prevents one large root/history from
+consuming the shares reserved for the rest. The memory fallback shares one scan
+counter across discovery and every child store. Child stores expire after their
+callback; they cannot be reused. Catalog SQL uses at most 101 primary statements,
+50 bounded references (ID up to 1,024 bytes and channel up to 512 bytes before
+stricter identifier checks) and at most one candidate lookahead per root in
+addition to the retained-record allowance.
+
+`GET /v1/polls` returns `200` with separate `polls` and `unavailable` arrays.
+Only complete summaries appear in `polls`; `count` is that array's length.
+An over-share entry is `{ pollId, channel, status: "unavailable",
+code: "poll_work_limit" }`, with `unavailableCount` giving the number of markers.
+Oversized/invalid legacy identifiers are represented by `null`, never echoed
+unbounded. Markers assert no tally or open/closed status and remain present under
+either status filter. An individual tally may succeed with its larger allowance.
+Storage/index failures still fail the whole request with 503. Unverifiable roots
+remain excluded as before. This is a capped catalog, not a complete directory.
+
+On individual reads and vote/close checks, `503` with `code: "poll_work_limit"`
+means the complete selected history does not fit. `503 poll_work_unavailable` covers storage/index failures or an interrupted
 request. Responses are generic and `Cache-Control: no-store`; there is no
 automatic retry or `Retry-After` promise. A request cancellation does not poison
 other requests. Already-running cryptography/database work is not preempted;
@@ -45,6 +67,11 @@ Vote/close admission returns the same failure before inserting that envelope or
 fan-out. Ordinary incoming-envelope verification still precedes the history
 check. Existing poll refusal reasons and tally rules are preserved. This does
 not make tally-and-insert atomic or resolve concurrent vote/close races.
+An individual poll can still become unavailable for current reads and new
+votes/closes once its retained history exceeds the limit, including through
+revoting. No reserved close lane or incremental tally is implemented. Aggregate
+admission/storage policy and this individual-poll availability problem remain
+follow-up work under #238/#239; the catalog isolation does not solve them.
 
 ## Reads and storage
 
@@ -86,18 +113,24 @@ setup. These migrations add indexes only; they do not rewrite messages or store
 tallies. Index creation is a one-time database operation whose cost depends on
 existing history. A missing required index fails closed without a scan fallback.
 
-Embedding callers must create one store per operation and keep all its roots and
-tallies on that store. `createSqlPollStore` requires the supplied query callback
+Embedding callers must create one store per operation. Catalog callers use
+`listPolls` for bounded references and `withShare` for each root plus its tally,
+in catalog order with the remaining root count. `createSqlPollStore` requires the supplied query callback
 to execute each SQL statement as one primary snapshot. `createD1PollStore` does
 that through the D1 session API. Constructors perform no database I/O, and a D1
 failure never falls back to memory. The published types do not require consumers
 to install Cloudflare's development type package.
 
 This policy does not provide aggregate request-rate limits, persistent storage
-quotas, fair allocation, moderation, or authenticated room membership. The
+quotas, fairness across requests/identities, moderation, or authenticated room membership. The
 separate public-write allowance prototype remains opt-in and unmounted. A new
 server/CLI package requires its own npm release; a Pages deployment does not
-upgrade installed standalone relays.
+upgrade installed standalone relays. SDK 2.4.1 adds `listPollCatalog` to expose
+both arrays; its legacy `listPolls` helper throws if any marker is present instead
+of returning a misleading partial array. Older SDKs may ignore the additive
+`unavailable` field and need upgrading. MCP 1.2.2 and the website display markers;
+neither treats an unavailable-only catalog as empty. Publish the new SDK/MCP
+versions before deploying generated MCP discovery metadata.
 
 ## Validation
 

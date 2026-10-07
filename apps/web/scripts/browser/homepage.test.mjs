@@ -22,7 +22,7 @@ before(async () => {
 });
 after(async () => { await browser?.close(); });
 
-async function openHomepage({ width = 1280, colorScheme = 'light', reducedMotion = 'no-preference', mode = 'enabled' } = {}) {
+async function openHomepage({ width = 1280, colorScheme = 'light', reducedMotion = 'no-preference', mode = 'enabled', pathname = '/', catalog, catalogStatus = 200 } = {}) {
   const context = await browser.newContext({ javaScriptEnabled: mode !== 'disabled',
     viewport: { width, height: 900 }, colorScheme, reducedMotion, serviceWorkers: 'block',
   });
@@ -34,6 +34,7 @@ async function openHomepage({ width = 1280, colorScheme = 'light', reducedMotion
     if (url.origin !== origin || request.method() !== 'GET') {
       unexpected.push('Unexpected origin or write method'); return route.abort();
     }
+    if (url.pathname === '/v1/polls' && catalog !== undefined) return route.fulfill({ status: catalogStatus, json: catalog });
     if (fixtures.has(url.pathname + url.search)) return route.fulfill({ json: fixtures.get(url.pathname + url.search) });
     if (request.resourceType() === 'script') {
       if (mode === 'blocked') { blockedScripts++; return route.abort('failed'); }
@@ -53,7 +54,7 @@ async function openHomepage({ width = 1280, colorScheme = 'light', reducedMotion
   const page = await context.newPage();
   page.on('pageerror', error => errors.push(error.message));
   try {
-    await page.goto(origin);
+    await page.goto(origin + pathname);
     await page.evaluate(() => document.fonts.ready);
     return { page, close: async () => {
       await context.close();
@@ -64,6 +65,35 @@ async function openHomepage({ width = 1280, colorScheme = 'light', reducedMotion
     } };
   } catch (error) { await context.close(); throw error; }
 }
+
+test('poll catalog distinguishes unavailable tallies, empty results and request failures', { timeout: 20_000 }, async () => {
+  const hostile = '<img src=x onerror="window.injected=true">';
+  const unavailable = [{ pollId: hostile, channel: hostile, status: 'unavailable', code: 'poll_work_limit' }];
+  const ordinary = { pollId: 'ordinary', channel: 'general', status: 'open', title: 'Ordinary poll', options: ['yes', 'no'], counts: [1, 0], countedBallots: 1, distinctVoters: 1 };
+  for (const polls of [[ordinary], []]) {
+    const { page, close } = await openHomepage({ pathname: '/polls/', catalog: { polls, unavailable } });
+    try {
+      await page.locator('[data-poll-unavailable]').waitFor();
+      const text = await page.locator('#polls').innerText();
+      assert.match(text, /Tally unavailable/); assert.doesNotMatch(text, /No polls in the record/);
+      assert.ok(text.includes(hostile)); if (polls.length) assert.match(text, /Ordinary poll/);
+      assert.equal(await page.locator('#polls img').count(), 0); assert.equal(await page.evaluate(() => window.injected), undefined);
+      assert.equal(await page.locator('[data-poll-unavailable] a').getAttribute('href'), `/v1/polls/${encodeURIComponent(hostile)}?channel=${encodeURIComponent(hostile)}`);
+    } finally { await close(); }
+  }
+  for (const status of [200, 503]) {
+    const { page, close } = await openHomepage({ pathname: '/polls/', catalog: { polls: [], unavailable: [] }, catalogStatus: status });
+    try {
+      await page.waitForFunction(() => !document.querySelector('#polls').textContent.includes('Loading polls'));
+      assert.match(await page.locator('#polls').innerText(), status === 200 ? /No polls in the record/ : /Could not load polls/);
+    } finally { await close(); }
+  }
+  const { page, close } = await openHomepage({ catalog: { polls: [ordinary], unavailable } });
+  try {
+    await page.waitForFunction(() => document.querySelector('[data-polls-open]').textContent === '—');
+    assert.equal(await page.locator('[data-polls-open]').getAttribute('title'), 'Some poll tallies are unavailable');
+  } finally { await close(); }
+});
 
 // Playwright's isVisible() accepts opacity:0. Inspect effective ancestor styles
 // as well, so DOM-only visibility or a visible parent cannot mask hidden cards.

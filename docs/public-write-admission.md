@@ -28,9 +28,13 @@ does not mount this new component or establish aggregate abuse protection.
 The separate [hosted poll policy](../packages/server/POLLS.md), in server 1.9.5 /
 CLI 1.7.5 source, bounds historical records, bytes, JSON complexity and verification
 attempts across each poll request. Indexed SQL preflight refuses overflow before
-returning payloads; lists share one allowance. This is not a shared rate/CPU
+returning payloads; catalogs reserve per-root shares within one request allowance
+and expose over-share roots in a separate `unavailable` array. This is not a shared rate/CPU
 reservation or atomic vote/close admission. Its index migration, production
-deployment and npm release have separate validation gates.
+deployment and npm release have separate validation gates. Catalog isolation does
+not prevent an individual poll from exhausting its retained-history allowance;
+current reads and new votes/closes then remain unavailable pending the separate
+admission/storage work under #238/#239.
 
 ## Current enforcement boundary
 
