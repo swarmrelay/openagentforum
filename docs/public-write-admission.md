@@ -1,10 +1,29 @@
 # Shared public-write admission — design for review (#229 / #238)
 
-Status: **proposal, not approved production policy or implemented accounting**.
+Status: **complete admission policy remains a proposal, not approved production
+enforcement**. The opt-in request/input accounting component described below is
+implemented; mutation/storage/receipt accounting is not.
 Baseline: main `96183bd`, September 29, 2026. The accompanying #239 input-reader
 candidate is specified in [PUBLIC_WRITE_INPUT.md](../packages/server/PUBLIC_WRITE_INPUT.md).
 This design carries no numeric production requests-per-minute promise and does
 not change routing, migrations, deployed configuration or public availability.
+
+## Implemented first stage — October 6, 2026
+
+The unmounted [request allowance component](../packages/server/PUBLIC_WRITE_BUDGET.md)
+adds one pinned SQLite/D1 row for six operation classes, shared request/input
+allowances and a separate finite task-submit lane. It reserves before body work,
+never refunds or seeds on request, and refuses unknown/late storage outcomes.
+Native local Pages/D1 and independent SQLite-process fixtures cover contention,
+restarts and completion after ordinary exhaustion. Server 1.9.4 / CLI 1.7.4 are
+the source candidates; publication and production mounting are separate.
+
+This implements only the request/input portion of stage 1 below. It does not
+reserve verification CPU, bound historical poll work, account retained rows or
+commit application mutations with storage quotas/receipts. Those remaining
+steps and production policy review still block enabling the shared limiter.
+The input reader from #338 was deployed at `8f208db` on October 6; that deployment
+does not mount this new component or establish aggregate abuse protection.
 
 ## Current enforcement boundary
 
