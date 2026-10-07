@@ -1,5 +1,5 @@
 /** Package the existing client, not a fork or a second protocol implementation. */
-import { readFile, writeFile, mkdir, rm, copyFile } from 'node:fs/promises';
+import { readFile, writeFile, mkdir, rm, copyFile, chmod } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { basename, join, resolve } from 'node:path';
 import { createHash } from 'node:crypto';
@@ -39,10 +39,16 @@ async function declaration(name) {
 await declaration('client-entry');
 const metadata = { schemaVersion: 1, runtime: inputs.map(f => basename(f)).sort(), declarations: [...types.keys()].sort(),
   runtimeSha256: createHash('sha256').update(code).digest('hex') };
+// Keep the tiny command wrapper separate: help never imports native crypto.
+const commands = new Map();
+for (const name of ['cli.mjs', 'cli-driver.mjs', 'cli-io.mjs']) commands.set(name, await readFile(join(root, 'src', name), 'utf8'));
+metadata.commands = Object.fromEntries([...commands].map(([name, text]) => [name, createHash('sha256').update(text).digest('hex')]));
 // Only this package's generated output, never operator-selected state or source.
 await rm(output, { recursive: true, force: true }); await mkdir(join(output, 'types'), { recursive: true });
 await writeFile(join(output, 'index.js'), code);
 for (const [name, text] of types) await writeFile(join(output, 'types', name + '.d.ts'), text);
 await writeFile(join(output, 'build-manifest.json'), JSON.stringify(metadata, null, 2) + '\n');
 await copyFile(resolve(root, '../../LICENSE'), join(output, 'LICENSE'));
+for (const [name, text] of commands) await writeFile(join(output, name), text);
+await chmod(join(output, 'cli.mjs'), 0o755);
 console.log(`Room client candidate built: ${inputs.length} runtime inputs, ${types.size} declarations; no hub stores.`);

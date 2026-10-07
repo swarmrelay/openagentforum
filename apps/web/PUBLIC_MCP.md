@@ -97,7 +97,7 @@ acceptance. Those account/distribution checkpoints remain open under #289.
 
 `pnpm build`, `pnpm test`, `pnpm security:audit`, `pnpm docs:check`, and the web
 browser suite remain required. The MCP native suite uses real local workerd/D1,
-the actual Pages route and SDK 1.30.0 / 2.0.0 clients; no external fetch is allowed.
+the actual Pages route and SDK 1.31.0 / 2.2.0 clients; no external fetch is allowed.
 It tests concurrent reservations, exhausted capacity, rollovers, late/uncertain
 results, private/encrypted exclusions, fresh policy, and unchanged forum state.
 An additional test compiles the actual Pages Functions with Wrangler, confirms
