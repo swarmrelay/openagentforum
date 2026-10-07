@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
+import { DatabaseSync } from 'node:sqlite';
 import { runAgentJourney } from './agent-journey.mjs';
 
 const exec = promisify(execFile), root = fileURLToPath(new URL('../', import.meta.url));
@@ -56,6 +57,33 @@ try {
       }
     }
   }
+  phase = 'installed request-allowance exports and contract';
+  const load = name => import(pathToFileURL(require.resolve(name)).href);
+  const [budget, sqliteBudget] = await Promise.all([
+    load('@openagentforum/server/public-write-budget'), load('@openagentforum/server/public-write-budget/sqlite'),
+  ]);
+  const serverRoot = join(consumer, 'node_modules', '@openagentforum', 'server');
+  for (const file of ['PUBLIC_WRITE_BUDGET.md', 'dist/public-write-budget.d.ts', 'dist/public-write-budget-sqlite.d.ts']) {
+    assert(existsSync(join(serverRoot, file)), 'Installed request-allowance contract is missing');
+  }
+  const config = { origin: 'https://relay.test', generation: 'a'.repeat(64), policy: {
+    windowMs: 86_400_000, ordinary: { requests: 1, inputBytes: 262144 }, completion: { requests: 1, inputBytes: 262144 },
+    operations: Object.fromEntries(Object.keys(budget.PUBLIC_WRITE_COSTS).map(op => [op, 1])),
+  } };
+  assert.equal(typeof budget.createD1PublicWriteAdmission({ withSession() { throw new Error('Constructor must not access D1'); } }, config).run, 'function');
+  const db = new DatabaseSync(':memory:');
+  try {
+    db.exec(budget.PUBLIC_WRITE_BUDGET_SCHEMA);
+    const seed = budget.publicWriteBudgetSeed(config);
+    db.prepare('INSERT INTO public_write_request_budget VALUES (1, 1, ?, ?, ?, ?)')
+      .run(seed.origin, seed.generation, seed.policy, seed.state);
+    const request = () => new Request('https://relay.test/v1/channels', { method: 'POST', body: '{}' });
+    let callbacks = 0;
+    await sqliteBudget.createSQLitePublicWriteAdmission(db, config).run(request(), 'channel', async () => { callbacks++; });
+    await assert.rejects(sqliteBudget.createSQLitePublicWriteAdmission(db, config).run(request(), 'channel', async () => { callbacks++; }),
+      error => error instanceof budget.PublicWriteBudgetError && error.code === 'public_write_rate_limited');
+    assert.equal(callbacks, 1);
+  } finally { db.close(); }
   phase = 'both executable aliases and offline diagnostics';
   assert.deepEqual(Object.keys(cliPackage.bin).sort(), ['openagentforum', 'swarmrelay']);
   for (const name of Object.keys(cliPackage.bin)) {
@@ -83,7 +111,6 @@ try {
     assert(report.checks.some(check => check.id === 'packages' && check.code === 'version_unavailable'));
   } finally { renameSync(heldMcp, mcp); }
   phase = 'installed client journey against loopback relay';
-  const load = name => import(pathToFileURL(require.resolve(name)).href);
   const [{ createStandaloneServer }, { serve }, { SwarmClient }, { verifyEnvelope }] = await Promise.all([
     load('@openagentforum/server/standalone'), load('@hono/node-server'), load('@openagentforum/sdk'), load('@openagentforum/protocol'),
   ]);
@@ -93,7 +120,8 @@ try {
   await exec('npm', ['audit', ...npmOptions, '--omit=dev', '--audit-level=low'],
     { cwd: consumer, env, timeout: 120_000, maxBuffer: 2 * 1024 * 1024 });
   console.log(JSON.stringify({ ok: true, versions, sourceBuildForced: true, pythonUnavailable: true,
-    installScriptsEnabled: true, nativeSqliteAddonAbsent: true, aliases: 2, doctorWithoutMcp: true, consumerAudit: true, journey }));
+    installScriptsEnabled: true, nativeSqliteAddonAbsent: true, aliases: 2, doctorWithoutMcp: true,
+    publicWriteBudgetExports: true, consumerAudit: true, journey }));
 } catch {
   // Package managers and subprocesses can include paths or environment diagnostics.
   console.error(`Clean CLI check failed during: ${phase}. No subprocess output was printed.`);
