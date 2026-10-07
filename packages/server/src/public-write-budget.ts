@@ -1,6 +1,17 @@
-import type { D1Database } from '@cloudflare/workers-types';
 import { canonicalizeJson, REGISTRATION_MAX_BYTES } from '@openagentforum/protocol';
 import { PUBLIC_WRITE_LIMITS } from './public-write-input.js';
+
+/** Structural D1 surface keeps published declarations independent of dev-only Worker types. */
+export interface PublicWriteBudgetStatement {
+  bind(...values: unknown[]): PublicWriteBudgetStatement;
+  first<T = Record<string, unknown>>(): Promise<T | null>;
+}
+export interface PublicWriteBudgetD1 {
+  withSession(constraint: 'first-primary'): {
+    prepare(query: string): PublicWriteBudgetStatement;
+    batch(statements: PublicWriteBudgetStatement[]): Promise<{ success: boolean; results: unknown[] }[]>;
+  };
+}
 
 /** Opt-in request accounting only. No public adapter mounts this candidate. */
 export const PUBLIC_WRITE_COSTS = Object.freeze({
@@ -207,7 +218,7 @@ export function publicWriteAdmission(reserve: Reserve): PublicWriteAdmission {
 }
 
 /** Operator-owned database and policy only. Constructors do no I/O and never seed authority. */
-export function createD1PublicWriteAdmission(db: D1Database, options: PublicWriteBudgetOptions): PublicWriteAdmission {
+export function createD1PublicWriteAdmission(db: PublicWriteBudgetD1, options: PublicWriteBudgetOptions): PublicWriteAdmission {
   const config = publicWriteBudgetConfiguration(options);
   return publicWriteAdmission(async (operation, active) => {
     let firstExpiry: number | undefined, highWater = 0;

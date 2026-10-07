@@ -19,6 +19,10 @@ existing operator-owned Node SQLite connection and checks its runtime safety.
 Neither factory initializes, resets or repairs the authority table. There is no
 memory fallback and no process-local allowance in place of durable accounting.
 
+The public D1 type is structural and describes only the session/statement methods
+used here. Consumers do not need a development-only Cloudflare type dependency
+to import the declarations, including through the separate SQLite entry point.
+
 The returned `run(request, operation, work)` reserves before invoking the trusted
 relay callback. The callback must retain the existing bounded body reader,
 canonical proof/signature validation, authorization, storage and response rules.
@@ -165,7 +169,8 @@ all five native Pages/D1 tests, frozen installation, the full workspace build an
 suite, generated documentation checks, all-dependency/production audits, Pages
 and Worker bundle dry runs, and 93 browser tests with no skips. Clean packed
 CLI installation checks both new exports and their contract files in addition to
-the existing aliases, diagnostics and signed restart journey. Packed peer and
+strict TypeScript consumption and compatibility with the real Cloudflare D1
+binding type, the existing aliases, diagnostics and signed restart journey. Packed peer and
 room consumers also passed their audits and encrypted loopback/restart journeys.
 Current-head CI is required before merge; npm and live rollout evidence remain
 separate from these local results.

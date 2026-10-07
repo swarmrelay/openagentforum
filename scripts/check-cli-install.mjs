@@ -66,6 +66,32 @@ try {
   for (const file of ['PUBLIC_WRITE_BUDGET.md', 'dist/public-write-budget.d.ts', 'dist/public-write-budget-sqlite.d.ts']) {
     assert(existsSync(join(serverRoot, file)), 'Installed request-allowance contract is missing');
   }
+  phase = 'strict installed request-allowance TypeScript consumer';
+  writeFileSync(join(consumer, 'budget-consumer.mts'), `
+import { createD1PublicWriteAdmission, type PublicWriteBudgetOptions } from '@openagentforum/server/public-write-budget';
+import { createSQLitePublicWriteAdmission } from '@openagentforum/server/public-write-budget/sqlite';
+import { DatabaseSync } from 'node:sqlite';
+declare const options: PublicWriteBudgetOptions;
+declare const d1: Parameters<typeof createD1PublicWriteAdmission>[0];
+createD1PublicWriteAdmission(d1, options);
+createSQLitePublicWriteAdmission(new DatabaseSync(':memory:'), options);
+`);
+  const compiler = join(root, 'node_modules/typescript/lib/tsc.js');
+  const typeArgs = ['--noEmit', '--strict', '--module', 'NodeNext', '--target', 'ES2022',
+    '--types', 'node', '--typeRoots', join(root, 'node_modules/@types')];
+  await exec(process.execPath, [compiler, ...typeArgs, 'budget-consumer.mts'],
+    { cwd: consumer, env, timeout: 30000, maxBuffer: 256 * 1024 });
+  // Separately prove that a real Cloudflare D1 binding fits the published structural surface.
+  writeFileSync(join(consumer, 'budget-worker-consumer.mts'), `
+import type { D1Database } from ${JSON.stringify(join(root, 'packages/server/node_modules/@cloudflare/workers-types/index.js'))};
+import { createD1PublicWriteAdmission, type PublicWriteBudgetOptions } from '@openagentforum/server/public-write-budget';
+declare const db: D1Database;
+declare const options: PublicWriteBudgetOptions;
+createD1PublicWriteAdmission(db, options);
+`);
+  await exec(process.execPath, [compiler, ...typeArgs, 'budget-worker-consumer.mts'],
+    { cwd: consumer, env, timeout: 30000, maxBuffer: 256 * 1024 });
+  phase = 'installed request-allowance behavior';
   const config = { origin: 'https://relay.test', generation: 'a'.repeat(64), policy: {
     windowMs: 86_400_000, ordinary: { requests: 1, inputBytes: 262144 }, completion: { requests: 1, inputBytes: 262144 },
     operations: Object.fromEntries(Object.keys(budget.PUBLIC_WRITE_COSTS).map(op => [op, 1])),
@@ -121,7 +147,7 @@ try {
     { cwd: consumer, env, timeout: 120_000, maxBuffer: 2 * 1024 * 1024 });
   console.log(JSON.stringify({ ok: true, versions, sourceBuildForced: true, pythonUnavailable: true,
     installScriptsEnabled: true, nativeSqliteAddonAbsent: true, aliases: 2, doctorWithoutMcp: true,
-    publicWriteBudgetExports: true, consumerAudit: true, journey }));
+    publicWriteBudgetExports: true, publicWriteBudgetTypes: true, consumerAudit: true, journey }));
 } catch {
   // Package managers and subprocesses can include paths or environment diagnostics.
   console.error(`Clean CLI check failed during: ${phase}. No subprocess output was printed.`);
