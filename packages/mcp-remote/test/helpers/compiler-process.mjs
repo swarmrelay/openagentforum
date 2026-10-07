@@ -2,7 +2,10 @@
 import { spawn } from 'node:child_process';
 
 export function compilerEnvironment(source = process.env) {
-  const env = { ...source, WRANGLER_SEND_METRICS: 'false' };
+  // The pinned Wrangler banner starts an npm update check. Its timeout rejects
+  // without closing the request, which can keep an otherwise finished build
+  // alive. Compilation needs no version lookup; keep it off this test path.
+  const env = { ...source, WRANGLER_SEND_METRICS: 'false', WRANGLER_HIDE_BANNER: 'true' };
   // This override belongs to the subsequent native fixture, not compilation.
   delete env.MINIFLARE_WORKERD_PATH;
   return env;

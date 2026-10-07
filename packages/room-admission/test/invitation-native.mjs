@@ -8,11 +8,12 @@ import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
 import { Miniflare } from 'miniflare';
 import workerd from 'workerd';
-import { roomFailureLine } from './fixtures/room-diagnostics.mjs';
+import { roomFailureLine, roomFailureFromOutput } from './fixtures/room-diagnostics.mjs';
 
 // Trusted test harness inputs only. The packed-consumer check reuses this exact
 // journey with client processes outside the checkout; the hub stays parent-owned.
-export async function runInvitationJourney({ agentScript = fileURLToPath(new URL('./fixtures/invitation-agent.mjs', import.meta.url)), agentCwd, agentEnv, restart = false } = {}) {
+export async function runInvitationJourney({ agentScript = fileURLToPath(new URL('./fixtures/invitation-agent.mjs', import.meta.url)), agentCwd, agentEnv, restart = false, forumFault } = {}) {
+  assert.ok(forumFault === undefined || ['message-insert', 'agent-metadata'].includes(forumFault));
   const scratch = await mkdtemp(join(tmpdir(), 'oaf-room-invitation-native-'));
   const previous = process.env.MINIFLARE_WORKERD_PATH, children = [];
   let mf, outbound = 0;
@@ -43,6 +44,9 @@ export async function runInvitationJourney({ agentScript = fileURLToPath(new URL
       await sql(ordinary.split(';').filter(s => s.trim())); if (trigger >= 0) await sql([schema.slice(trigger)]);
     }
     assert.equal((await worker.fetch('https://fixture.invalid/test-only/init', { method: 'POST' })).status, 200);
+    // Trusted parent-only fault in disposable storage. Never change client lifetimes or retry a POST.
+    if (forumFault) await sql([`CREATE TRIGGER fixture_forum_fault BEFORE ${forumFault === 'message-insert'
+      ? 'INSERT ON messages' : 'UPDATE OF last_seen_at ON agents'} BEGIN SELECT RAISE(FAIL, 'PRIVATE_FIXTURE_STORAGE_MARKER'); END`]);
     const launch = async (role, mode, identity, roomId) => {
       const directory = join(scratch, role); if (mode !== 'return') await mkdir(directory, { mode: 0o700 });
       const child = fork(agentScript, [role, directory, endpoint, mode, ...(mode === 'return' ? [identity.signingPublicKey, roomId] : [])],
@@ -130,4 +134,17 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     { timeout: 45000 }, () => runInvitationJourney());
   test('both agents exit and reopen in new processes, explicitly negotiate a fresh session in their retained room, exchange and close',
     { timeout: 45000 }, () => runInvitationJourney({ restart: true }));
+  for (const stage of ['message-insert', 'agent-metadata']) test(`a real Pages/D1 ${stage} failure survives the fixed diagnostic filter without raw data`,
+    { timeout: 45000 }, async t => {
+      const lines = [];
+      t.mock.method(console, 'error', line => lines.push(line));
+      await assert.rejects(runInvitationJourney({ forumFault: stage }), /Local room fixture failed; see fixed diagnostic/);
+      assert.equal(lines.length, 1);
+      const line = roomFailureFromOutput('# ' + lines[0] + '\n');
+      assert.equal(line, lines[0]); assert.ok(!line.includes('PRIVATE_FIXTURE_STORAGE_MARKER'));
+      const value = JSON.parse(line.slice('OAF_ROOM_FAILURE '.length));
+      assert.equal(value.operation, 'forum-post'); assert.equal(value.status, 500); assert.equal(value.phase, 'start-setup');
+      assert.equal(value.storage.last, stage); assert.equal(value.storage.failed, stage);
+      assert.ok(['d1', 'constraint'].includes(value.storage.error));
+    });
 }

@@ -9,11 +9,13 @@ import { compilerEnvironment, CompilerProcessError, runCompiler } from './helper
 const run = (code, options = {}) => runCompiler(process.execPath, ['--input-type=module', '-e', code],
   { timeoutMs: 1000, cleanupMs: 50, ...options });
 
-test('compiler environment excludes fixture runtime without mutating its caller', () => {
-  const source = { PATH: 'test-path', MINIFLARE_WORKERD_PATH: 'fixture-only', WRANGLER_SEND_METRICS: 'true' };
-  assert.deepEqual(compilerEnvironment(source), { PATH: 'test-path', WRANGLER_SEND_METRICS: 'false' });
+test('compiler environment excludes fixture runtime and banner update checks without mutating its caller', () => {
+  const source = { PATH: 'test-path', MINIFLARE_WORKERD_PATH: 'fixture-only', WRANGLER_SEND_METRICS: 'true',
+    WRANGLER_HIDE_BANNER: 'false' };
+  assert.deepEqual(compilerEnvironment(source), { PATH: 'test-path', WRANGLER_SEND_METRICS: 'false', WRANGLER_HIDE_BANNER: 'true' });
   assert.equal(source.MINIFLARE_WORKERD_PATH, 'fixture-only');
   assert.equal(source.WRANGLER_SEND_METRICS, 'true');
+  assert.equal(source.WRANGLER_HIDE_BANNER, 'false');
 });
 
 test('compiler success requires natural zero exit and closed pipes; split marker is only diagnostic', async () => {

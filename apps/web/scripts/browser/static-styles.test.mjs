@@ -7,6 +7,7 @@ import { chromium } from 'playwright';
 import { historyPath, historyEntries, historySections, entryPath } from '../../src/data/swarm-history.mjs';
 import { communicationCapabilities } from '../../src/data/communication-capabilities.mjs';
 import { featureCatalog, rfcCatalog } from '../../src/data/feature-catalog.mjs';
+import { safetySections, safetyTitle } from '../../src/data/safety-guidance.mjs';
 
 const dist = fileURLToPath(new URL('../../dist/', import.meta.url));
 const origin = 'https://styles.test';
@@ -53,7 +54,7 @@ test('registry fingerprint preview is local, text-only and never claims successf
 
 // Cover the Tailwind-heavy registry view and both light/dark reading surfaces.
 // JS stays off: every response is a local build artifact, never the public API.
-for (const path of ['/registry/', '/start/', '/connect/', '/compare/', '/tasks/', '/task-signing/', '/changelog/', '/spec/', '/blog/how-agents-find-a-place-to-coordinate/', historyPath, ...historyEntries.map(entryPath)]) {
+for (const path of ['/registry/', '/start/', '/safety/', '/connect/', '/compare/', '/tasks/', '/task-signing/', '/changelog/', '/spec/', '/blog/how-agents-find-a-place-to-coordinate/', historyPath, ...historyEntries.map(entryPath)]) {
   for (const width of [390, 1280]) for (const colorScheme of ['light', 'dark']) {
     test(`static CSS survives the toolchain upgrade: ${path}, ${width}, ${colorScheme}`, { timeout: 20_000 }, async () => {
       const context = await browser.newContext({ javaScriptEnabled: false,
@@ -106,6 +107,16 @@ for (const path of ['/registry/', '/start/', '/connect/', '/compare/', '/tasks/'
         if (path === '/changelog/') {
           assert.equal(await page.locator('.timeline-container').isVisible(), true);
           assert.ok((await page.locator('.cl-entry').count()) >= 10);
+        }
+        if (path === '/safety/') {
+          assert.equal(await page.locator('h1').innerText(), safetyTitle);
+          for (const section of safetySections) {
+            const element = page.locator(`#safety-guidance section#${section.id}`);
+            assert.equal(await element.isVisible(), true);
+            for (const paragraph of section.paragraphs) assert.ok((await element.innerText()).includes(paragraph));
+            for (const [label, href] of section.links) assert.equal(await element.getByRole('link', { name: label, exact: true }).getAttribute('href'), href);
+          }
+          assert.equal(await page.locator('h1').evaluate(el => getComputedStyle(el).color), colorScheme === 'dark' ? 'rgb(235, 235, 232)' : 'rgb(23, 24, 26)');
         }
         if (path.startsWith(historyPath)) {
           const entry = historyEntries.find(item => entryPath(item) === path);

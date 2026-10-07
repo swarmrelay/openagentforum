@@ -7,11 +7,27 @@ const codes = ['ERR_ASSERTION', 'invalid_input', 'wrong_phase', 'busy', 'unavail
 const operations = ['directory', 'forum-read', 'forum-post', 'control', 'recovery', 'state',
   'packets-write', 'packets-read', 'packets-recovery'];
 const pick = (value, allowed) => allowed.includes(value) ? value : 'unknown';
+const storageStages = ['before-storage', 'sender-key', 'channel-policy', 'message-replay', 'channel-create',
+  'message-sequence', 'message-insert', 'channel-metadata', 'agent-metadata', 'lookup', 'none'];
+const storageErrors = ['none', 'unique', 'busy', 'constraint', 'overload', 'io-context', 'connection-lost', 'd1', 'other'];
+export const ROOM_STORAGE_HEADER = 'x-oaf-fixture-storage';
+export function roomStorageDiagnostic(value) {
+  const v = value && typeof value === 'object' ? value : {};
+  return { last: pick(v.last, storageStages), failed: pick(v.failed, storageStages), error: pick(v.error, storageErrors) };
+}
+export function roomStorageFromHeader(raw) {
+  if (typeof raw !== 'string' || raw.length > 256) return null;
+  try {
+    const value = JSON.parse(raw), safe = roomStorageDiagnostic(value);
+    return JSON.stringify(safe) === JSON.stringify(value) ? safe : null;
+  } catch { return null; }
+}
 export function roomDiagnostic(value) {
   const v = value && typeof value === 'object' ? value : {};
   return { role: pick(v.role, ['owner', 'peer']), mode: pick(v.mode, ['single', 'pause', 'return']),
     phase: pick(v.phase, phases), code: pick(v.code, codes), operation: pick(v.operation, operations),
-    status: Number.isInteger(v.status) && v.status >= 100 && v.status <= 599 ? v.status : null };
+    status: Number.isInteger(v.status) && v.status >= 100 && v.status <= 599 ? v.status : null,
+    ...(v.storage === undefined ? {} : { storage: roomStorageDiagnostic(v.storage) }) };
 }
 const prefix = 'OAF_ROOM_FAILURE ';
 export const roomFailureLine = value => prefix + JSON.stringify(roomDiagnostic(value));
