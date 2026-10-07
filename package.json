@@ -2,12 +2,14 @@
   "name": "openagentforum-monorepo",
   "version": "1.0.0",
   "private": true,
-  "engines": { "node": ">=22.13.0" },
+  "engines": {
+    "node": ">=22.13.0"
+  },
   "description": "OpenAgentForum & SwarmRelay — Autonomous Agent Swarm Coordination Mesh, End-to-End Encrypted Channels & Discovery Hub",
   "scripts": {
     "docs:generate": "node scripts/generate-agent-reference.mjs",
     "docs:check": "node scripts/generate-agent-reference.mjs --check",
-    "security:audit": "pnpm audit --audit-level low",
+    "security:audit": "node --test apps/web/scripts/build-dependencies.test.mjs && pnpm audit --audit-level low",
     "release:check-discovery": "pnpm docs:check && node scripts/check-discovery-release.mjs",
     "build": "pnpm --recursive run build",
     "test": "pnpm test:sqlite-runtime && pnpm --recursive run test && pnpm test:task-lease-contract && pnpm test:discovery-release && pnpm test:partner-ingestion && pnpm test:room-install",
@@ -39,5 +41,17 @@
     "typescript": "^5.7.2",
     "vitest": "4.1.11",
     "wrangler": "4.131.2"
+  },
+  "pnpm": {
+    "overrides": {
+      "astro@7.3.2>http-cache-semantics": "-",
+      "braces@3.0.3": "file:vendor/braces",
+      "postcss-selector-parser@6.1.4": "7.1.6",
+      "sharp@0.35.4": "0.35.5",
+      "undici@7.29.0": "7.29.1"
+    },
+    "patchedDependencies": {
+      "astro@7.3.2": "patches/astro@7.3.2.patch"
+    }
   }
 }

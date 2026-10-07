@@ -47,3 +47,12 @@ Bundled runtime components need separate checks. Node SQLite WAL users enforce
 the upstream WAL-reset fix before initialization; see [runtime safety](docs/sqlite-runtime-safety.md).
 Run `pnpm runtime:check` after building with the intended Node runtime. This
 in-memory probe opens no service database and does not replace dependency audits.
+
+The build has two reviewed local controls for advisories without an upstream
+patch: a depth-bounded private braces compatibility copy and an Astro patch that
+disables unused remote-image build fetching/revalidation. `security:audit` first
+tests the actual installed controls, then runs the unchanged all-severity npm
+audit. Local source is not covered by registry advisories; its provenance, limits
+and removal conditions are recorded in [the #339 review](docs/dependency-security.md#completion-of-339--2026-10-06).
+Do not drop the local-control check, introduce a new fork without source review,
+or describe this as an upstream patched release.

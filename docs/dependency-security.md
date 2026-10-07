@@ -181,6 +181,128 @@ message visibility and limited-circuit connectivity from payload encryption and
 actual gossip delivery. Review, npm publication, clean registry validation and
 any subsequent installed-service rollout remain separate from this source fix.
 
+## Weekly audit follow-up — #339 (2026-10-05)
+
+The scheduled all-severity audit failed on unchanged `main` at `96183bde`
+([run 37373973668](https://github.com/swarmrelay/openagentforum/actions/runs/37373973668)).
+The same commit passed on 2026-09-28. Reproduced locally: 24 findings
+(9 high, 11 moderate, 4 low). No advisory ignore, audit-level change, or
+`--ignore-registry-errors` is added. Published package manifests are unchanged,
+so this lockfile refresh does not by itself require an npm release.
+
+| Package | Before | After | Why this version |
+| --- | --- | --- | --- |
+| `hono` | 4.13.5 | 4.13.7 | Smallest release that clears [GHSA-hxh3-vqpv-xpqv](https://github.com/advisories/GHSA-hxh3-vqpv-xpqv). Existing `^4.7.1` ranges in `apps/web` and `@openagentforum/server` already allowed it. |
+| `fast-uri` | 3.1.6 | 3.1.8 | Latest 3.x. Clears the 3.1.7 and 3.1.8 advisories. `ajv@8.20.0` already depends on `^3.0.1`. |
+| `ip-address` | 10.7.0 | 10.7.3 | Advisory floor is 10.7.1. 10.7.2 and 10.7.3 are later 10.x patches inside `express-rate-limit`'s `^10.2.0`. |
+| `devalue` | 5.9.2 | 5.9.3 | Smallest release that clears the devalue advisories. Astro 7.3.2–7.3.5 all depend on `^5.8.1`, so an Astro bump was not required. 5.9.4 is a tree-shake annotation; 6.x is a new major. |
+| `undici` | 7.29.0 | 7.29.1 | Same-major override `undici@7.29.0` → `7.29.1`. Direct `miniflare@5.20260911.1-alpha` and `wrangler@4.131.2` still declare undici 7.29.0 exactly. `undici@8.10.2` is unchanged. |
+
+`fast-uri` and `ip-address` resolve through `@modelcontextprotocol/sdk@1.30.0`
+(`ajv`, `express-rate-limit`). That SDK release, including 1.32.1, still uses
+ranges that already admit these versions, so the MCP package version and
+generated discovery metadata stay at 1.2.1. A fresh install of the published
+package is not updated by this lockfile; consumers who re-resolve within those
+ranges can already select the patched versions.
+
+Hono JSX check: `apps/web` lists `hono` directly, and no file under `apps/web`
+imports it. `@openagentforum/server` imports the `Hono` router and `hono/cors`
+only. Nothing in the repository imports `hono/jsx`, `Suspense`, `ErrorBoundary`,
+`Context.Provider`, or `hono/jsx/dom/server`. The advisory applies to plain
+strings rendered in those server-rendering positions. This repository does not
+use that path. The dependency is still bumped because the audit records the
+installed package.
+
+Undici is the development Miniflare HTTP client used by local Pages/D1 fixtures,
+not the live Pages request handler. Newer Miniflare `5.20261001.0-alpha` and
+Wrangler `4.147.0` depend on undici 7.29.1 together with workerd
+`1.20261001.1`. Those parents were not adopted here: deployment workflow inputs
+remain Wrangler `4.131.2`, and moving them is a separate deployment-tooling
+change. The override is a resolution pin to the patched 7.29.1 release, not an
+advisory suppression.
+
+Two findings remain, with no ignore entry:
+
+| Package | Installed | Advisory | Upstream status on 2026-10-05 | Maintainer decision still required |
+| --- | --- | --- | --- | --- |
+| `http-cache-semantics` | 4.2.0 via `astro@7.3.2` | [GHSA-ch52-4w7c-c8xp](https://github.com/advisories/GHSA-ch52-4w7c-c8xp) (high) | No patched version. `4.3.0` (2026-10-04) changes Vary matching and exposes response status; the max-stale logic is unchanged, and the advisory still lists `<=4.2.0` with no first patched version. Left at 4.2.0 so a newer version cannot hide the finding. | Accept the risk, wait for a fix that the advisory names, or replace Astro's remote-asset cache. Astro imports this package from `dist/assets/build/remote.js`. This site does not configure `astro:assets` or a remote image service, and Pages Functions do not import Astro. |
+| `braces` | 3.0.3 via `tailwindcss` → `chokidar` | [GHSA-vfj7-8cjw-p6xm](https://github.com/advisories/GHSA-vfj7-8cjw-p6xm) (high) | No release after 3.0.3, and the advisory lists no patched version. | Accept the risk, wait for a braces release, or replace the Tailwind 3 file watcher. The path is build/dev glob expansion, not a request handler. |
+
+The October 5 candidate's `pnpm audit --audit-level low` reported those 2 high
+findings and nothing else. Its PR audit job failed. The October 6 completion
+below supersedes this pending disposition without weakening the workflow gate.
+
+## Completion of #339 — 2026-10-06
+
+Fresh registry data reported seven additional findings after the two original
+build dependencies were addressed. This illustrates why the older green checks
+cannot be treated as a current audit. Remediation includes:
+
+| Dependency | Final resolution | Boundary |
+| --- | --- | --- |
+| `proxy-addr` 2.0.7 | 2.0.8 within Express's existing range | [GHSA-jqcg-44mw-7w3h](https://github.com/advisories/GHSA-jqcg-44mw-7w3h); bundled by the MCP SDK, not authority for an OAF identity or budget. |
+| `source-map-js` 1.2.1 | 1.2.2 within existing ranges | [GHSA-68fv-2mgg-jv7q](https://github.com/advisories/GHSA-68fv-2mgg-jv7q); build source-map handling. |
+| `smol-toml` 1.8.0 | 1.9.0 within existing ranges | [GHSA-r4xh-jqrq-34v2](https://github.com/advisories/GHSA-r4xh-jqrq-34v2); build/config parsing. |
+| `sharp` 0.35.4 | exact-version override to 0.35.5 | [GHSA-wq5f-xc86-pv6w](https://github.com/advisories/GHSA-wq5f-xc86-pv6w); pinned Miniflare parent still selects 0.35.4. Same-minor patch, not a public image endpoint. |
+| `postcss-selector-parser` 6.1.4 | exact-version override to 7.1.6 | [GHSA-rj75-hqrm-r3gf](https://github.com/advisories/GHSA-rj75-hqrm-r3gf); Tailwind 3 and postcss-nested need the fixed parser. Upstream v7 changes insertion-during-iteration behavior; the existing build and browser checks validate this crossing. |
+| MCP SDK 1.30.0 / client 2.0.0 | workspace SDK 1.32.1; native test clients pinned to SDK 1.31.0 / client 2.2.0 | [GHSA-6qxp-vccf-f47h](https://github.com/modelcontextprotocol/typescript-sdk/security/advisories/GHSA-6qxp-vccf-f47h); the upstream advisory excludes MCP servers and stdio clients. OAF has no OAuth credential provider. Native public-reader tests still use both client generations. |
+
+Published package manifests and discovery versions are unchanged in this
+dependency PR. The existing MCP runtime range admits the patched SDK; the lock
+refresh changes this checkout, not already installed consumers. The private
+browser package's **test** clients change, while its server stays 2.0.0. This is
+not a new OAuth feature, npm publication or account-connection claim.
+
+### Build paths with no upstream patch
+
+Both advisories remain active in the registry, even though their maintainers
+dispute their classification. That disagreement alone is not used to pass the
+gate. There are no ignored advisory IDs, severity exclusions or accepted
+registry failures.
+
+- **Braces:** replace the exact `braces@3.0.3` resolution with the private
+  [bounded compatibility copy](../vendor/braces/README.md), retaining the MIT
+  license and recording the original tarball integrity. Mandatory depth checks
+  cover brace/parenthesis parsing and direct compile/expand/stringify ASTs. The
+  runtime diff follows the small guard proposed in upstream PR #78 at
+  `97308a01d091b211cf015314a2d0696da28a5392`; it is not an accepted upstream
+  release. Tailwind 3, Chokidar and Micromatch retain their existing APIs.
+  Expansion cardinality and arbitrary hostile glob/AST safety are not solved.
+- **Astro remote-image cache:** remove its exact `http-cache-semantics` dependency
+  and apply a committed pnpm patch to Astro 7.3.2's remote-image build module.
+  Both load and revalidation fail before network access or old-cache inspection.
+  This site does not use remote image optimization. Ordinary HTML image URLs,
+  local assets, static rendering and the separate Pages Functions are unchanged.
+  This deliberately disables the unused feature rather than implementing another
+  HTTP cache or moving to an unverified version outside the advisory's range.
+
+`pnpm security:audit` now runs the installed-build-control regression first,
+followed by `pnpm audit --audit-level low`. It resolves through Chokidar and
+Micromatch, exercises 4,000-level patterns under a 512-KiB stack, direct/cyclic ASTs
+and depth boundaries, preserves normal alternatives/ranges/escapes, and proves
+Astro cannot call the injected fetch or inspect retained cache data. The same
+regressions run in the ordinary web suite. A frozen installation must apply the
+patch; failed or missing controls fail the gate before the registry audit.
+
+The npm scanner cannot assess locally maintained source. This is explicit
+remediation plus local verification, not a claim that renaming a dependency makes
+it safe or that npm certifies the fork. Remove the fork/patch and corresponding
+overrides when reviewed upstream replacements pass these same checks. Enabling
+Astro remote-image optimization requires a new cache/security review. Narrow
+Sharp, selector-parser and Undici overrides can be removed when their parent
+packages require fixed versions. CI deployment serialization, release preflight,
+all-severity scanning and failure behavior remain unchanged.
+
+Local validation on Node 22.23.3 passed frozen installation, the full workspace
+build and suite (including native D1 and independent room restart journeys),
+documentation checks, clean-installed CLI and peer consumers, Pages/Worker
+bundle dry runs, and all-dependency and production-only registry audits. The
+final Astro cache guard additionally passed all eight installed-control checks,
+the full rebuild and all 89 browser tests with no skips. The unmodified upstream
+braces negative control reproduced the stack overflow under the same small
+stack. Current-head Linux CI remains the merge gate; these results do not claim
+a production rollout or an independent security audit.
+
 ## Upstream references
 
 The separate [Node SQLite runtime assessment](sqlite-runtime-safety.md), #312,

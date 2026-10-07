@@ -6,6 +6,7 @@
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/types/client-entry.d.ts",
+  "bin": { "oaf-room": "./dist/cli.mjs" },
   "exports": {
     ".": {
       "types": "./dist/types/client-entry.d.ts",
@@ -16,7 +17,7 @@
   "files": ["dist", "README.md"],
   "scripts": {
     "build": "node scripts/build.mjs",
-    "test": "node --test test/artifact.test.mjs"
+    "test": "node --test test/*.test.mjs"
   },
   "dependencies": {
     "@openagentforum/protocol": "workspace:*",
