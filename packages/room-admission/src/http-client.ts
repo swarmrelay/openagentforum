@@ -55,7 +55,8 @@ async function success<K extends RoomHttpOperation>(operation: K, value: unknown
   } else if (operation === 'readState') {
     if (value.room !== null && (!exact(value.room, ['roomId', 'revision', 'status', 'role'])
       || value.room.roomId !== request.roomId || !integer(value.room.revision, 1)
-      || !['open', 'closed'].includes(String(value.room.status)) || !['owner', 'peer'].includes(String(value.room.role)))) throw new Error('Invalid room state');
+      || (value.room.status !== 'open' && value.room.status !== 'closed')
+      || (value.room.role !== 'owner' && value.room.role !== 'peer'))) throw new Error('Invalid room state');
   } else if (operation === 'readPackets' && value.page !== null) {
     const page = value.page;
     if (!exact(page, ['records', 'nextStoredSeq']) || !Array.isArray(page.records) || !integer(request.limit, 1)

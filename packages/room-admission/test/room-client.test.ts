@@ -324,6 +324,24 @@ it('close single-flight releases after a pre-mutation failure', async () => {
   expect(s.calls.filter(c => c.body?.action === 'close')).toHaveLength(1);
 });
 
+it.each(['status', 'role'])('malformed %s in the state preflight cannot trigger a close mutation', async field => {
+  const s = await setup(); await s.accepted(); const roomId = s.a.roomId!;
+  const fetcher: typeof fetch = async (input, init) => {
+    const response = await s.fetcher(input, init);
+    if (!String(input).endsWith('/state')) return response;
+    const result = await response.json() as { room: Record<string, unknown> };
+    result.room[field] = [result.room[field]];
+    return Response.json(result);
+  };
+  await expect(closeRoom(s.local[0], roomId, fetcher)).rejects.toMatchObject({ code: 'unavailable', recovery: null });
+  expect(s.calls.filter(c => c.body?.action === 'close')).toHaveLength(0);
+  expect(s.local[0].pending()).toEqual([]);
+  expect((await readRoomStatus(s.local[0], roomId, s.fetcher))?.status).toBe('open');
+  // The failed read is not a retained mutation and must release the local guard.
+  expect((await closeRoom(s.local[0], roomId, s.fetcher)).status).toBe('closed');
+  expect(s.calls.filter(c => c.body?.action === 'close')).toHaveLength(1);
+});
+
 it('records a handshake failure for recovery without starting another session', async () => {
   const s = await setup(); await s.accepted();
   s.fault.drop = '/v1/rooms/packets/write';
