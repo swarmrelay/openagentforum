@@ -19,6 +19,7 @@ export function createSQLitePublicWriteAdmission(db: DatabaseSync, options: Publ
       const validUntil = started + plan.expiresAt - plan.clock;
       active();
       if (performance.now() >= validUntil) throw new PublicWriteBudgetError('public_write_budget_busy');
+      // Planning above verifies the row and its canonical state before this bind.
       const committed = db.prepare(PUBLIC_WRITE_BUDGET_CAS).get(plan.stateJson, config.origin, config.generation,
         config.policyJson, row!.state_json!, plan.clock, plan.expiresAt);
       if (!committed) throw new PublicWriteBudgetError('public_write_budget_busy');

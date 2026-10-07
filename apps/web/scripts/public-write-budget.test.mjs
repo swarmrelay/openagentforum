@@ -122,6 +122,19 @@ test('native committed lost acknowledgments and full runtime restart never refil
   const [rows] = await sql([{ sql: "SELECT name FROM channels WHERE title = 'Fixture'" }]); assert.deepEqual(rows.results, [{ name: 'remaining' }]);
 });
 
+for (const stage of ['read', 'commit']) test(`native client cancellation after ${stage} leaves the same wrapper usable without refunding a commit`, async () => {
+  await configure(true, options(2));
+  const cancelled = await send('/v1/channels', { name: 'cancelled', title: 'Fixture' }, { 'x-fixture-failure': `abort-${stage}` });
+  assert.equal(cancelled.status, 503); assert.equal(cancelled.headers.get('x-fixture-protected-calls'), '0');
+  const spent = stage === 'commit' ? 1 : 0;
+  assert.equal((await state()).ordinary.requests, spent);
+  assert.equal((await send('/v1/channels', { name: 'healthy', title: 'Fixture' })).status, 200);
+  assert.equal((await state()).ordinary.requests, spent + 1);
+  if (stage === 'commit') assert.equal((await send('/v1/channels', { name: 'overflow', title: 'Fixture' })).status, 429);
+  const [rows] = await sql([{ sql: "SELECT name FROM channels WHERE title = 'Fixture'" }]);
+  assert.deepEqual(rows.results, [{ name: 'healthy' }]);
+});
+
 test('native missing authority and backward database time fail closed without reseeding', async () => {
   await configure();
   const future = await state(); future.clock = Date.now() + 86400000; future.bucket = Math.floor(future.clock / configured.policy.windowMs);

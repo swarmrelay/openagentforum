@@ -167,11 +167,17 @@ export function planPublicWriteCharge(row: Record<string, unknown> | null | unde
 }
 type Grant = { validUntil: number };
 type Reserve = (operation: PublicWriteOperation, active: () => void) => Promise<Grant>;
+// A caller can cancel its own request, but cannot latch the shared wrapper shut.
+class RequestAborted extends Error {}
+const knownRefusal = (error: unknown) => error instanceof PublicWriteBudgetError
+  && (error.code === 'public_write_rate_limited' || error.code === 'public_write_budget_busy');
 /** Internal composition: no public reservation token, refunds, request retries or caller-defined costs. */
 export function publicWriteAdmission(reserve: Reserve): PublicWriteAdmission {
   let inFlight = 0, poisoned = false;
   return Object.freeze({ async run<T>(request: Request, operation: PublicWriteOperation, work: () => Promise<T>): Promise<T> {
     let started = false, counted = false, timer: ReturnType<typeof setTimeout> | undefined, expired = false;
+    let reservationPending = false, requestFinished = false;
+    const release = () => { if (counted) { counted = false; inFlight--; } };
     let onAbort: (() => void) | undefined;
     try {
       if (request.method !== 'POST' || request.signal.aborted || !Object.hasOwn(PUBLIC_WRITE_COSTS, operation)) {
@@ -183,22 +189,36 @@ export function publicWriteAdmission(reserve: Reserve): PublicWriteAdmission {
       const deadline = performance.now() + reservationMs;
       // Timers cannot interrupt synchronous SQLite or a blocked event loop.
       const active = () => {
-        if (expired || poisoned || request.signal.aborted || performance.now() >= deadline) throw unavailable();
+        if (request.signal.aborted) throw new RequestAborted();
+        if (expired || poisoned || performance.now() >= deadline) throw unavailable();
       };
       let grant: Grant;
       try {
         // Install the abort listener before starting storage, including synchronous adapters.
         const interrupted = new Promise<never>((_, reject) => {
           timer = setTimeout(() => { expired = true; reject(unavailable()); }, reservationMs);
-          onAbort = () => { expired = true; reject(unavailable()); };
+          onAbort = () => reject(new RequestAborted());
           request.signal.addEventListener('abort', onAbort, { once: true });
         });
-        grant = await Promise.race([interrupted, reserve(operation, active)]);
+        const reservation = (async () => {
+          reservationPending = true;
+          try { return await reserve(operation, active); }
+          catch (error) {
+            // Observe real storage failures even if the caller's abort won the race.
+            if (!(error instanceof RequestAborted) && !knownRefusal(error)) poisoned = true;
+            throw error;
+          } finally {
+            reservationPending = false;
+            if (requestFinished) release();
+          }
+        })();
+        grant = await Promise.race([interrupted, reservation]);
         active();
         if (!Number.isFinite(grant.validUntil)) throw unavailable();
         if (performance.now() >= grant.validUntil) throw new PublicWriteBudgetError('public_write_budget_busy');
       } catch (error) {
-        if (error instanceof PublicWriteBudgetError && (error.code === 'public_write_rate_limited' || error.code === 'public_write_budget_busy')) throw error;
+        if (error instanceof RequestAborted) throw unavailable();
+        if (knownRefusal(error)) throw error;
         poisoned = true; throw unavailable();
       } finally {
         clearTimeout(timer);
@@ -211,7 +231,10 @@ export function publicWriteAdmission(reserve: Reserve): PublicWriteAdmission {
     } finally {
       clearTimeout(timer);
       if (onAbort) request.signal.removeEventListener('abort', onAbort);
-      if (counted) inFlight--;
+      requestFinished = true;
+      // An aborted HTTP request can finish before its uncancellable D1 operation.
+      // Keep that operation counted so repeated disconnects cannot evade the cap.
+      if (!reservationPending) release();
       if (!started && request.body && !request.body.locked) void request.body.cancel().catch(() => {});
     }
   } });
@@ -238,13 +261,13 @@ export function createD1PublicWriteAdmission(db: PublicWriteBudgetD1, options: P
       const session = db.withSession('first-primary');
       const result = await session.batch([session.prepare(PUBLIC_WRITE_BUDGET_CAS)
         .bind(plan.stateJson, config.origin, config.generation, config.policyJson, row.state_json, plan.clock, plan.expiresAt)]);
-      active();
       if (result.length !== 1 || result[0].success !== true || !Array.isArray(result[0].results)) throw unavailable();
       // Retry only an acknowledged zero-row CAS, never an uncertain/charged attempt or application work.
-      if (result[0].results.length === 0) continue;
+      if (result[0].results.length === 0) { active(); continue; }
       const committed = result[0].results[0];
       if (result[0].results.length !== 1 || !record(committed) || committed.state_json !== plan.stateJson
         || number(committed.db_now, maxTime) < plan.clock || Number(committed.db_now) >= plan.expiresAt) throw unavailable();
+      active();
       return { validUntil };
     }
     throw new PublicWriteBudgetError('public_write_budget_busy');

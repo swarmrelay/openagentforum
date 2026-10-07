@@ -34,17 +34,31 @@ export default { async fetch(request, env) {
     const value = Reflect.get(target, property); return typeof value === 'function' ? value.bind(target) : value;
   } });
   const mode = request.headers.get('x-fixture-failure');
+  const controller = mode?.startsWith('abort-') ? new AbortController() : undefined;
+  let abortIssued = false;
+  if (controller) request = new Request(request, { signal: controller.signal });
+  const abortOnce = stage => {
+    if (controller && mode === `abort-${stage}` && !abortIssued) { abortIssued = true; controller.abort(); }
+  };
   const budgetDB = { withSession(kind) {
     if (kind !== 'first-primary') throw new Error('Replica read not permitted');
     const session = env.DB.withSession(kind);
-    return { prepare: sql => session.prepare(sql), async batch(statements) {
+    return { prepare: sql => {
+      const statement = session.prepare(sql);
+      return { bind: (...values) => statement.bind(...values), async first() {
+        const row = await statement.first(); abortOnce('read'); return row;
+      } };
+    }, async batch(statements) {
       budgetBatches++; const result = await session.batch(statements);
       if (mode === 'lost') throw new Error('fixture lost commit acknowledgment');
+      abortOnce('commit');
       return result;
     } };
   } };
   const fresh = request.headers.has('x-fixture-new-instance') || mode;
-  const selected = fresh ? createD1PublicWriteAdmission(budgetDB, config) : gate;
+  // Retain the cancelled request's exact wrapper for the next native request.
+  if (controller) gate = createD1PublicWriteAdmission(budgetDB, config);
+  const selected = controller ? gate : fresh ? createD1PublicWriteAdmission(budgetDB, config) : gate;
   if (request.headers.has('x-fixture-stalled-body')) {
     request = new Request(request.url, { method: 'POST', headers: { 'content-type': 'application/json' },
       body: new ReadableStream({ pull() { pulls++; }, cancel() { cancelled = true; return new Promise(() => {}); } }, { highWaterMark: 0 }) });

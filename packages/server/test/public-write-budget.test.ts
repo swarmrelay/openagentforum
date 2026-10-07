@@ -266,11 +266,88 @@ describe('primary D1 reservation races and uncertainty', () => {
   it('catches an abort during initial storage invocation before any pending read resolves', async () => {
     const f = fixture(), wait = deferred(), abort = new AbortController(), work = vi.fn();
     f.hooks(async () => { abort.abort(); await wait.promise; });
-    const result = await f.gate('D1').run(request('{}', abort.signal), 'channel', work).catch(e => e);
+    const gate = f.gate('D1');
+    const result = await gate.run(request('{}', abort.signal), 'channel', work).catch(e => e);
     expect(result).toMatchObject({ code: 'public_write_budget_unavailable' });
-    wait.resolve(); await Promise.resolve();
     expect(work).not.toHaveBeenCalled(); expect(f.counts().batches).toBe(0);
+    f.hooks();
+    await gate.run(request(), 'channel', async () => {});
+    wait.resolve(); await new Promise(resolve => setImmediate(resolve));
+    expect(work).not.toHaveBeenCalled(); expect(f.state().ordinary.requests).toBe(1);
+    expect(f.counts().batches).toBe(1);
   });
+
+  it('keeps a committed reservation spent after caller abort while the same gate serves later requests', async () => {
+    const f = fixture(options(2)), wait = deferred(), committed = deferred(), abort = new AbortController(), work = vi.fn();
+    f.hooks(undefined, async () => { committed.resolve(); await wait.promise; });
+    const gate = f.gate('D1');
+    const cancelled = gate.run(request('{}', abort.signal), 'channel', work).catch(e => e);
+    await committed.promise; abort.abort();
+    expect(await cancelled).toMatchObject({ code: 'public_write_budget_unavailable' });
+    expect(f.state().ordinary.requests).toBe(1); expect(work).not.toHaveBeenCalled();
+    f.hooks(); await gate.run(request(), 'channel', async () => {});
+    wait.resolve(); await new Promise(resolve => setImmediate(resolve));
+    expect(work).not.toHaveBeenCalled(); expect(f.state().ordinary.requests).toBe(2);
+    await expect(gate.run(request(), 'channel', work)).rejects.toMatchObject({ code: 'public_write_rate_limited' });
+    expect(f.counts().batches).toBe(2);
+  });
+
+  it.each(['throw', 'malformed'] as const)('still poisons on a real late %s storage failure after caller cancellation', async failure => {
+    const f = fixture(), wait = deferred(), committed = deferred(), abort = new AbortController(), work = vi.fn();
+    f.hooks(undefined, async rows => {
+      committed.resolve(); await wait.promise;
+      if (failure === 'throw') throw new Error('fixture storage failure');
+      rows.length = 0;
+    });
+    const gate = f.gate('D1');
+    const cancelled = gate.run(request('{}', abort.signal), 'channel', work).catch(e => e);
+    await committed.promise; abort.abort(); await cancelled;
+    wait.resolve(); await new Promise(resolve => setImmediate(resolve));
+    f.hooks();
+    await expect(gate.run(request(), 'channel', work)).rejects.toMatchObject({ code: 'public_write_budget_unavailable' });
+    expect(work).not.toHaveBeenCalled(); expect(f.counts().batches).toBe(1);
+  });
+
+  it('keeps aborted but unsettled reservations in the local in-flight cap and releases them on settlement', async () => {
+    const f = fixture(), wait = deferred(), work = vi.fn();
+    f.hooks(async () => wait.promise); const gate = f.gate('D1');
+    for (let i = 0; i < 8; i++) {
+      const abort = new AbortController();
+      const cancelled = gate.run(request('{}', abort.signal), 'channel', work).catch(e => e);
+      abort.abort(); expect(await cancelled).toMatchObject({ code: 'public_write_budget_unavailable' });
+    }
+    await expect(gate.run(request(), 'channel', work)).rejects.toMatchObject({ code: 'public_write_budget_busy' });
+    expect(f.counts().reads).toBe(8); expect(f.counts().batches).toBe(0);
+    f.hooks(); wait.resolve(); await new Promise(resolve => setImmediate(resolve));
+    await gate.run(request(), 'channel', work);
+    expect(work).toHaveBeenCalledTimes(1); expect(f.state().ordinary.requests).toBe(1);
+  });
+
+  it('does not discard another admitted callback when a different request is aborted', async () => {
+    const f = fixture(), gate = f.gate('D1'), arrived = deferred(), finish = deferred(), wait = deferred();
+    const healthy = gate.run(request(), 'channel', async () => { arrived.resolve(); await finish.promise; return 'committed'; });
+    await arrived.promise;
+    f.hooks(async () => wait.promise); const abort = new AbortController();
+    const cancelled = gate.run(request('{}', abort.signal), 'channel', async () => { throw new Error('must not start'); }).catch(e => e);
+    abort.abort(); await cancelled;
+    finish.resolve(); expect(await healthy).toBe('committed');
+    wait.resolve(); await new Promise(resolve => setImmediate(resolve));
+    expect(f.state().ordinary.requests).toBe(1);
+  });
+});
+
+it('rolls back a cancelled synchronous SQLite reservation and keeps the same wrapper usable', async () => {
+  const f = fixture(), abort = new AbortController(), work = vi.fn(), gate = f.gate('SQLite');
+  const exec = f.db.exec.bind(f.db); let first = true;
+  vi.spyOn(f.db, 'exec').mockImplementation(sql => {
+    const result = exec(sql);
+    if (sql === 'BEGIN IMMEDIATE' && first) { first = false; abort.abort(); }
+    return result;
+  });
+  await expect(gate.run(request('{}', abort.signal), 'channel', work)).rejects.toMatchObject({ code: 'public_write_budget_unavailable' });
+  expect(f.state().ordinary.requests).toBe(0); expect(work).not.toHaveBeenCalled();
+  await gate.run(request(), 'channel', work);
+  expect(f.state().ordinary.requests).toBe(1); expect(work).toHaveBeenCalledTimes(1);
 });
 
 it('checks the monotonic deadline after synchronous SQLite stalls, without relying on timer delivery', async () => {

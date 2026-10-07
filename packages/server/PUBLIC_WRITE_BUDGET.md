@@ -18,6 +18,10 @@ tokens purchased by agents or an entitlement to execute work.
 existing operator-owned Node SQLite connection and checks its runtime safety.
 Neither factory initializes, resets or repairs the authority table. There is no
 memory fallback and no process-local allowance in place of durable accounting.
+Keep one wrapper per isolate/process for each database/policy composition;
+creating a wrapper per request would bypass its local concurrency and failure
+state. Investigate a real storage failure before replacing a poisoned wrapper;
+replacement never resets the durable counters.
 
 The public D1 type is structural and describes only the session/statement methods
 used here. Consumers do not need a development-only Cloudflare type dependency
@@ -115,8 +119,17 @@ successful callback responses still in flight. A callback already running may
 nevertheless commit. Recreating an instance does not restore counters or settle
 an uncertain application result; preserve exact operations and reconcile them.
 
+Client cancellation fails only that request and does not poison the shared
+wrapper. It cannot start the callback from a late acknowledgment or refund a
+committed reservation. Real storage failures are still observed and poison the
+wrapper even if the client has already disconnected. The operator-side
+five-second reservation deadline also poisons the wrapper; it is separate from
+client cancellation.
+
 At most eight operations are in flight on one wrapper, including reservation and
 callback work. This is a local cap, not distributed concurrency control. The
+slot for a cancelled request remains occupied until its uncancellable storage
+operation settles, so repeated disconnects cannot bypass that cap. The
 five-second reservation deadline is not a deadline for the whole callback;
 existing body and operation limits remain necessary. SQLite blocking cannot be
 preempted by JavaScript, but late work is refused when control returns.
@@ -132,7 +145,7 @@ attempt absent and do not authorize automatic retries or fresh proofs.
 | 400 `invalid_public_write_operation` | non-POST, already aborted request, or unknown operation; no reservation |
 | 429 `public_write_rate_limited` | known exhausted lane/operation allowance; bounded `Retry-After` of 1–86,400 seconds |
 | 503 `public_write_budget_busy` | local concurrency, bounded CAS contention or expired grant; no callback starts, but a reservation may already be spent |
-| 503 `public_write_budget_unavailable` | missing/mismatched/corrupt authority, clock failure, interrupted/uncertain storage or a poisoned instance; no retry-time promise |
+| 503 `public_write_budget_unavailable` | client cancellation during reservation, missing/mismatched/corrupt authority, clock failure, expired/uncertain storage or a poisoned instance; no retry-time promise |
 
 Refused bodies are cancelled without awaiting an untrusted producer. GET/HEAD
 must bypass this POST-only composition; the native fixture confirms anonymous
@@ -153,7 +166,9 @@ SQLite and D1-shim tests exercise shared operations/instances, malformed bodies,
 separate completion capacity, byte/operation limits, no refunds, policy pinning,
 clock rollover/rollback, corruption, missing authority, same-snapshot races,
 bounded CAS retries, mismatched/lost/late acknowledgments, interruption, local
-concurrency and poisoning of pending callbacks. Independent SQLite processes
+concurrency and poisoning of pending callbacks. Cancellation before and after
+commit leaves the same wrapper usable, retains spent allowances and pending
+storage slots, and does not hide late storage errors. Independent SQLite processes
 share a WAL database, race for remaining allowance and retain a reservation when
 one process exits immediately after it commits.
 
@@ -161,11 +176,13 @@ Native workerd/D1 tests compose the actual Pages handler behind a local-only
 fixed route map. They cover all six classes, concurrent new identities/channels,
 refusal before body/storage work, signed completion after ordinary exhaustion,
 lost commit acknowledgments, whole-runtime restart without reseeding, missing
-authority and backward time. The edge bundle is checked for Node/SQLite imports.
+authority and backward time. Native cancellation after a primary read or commit
+also proves that a fresh request through the same wrapper succeeds. The edge
+bundle is checked for Node/SQLite imports.
 These are local tests, not production enforcement or a security certification.
 
-October 6, 2026 validation on Node 22.23.3 passed all 29 focused SQLite/D1 tests,
-all five native Pages/D1 tests, frozen installation, the full workspace build and
+October 6, 2026 validation on Node 22.23.3 passed all 35 focused SQLite/D1 tests,
+all seven native Pages/D1 tests, frozen installation, the full workspace build and
 suite, generated documentation checks, all-dependency/production audits, Pages
 and Worker bundle dry runs, and 93 browser tests with no skips. Clean packed
 CLI installation checks both new exports and their contract files in addition to
