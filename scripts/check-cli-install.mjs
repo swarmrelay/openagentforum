@@ -63,6 +63,10 @@ try {
     load('@openagentforum/server/public-write-budget'), load('@openagentforum/server/public-write-budget/sqlite'),
   ]);
   const serverRoot = join(consumer, 'node_modules', '@openagentforum', 'server');
+  const polls = await load('@openagentforum/server/polls');
+  assert.equal(polls.POLL_WORK_LIMITS.records, 1024);
+  assert.equal(typeof polls.createD1PollStore({ withSession() { throw new Error('Constructor must not access D1'); } }).getPoll, 'function');
+  assert(existsSync(join(serverRoot, 'POLLS.md')), 'Installed poll contract is missing');
   for (const file of ['PUBLIC_WRITE_BUDGET.md', 'dist/public-write-budget.d.ts', 'dist/public-write-budget-sqlite.d.ts']) {
     assert(existsSync(join(serverRoot, file)), 'Installed request-allowance contract is missing');
   }
@@ -71,10 +75,17 @@ try {
 import { createD1PublicWriteAdmission, type PublicWriteBudgetOptions } from '@openagentforum/server/public-write-budget';
 import { createSQLitePublicWriteAdmission } from '@openagentforum/server/public-write-budget/sqlite';
 import { DatabaseSync } from 'node:sqlite';
+import { createD1PollStore, createSqlPollStore, handlePollRead } from '@openagentforum/server/polls';
+import { SwarmClient, type PollCatalog } from '@openagentforum/sdk';
+declare const client: SwarmClient;
+const catalog: Promise<PollCatalog> = client.listPollCatalog('general', 'open');
 declare const options: PublicWriteBudgetOptions;
 declare const d1: Parameters<typeof createD1PublicWriteAdmission>[0];
 createD1PublicWriteAdmission(d1, options);
 createSQLitePublicWriteAdmission(new DatabaseSync(':memory:'), options);
+declare const pollDb: Parameters<typeof createD1PollStore>[0];
+handlePollRead(new Request('https://relay.test/v1/polls'), createD1PollStore(pollDb));
+createSqlPollStore(async () => []);
 `);
   const compiler = join(root, 'node_modules/typescript/lib/tsc.js');
   const typeArgs = ['--noEmit', '--strict', '--module', 'NodeNext', '--target', 'ES2022',
@@ -85,9 +96,11 @@ createSQLitePublicWriteAdmission(new DatabaseSync(':memory:'), options);
   writeFileSync(join(consumer, 'budget-worker-consumer.mts'), `
 import type { D1Database } from ${JSON.stringify(join(root, 'packages/server/node_modules/@cloudflare/workers-types/index.js'))};
 import { createD1PublicWriteAdmission, type PublicWriteBudgetOptions } from '@openagentforum/server/public-write-budget';
+import { createD1PollStore } from '@openagentforum/server/polls';
 declare const db: D1Database;
 declare const options: PublicWriteBudgetOptions;
 createD1PublicWriteAdmission(db, options);
+createD1PollStore(db);
 `);
   await exec(process.execPath, [compiler, ...typeArgs, 'budget-worker-consumer.mts'],
     { cwd: consumer, env, timeout: 30000, maxBuffer: 256 * 1024 });
@@ -142,12 +155,36 @@ createD1PublicWriteAdmission(db, options);
   ]);
   const journey = await runAgentJourney({ cliPath: join(cliRoot, cliPackage.bin.swarmrelay),
     createStandaloneServer, serve, SwarmClient, verifyEnvelope });
+  phase = 'installed SDK and MCP unavailable catalog handling';
+  assert(existsSync(join(consumer, 'node_modules/@openagentforum/sdk/CHANGELOG.md')));
+  const catalogFixture = { polls: [], unavailable: [{ pollId: 'large-poll', channel: 'general', status: 'unavailable', code: 'poll_work_limit' }] };
+  const catalogFetch = async (input, init) => {
+    assert.equal(new URL(String(input)).pathname, '/v1/polls'); assert.equal(init?.method ?? 'GET', 'GET');
+    return Response.json(catalogFixture);
+  };
+  const reader = await SwarmClient.init({ hubUrl: 'https://relay.test', autoRegister: false, fetch: catalogFetch });
+  assert.deepEqual(await reader.listPollCatalog(), catalogFixture);
+  await assert.rejects(reader.listPolls(), /listPollCatalog/);
+  const [{ createSwarmMcpServer }, { Client }, { InMemoryTransport }] = await Promise.all([
+    load('@openagentforum/mcp'), load('@modelcontextprotocol/sdk/client/index.js'), load('@modelcontextprotocol/sdk/inMemory.js'),
+  ]);
+  const savedFetch = globalThis.fetch, identityPath = join(dir, 'absent-mcp-identity');
+  const catalogMcp = createSwarmMcpServer({ hubUrl: 'https://relay.test', identityPath });
+  const peer = new Client({ name: 'packed-catalog-fixture', version: '1.0.0' });
+  try {
+    globalThis.fetch = catalogFetch;
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await catalogMcp.server.connect(serverTransport); await peer.connect(clientTransport);
+    const result = await peer.callTool({ name: 'list_polls', arguments: {} });
+    assert.notEqual(result.isError, true); assert.match(JSON.stringify(result.content), /UNAVAILABLE/);
+    assert.doesNotMatch(JSON.stringify(result.content), /No polls/); assert(!existsSync(identityPath));
+  } finally { globalThis.fetch = savedFetch; await peer.close(); await catalogMcp.server.close(); }
   phase = 'clean consumer dependency audit';
   await exec('npm', ['audit', ...npmOptions, '--omit=dev', '--audit-level=low'],
     { cwd: consumer, env, timeout: 120_000, maxBuffer: 2 * 1024 * 1024 });
   console.log(JSON.stringify({ ok: true, versions, sourceBuildForced: true, pythonUnavailable: true,
     installScriptsEnabled: true, nativeSqliteAddonAbsent: true, aliases: 2, doctorWithoutMcp: true,
-    publicWriteBudgetExports: true, publicWriteBudgetTypes: true, consumerAudit: true, journey }));
+    publicWriteBudgetExports: true, publicWriteBudgetTypes: true, unavailableCatalogClients: true, consumerAudit: true, journey }));
 } catch {
   // Package managers and subprocesses can include paths or environment diagnostics.
   console.error(`Clean CLI check failed during: ${phase}. No subprocess output was printed.`);

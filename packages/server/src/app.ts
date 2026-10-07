@@ -12,7 +12,7 @@ import { encryptionError, sameStoredEnvelope, storedEnvelope, type EnvelopeRow }
 import { AGENT_DIRECTORY_SQL, agentDirectoryPage, parseAgentDirectoryQuery } from './agent-directory.js';
 import { readPublicWriteInput, PublicWriteInputError } from './public-write-input.js';
 import { verifyTaskAction, sha256Hex } from '@openagentforum/protocol';
-import { registerPollRoutes, pollIngestGate, type PollStore } from './polls-routes.js';
+import { registerPollRoutes, pollIngestGate, createD1PollStore } from './polls-routes.js';
 import {
   verifyEnvelope,
   type AgentIdentity,
@@ -309,38 +309,7 @@ app.get('/v1/channels/:name', async (c) => {
 /**
  * Polls (RFC 0001): record access for the pure tally (D1)
  */
-const d1RowToEnvelope = (r: any) => ({
-  id: r.id, channel: r.channel, sender: r.sender, type: r.type, sequence: r.sequence,
-  storedSeq: r.stored_seq ?? r.sequence, timestamp: r.timestamp, payload: JSON.parse(r.payload_json),
-  signature: r.signature, checksum: r.checksum, replyToId: r.reply_to_id || undefined, encrypted: r.encrypted === 1,
-});
-function d1PollStore(DB: D1Database): PollStore {
-  return {
-    async getPoll(channel, pollId) {
-      const r = await DB.prepare("SELECT * FROM messages WHERE channel = ? AND id = ? AND type = 'poll'").bind(channel, pollId).first<any>();
-      return r ? d1RowToEnvelope(r) : null;
-    },
-    async candidates(channel, pollId) {
-      const rows = await DB.prepare("SELECT * FROM messages WHERE channel = ? AND type IN ('vote','poll') AND instr(payload_json, ?) > 0 ORDER BY COALESCE(stored_seq, sequence) ASC").bind(channel, `"pollId":"${pollId}"`).all();
-      return (rows.results || []).map(d1RowToEnvelope);
-    },
-    async listPolls(channel, limit = 50) {
-      const rows = channel
-        ? await DB.prepare(`SELECT * FROM messages WHERE type = 'poll' AND instr(payload_json, '"kind":"open"') > 0 AND channel = ? ORDER BY COALESCE(stored_seq, sequence) DESC LIMIT ?`).bind(channel, limit).all()
-        : await DB.prepare(`SELECT * FROM messages WHERE type = 'poll' AND instr(payload_json, '"kind":"open"') > 0 ORDER BY COALESCE(stored_seq, sequence) DESC LIMIT ?`).bind(limit).all();
-      return (rows.results || []).map(d1RowToEnvelope);
-    },
-    async publicKey(agentId) {
-      const r = await DB.prepare('SELECT public_key FROM agents WHERE agent_id = ?').bind(agentId).first<{ public_key: string }>();
-      return r?.public_key ?? null;
-    },
-    async registeredAt(agentId) {
-      const r = await DB.prepare('SELECT registered_at FROM agents WHERE agent_id = ?').bind(agentId).first<{ registered_at: number }>();
-      return r?.registered_at ?? null;
-    },
-  };
-}
-registerPollRoutes(app, (c) => d1PollStore(c.env.DB));
+registerPollRoutes(app, (c) => createD1PollStore(c.env.DB, c.req.raw.signal));
 
 /**
  * Messages & Real-Time Coordination
@@ -414,8 +383,8 @@ app.post('/v1/channels/:name/messages', async (c) => {
       (!existingChannel && channelName.startsWith('dm-')) || envelope.type === 'e2ee_blob'));
     if (encryptionReason) return c.json({ error: 'Encrypted envelopes require ciphertext and valid encryption metadata', reason: encryptionReason }, encryptionReason === 'encryption_required' ? 403 : 400);
     // (RFC 0001) poll and ballot envelopes get the ingest checks on top
-    const pollRefusal = await pollIngestGate(d1PollStore(c.env.DB), envelope, (c.env as any).PUBLIC_ORIGIN || new URL(c.req.url).origin);
-    if (pollRefusal) return c.json(pollRefusal.body, pollRefusal.status as any);
+    const pollRefusal = await pollIngestGate(createD1PollStore(c.env.DB, c.req.raw.signal), envelope, (c.env as any).PUBLIC_ORIGIN || new URL(c.req.url).origin);
+    if (pollRefusal) return pollRefusal;
 
     // 2.5 Ensure Channel exists (auto-create dynamic DM or private channels)
     if (!existingChannel) {

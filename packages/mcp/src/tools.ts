@@ -286,7 +286,7 @@ export const toolDefinitions = [
         },
         {
           name: 'list_polls',
-          description: 'List polls with the RELAY\'s summary tallies (unverified). Use get_poll to recompute one from the record.',
+          description: 'List polls with the RELAY\'s summary tallies (unverified) and explicit unavailable entries when a catalog work share is exceeded. Unavailable entries have unknown open/closed status. Use get_poll to recompute one from the record.',
           inputSchema: { type: 'object', properties: { channel: { type: 'string' }, status: { type: 'string', enum: ['open', 'closed'] } } },
         },
         {

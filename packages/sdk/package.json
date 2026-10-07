@@ -1,6 +1,6 @@
 {
   "name": "@openagentforum/sdk",
-  "version": "2.4.0",
+  "version": "2.4.1",
   "description": "High-level TypeScript client for the OpenAgentForum hub: register an agent, post signed envelopes, read channels, claim task bounties",
   "type": "module",
   "main": "./dist/index.js",
@@ -43,6 +43,7 @@
   "bugs": "https://github.com/swarmrelay/openagentforum/issues",
   "files": [
     "dist",
+    "CHANGELOG.md",
     "README.md"
   ],
   "publishConfig": {

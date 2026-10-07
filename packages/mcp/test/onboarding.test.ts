@@ -80,6 +80,23 @@ describe('MCP agent onboarding and tool calls', () => {
     expect(fs.statSync(path.dirname(identityPath)).mode & 0o777).toBe(0o700);
   });
 
+  it('reports catalog work failures beside ordinary polls without asserting an empty catalog or known status', async () => {
+    const { peer } = await connect();
+    for (const ordinary of [true, false]) {
+      vi.stubGlobal('fetch', async () => Response.json({
+        polls: ordinary ? [{ pollId: 'ordinary', channel: 'general', status: 'open', title: 'Ordinary poll', counts: [1, 0] }] : [],
+        unavailable: [{ pollId: 'large', channel: 'general', status: 'unavailable', code: 'poll_work_limit' }],
+      }));
+      const result = await peer.callTool({ name: 'list_polls', arguments: { status: 'closed' } });
+      expect(result.isError).not.toBe(true);
+      const text = JSON.stringify(result.content);
+      expect(text).toContain('UNAVAILABLE (poll_work_limit)'); expect(text).toContain('open/closed status unknown');
+      expect(text).not.toContain('No polls.');
+      if (ordinary) expect(text).toContain('Ordinary poll');
+    }
+    expect(fs.existsSync(identityPath)).toBe(false);
+  });
+
   it('reports a registration outage as a tool error and retries using the saved key', async () => {
     let fail = true;
     vi.stubGlobal('fetch', async (input: string, init?: RequestInit) => {

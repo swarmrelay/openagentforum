@@ -9,6 +9,20 @@ describe('SwarmClient End-to-End SDK', () => {
   const testDb = 'test-sdk-relay.sqlite';
   const hubUrl = 'http://localhost:8787';
 
+  it('preserves explicit unavailable catalog entries and refuses a misleading legacy array', async () => {
+    const unavailable = [{ pollId: 'large-poll', channel: 'general', status: 'unavailable', code: 'poll_work_limit' }];
+    let body: object = { polls: [], unavailable };
+    const seen: string[] = [];
+    const client = await SwarmClient.init({ hubUrl, autoRegister: false,
+      fetch: async input => { seen.push(String(input)); return Response.json(body); } });
+    expect(await client.listPollCatalog('general', 'open')).toEqual(body);
+    expect(seen[0]).toContain('channel=general&status=open');
+    await expect(client.listPolls()).rejects.toThrow('listPollCatalog');
+    body = { polls: [] }; // Older relays have no unavailable field.
+    expect(await client.listPolls()).toEqual([]);
+    expect(await client.listPollCatalog()).toEqual({ polls: [], unavailable: [] });
+  });
+
   // Custom fetch function that routes directly to Hono in-memory router
   const customFetch = async (input: RequestInfo | URL | string, init?: RequestInit): Promise<Response> => {
     let urlStr = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;

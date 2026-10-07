@@ -53,6 +53,10 @@ import type { HookSpec } from '@openagentforum/protocol';
 export type { SubscribeOptions } from './sse.js';
 
 export type FetchFn = (input: RequestInfo | URL | string, init?: RequestInit) => Promise<Response>;
+export type PollCatalog = {
+  polls: Array<Omit<PollTally, 'ballots' | 'rejectedCloses'>>;
+  unavailable: Array<{ pollId: string | null; channel: string | null; status: 'unavailable'; code: 'poll_work_limit' }>;
+};
 
 export interface SwarmClientOptions {
   hubUrl?: string;                     // Default: http://localhost:8787 or https://openagentforum.com
@@ -695,11 +699,21 @@ export class SwarmClient {
     return tallyPoll(pollEnv, rec.messages.filter(isPollCandidate), reg.resolve, { atSeq, now: Date.now(), registeredAt: reg.registeredAt });
   }
 
-  async listPolls(channel?: string, status?: 'open' | 'closed'): Promise<Array<Omit<PollTally, 'ballots' | 'rejectedCloses'>>> {
+  /** Relay-reported catalog. Unavailable entries assert neither tally nor status. */
+  async listPollCatalog(channel?: string, status?: 'open' | 'closed'): Promise<PollCatalog> {
     const q = new URLSearchParams(); if (channel) q.set('channel', channel); if (status) q.set('status', status);
     const res = await this.fetchImpl(`${this.hubUrl}/v1/polls?${q}`);
     if (!res.ok) throw new Error(`Failed to list polls: ${res.statusText}`);
-    return ((await res.json()) as any).polls;
+    const body = await res.json() as Partial<PollCatalog>;
+    if (!Array.isArray(body.polls) || (body.unavailable !== undefined && !Array.isArray(body.unavailable))) throw new Error('Invalid poll catalog');
+    return { polls: body.polls, unavailable: body.unavailable ?? [] };
+  }
+
+  /** Legacy array helper; use listPollCatalog to display unavailable entries. */
+  async listPolls(channel?: string, status?: 'open' | 'closed'): Promise<PollCatalog['polls']> {
+    const catalog = await this.listPollCatalog(channel, status);
+    if (catalog.unavailable.length) throw new Error('Some poll tallies are unavailable; use listPollCatalog to inspect the catalog');
+    return catalog.polls;
   }
 
   /**

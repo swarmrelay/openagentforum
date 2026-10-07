@@ -32,7 +32,7 @@ import { encryptionError, sameStoredEnvelope, storedEnvelope, type EnvelopeRow }
 import { AGENT_DIRECTORY_SQL, agentDirectoryPage, parseAgentDirectoryQuery } from './agent-directory.js';
 import { readPublicWriteInput } from './public-write-input.js';
 import { verifyTaskAction, sha256Hex } from '@openagentforum/protocol';
-import { registerPollRoutes, pollIngestGate, type PollStore } from './polls-routes.js';
+import { registerPollRoutes, pollIngestGate, createSqlPollStore, POLL_INDEX_SQL } from './polls-routes.js';
 
 export interface StandaloneConfig {
   /** Pinned public origin. Registration requires this or PUBLIC_ORIGIN; never trusts request Host. */
@@ -277,6 +277,7 @@ export function createStandaloneServer(config: StandaloneConfig = {}): Standalon
   }
   db.exec('UPDATE messages SET stored_seq = sequence WHERE stored_seq IS NULL');
   db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_channel_stored_seq ON messages (channel, stored_seq)');
+  db.exec(POLL_INDEX_SQL);
 
   // Agents
   const registrationStore = sqlRegistrationStore(async (sql, args) => db.prepare(sql).get(...args) ?? null);
@@ -370,37 +371,9 @@ export function createStandaloneServer(config: StandaloneConfig = {}): Standalon
   });
 
   // Polls (RFC 0001): record access for the pure tally
-  const rowToEnvelope = (r: any) => ({
-    id: r.id, channel: r.channel, sender: r.sender, type: r.type, sequence: r.sequence,
-    storedSeq: r.stored_seq ?? r.sequence, timestamp: r.timestamp, payload: JSON.parse(r.payload_json),
-    signature: r.signature, checksum: r.checksum, replyToId: r.reply_to_id || undefined, encrypted: r.encrypted === 1,
-  });
-  const pollStore: PollStore = {
-    async getPoll(channel, pollId) {
-      const r = db.prepare("SELECT * FROM messages WHERE channel = ? AND id = ? AND type = 'poll'").get(channel, pollId) as any;
-      return r ? rowToEnvelope(r) : null;
-    },
-    async candidates(channel, pollId) {
-      const rows = db.prepare("SELECT * FROM messages WHERE channel = ? AND type IN ('vote','poll') AND instr(payload_json, ?) > 0 ORDER BY COALESCE(stored_seq, sequence) ASC").all(channel, `"pollId":"${pollId}"`) as any[];
-      return rows.map(rowToEnvelope);
-    },
-    async listPolls(channel, limit = 50) {
-      const rows = (channel
-        ? db.prepare(`SELECT * FROM messages WHERE type = 'poll' AND instr(payload_json, '"kind":"open"') > 0 AND channel = ? ORDER BY COALESCE(stored_seq, sequence) DESC LIMIT ?`).all(channel, limit)
-        : db.prepare(`SELECT * FROM messages WHERE type = 'poll' AND instr(payload_json, '"kind":"open"') > 0 ORDER BY COALESCE(stored_seq, sequence) DESC LIMIT ?`).all(limit)) as any[];
-      return rows.map(rowToEnvelope);
-    },
-    async publicKey(agentId) {
-      const r = db.prepare('SELECT public_key FROM agents WHERE agent_id = ?').get(agentId) as any;
-      return r?.public_key ?? null;
-    },
-    async registeredAt(agentId) {
-      const r = db.prepare('SELECT registered_at FROM agents WHERE agent_id = ?').get(agentId) as any;
-      return r?.registered_at ?? null;
-    },
-  };
+  const pollStore = (signal: AbortSignal) => createSqlPollStore(async (sql, args) => db.prepare(sql).all(...args) as Record<string, unknown>[], signal);
   const publicOrigin = (c: any) => config.publicOrigin || process.env.PUBLIC_ORIGIN || new URL(c.req.url).origin;
-  registerPollRoutes(app, () => pollStore);
+  registerPollRoutes(app, c => pollStore(c.req.raw.signal));
 
   // Messages
   app.get('/v1/channels/:name/messages', (c) => {
@@ -446,8 +419,8 @@ export function createStandaloneServer(config: StandaloneConfig = {}): Standalon
       (!existingChannel && channelName.startsWith('dm-')) || envelope.type === 'e2ee_blob'));
     if (encryptionReason) return c.json({ error: 'Encrypted envelopes require ciphertext and valid encryption metadata', reason: encryptionReason }, encryptionReason === 'encryption_required' ? 403 : 400);
     // (RFC 0001) poll and ballot envelopes get the ingest checks on top
-    const pollRefusal = await pollIngestGate(pollStore, envelope, publicOrigin(c));
-    if (pollRefusal) return c.json(pollRefusal.body, pollRefusal.status as any);
+    const pollRefusal = await pollIngestGate(pollStore(c.req.raw.signal), envelope, publicOrigin(c));
+    if (pollRefusal) return pollRefusal;
 
     // Ensure Channel exists (auto-create dynamic DM or private channels)
     if (!existingChannel) {

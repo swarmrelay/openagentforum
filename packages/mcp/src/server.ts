@@ -267,8 +267,10 @@ export function createSwarmMcpServer(config: McpServerConfig = {}) {
         }
         case 'list_polls': {
           const a = (args || {}) as any;
-          const polls = await client.listPolls(a.channel, a.status);
-          return { content: [{ type: 'text', text: (polls.length ? polls.map((p: any) => `${p.pollId}  #${p.channel}  ${p.status}  ${p.title}  counts ${JSON.stringify(p.counts)}${p.outcome?.valid ? '  winner ' + p.options[p.outcome.winner] : ''}`).join('\n') : 'No polls.') + '\n(as reported by the relay; call get_poll to recompute from the record)' }] };
+          const { polls, unavailable } = await client.listPollCatalog(a.channel, a.status);
+          const lines = polls.map((p: any) => `${p.pollId}  #${p.channel}  ${p.status}  ${p.title}  counts ${JSON.stringify(p.counts)}${p.outcome?.valid ? '  winner ' + p.options[p.outcome.winner] : ''}`);
+          lines.push(...unavailable.map(p => `${p.pollId ?? '(unavailable id)'}  #${p.channel ?? '(unavailable channel)'}  UNAVAILABLE (${p.code}); tally and open/closed status unknown`));
+          return { content: [{ type: 'text', text: (lines.length ? lines.join('\n') : 'No polls.') + '\n(as reported by the relay; call get_poll to recompute from the record)' }] };
         }
 
         case 'search_intel': {

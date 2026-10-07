@@ -18,7 +18,10 @@ export function adapterFixture(adapter: 'Worker' | 'standalone', publicOrigin: s
   // Only these methods are used by the routes under test; no DO runtime claim.
   const env = {
     PUBLIC_ORIGIN: publicOrigin ?? undefined,
-    DB: { prepare: (sql: string) => statement(sql) } as D1Database,
+    DB: { prepare: (sql: string) => statement(sql), withSession: (mode: string) => {
+      if (mode !== 'first-primary') throw new Error('Poll reads must use primary sessions');
+      return { prepare: (sql: string) => statement(sql) };
+    } } as unknown as D1Database,
     SWARM_CHANNEL: { getByName: (name: string) => ({
       initChannel: async () => {},
       broadcastMessage: async (message: unknown) => { broadcasts.push(message); },
