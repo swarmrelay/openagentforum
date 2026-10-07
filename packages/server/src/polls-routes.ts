@@ -28,6 +28,12 @@ export async function pollIngestGate(store: PollStore, envelope: MessageEnvelope
   if (envelope.type !== 'vote' && envelope.type !== 'poll') return null;
   try {
     const p = envelope.payload;
+    // A new root is not an action on another poll. Reserve this reference field
+    // for votes/closes so opening a poll cannot consume someone else's history.
+    // Retained legacy envelopes are still tallied as stored by the protocol.
+    if (envelope.type === 'poll' && p?.kind === 'open' && Object.hasOwn(p, 'pollId')) {
+      return json({ error: 'Poll envelope refused: pollId is reserved for votes and closes', reason: 'invalid_payload' }, 400);
+    }
     const pollId = envelope.type === 'vote' ? p?.pollId : p?.kind === 'close' ? p?.pollId : undefined;
     let pollEnv: StoredEnvelope | null = null;
     let tally: PollTally | null = null;

@@ -52,6 +52,25 @@ describe('bounded poll SQL and verification work', () => {
     } finally { f.close(); }
   });
 
+  it('preserves legacy reference-bearing roots in the offline-equivalent rejected-close history', async () => {
+    const f = adapterFixture('standalone');
+    try {
+      const h = await signedHistory(), other = await generateAgentKeyPair();
+      const legacy = { ...await signEnvelope({ channel: h.poll.channel, sender: other.agentId, type: 'poll', sequence: 1,
+        payload: { ...h.poll.payload, pollId: h.poll.id } }, other.signingPrivateKey), storedSeq: 6 };
+      const keys = new Map([...h.keys, [other.agentId, other.signingPublicKey]]);
+      const history = [...h.votes, legacy]; seed(f.db, [h.poll, ...history], keys);
+      const store = createSqlPollStore(async (sql, args) => f.db.prepare(sql).all(...args));
+      const root = (await store.getPoll(undefined, h.poll.id))!;
+      const actual = (await computeTally(store, root, { now: 1 })).tally;
+      const expected = await tallyPoll(h.poll, history, async id => keys.get(id) ?? null, { now: 1 });
+      expect(actual).toEqual(expected); expect(actual.rejectedCloses.map(c => c.id)).toContain(legacy.id);
+      expect(actual.computedFrom.maxStoredSeq).toBe(6);
+      const catalog = await (await f.request('/v1/polls')).json() as any;
+      expect(catalog.polls.map((p: any) => p.pollId)).toEqual([legacy.id, h.poll.id]);
+    } finally { f.close(); }
+  });
+
   it('accepts the complete record boundary and refuses one extra before returning payloads', async () => {
     const f = adapterFixture('standalone');
     let verification: ReturnType<typeof vi.spyOn> | undefined;
@@ -301,13 +320,27 @@ describe.each(['Worker', 'standalone', 'Pages D1', 'Pages memory'] as const)('%s
     try {
       const h = await signedHistory(`poll-${crypto.randomUUID()}`);
       for (const key of [h.creator, h.voter]) expect((await request('/v1/agents/register', { publicKey: key.signingPublicKey })).status).toBe(200);
-      for (const envelope of [h.poll, ...h.votes.slice(0, 3)]) {
+      expect((await request(`/v1/channels/${h.poll.channel}/messages`, h.poll)).status).toBe(200);
+      const outsider = await generateAgentKeyPair();
+      expect((await request('/v1/agents/register', { publicKey: outsider.signingPublicKey })).status).toBe(200);
+      const beforeReferences = f.db.prepare('SELECT count(*) AS n FROM messages').get()!.n, beforeBroadcasts = f.broadcasts.length;
+      for (const reference of [h.poll.id, '', null]) {
+        const foreignRoot = await signEnvelope({ channel: h.poll.channel, sender: outsider.agentId, type: 'poll', sequence: 1,
+          payload: { ...h.poll.payload, pollId: reference, padding: 'x'.repeat(240000) } }, outsider.signingPrivateKey);
+        const denied = await request(`/v1/channels/${h.poll.channel}/messages`, foreignRoot);
+        expect(denied.status).toBe(400); expect(await denied.json()).toMatchObject({ reason: 'invalid_payload' });
+      }
+      expect(f.db.prepare('SELECT count(*) AS n FROM messages').get()!.n).toBe(beforeReferences);
+      expect(f.broadcasts.length).toBe(beforeBroadcasts);
+      // The refused roots cannot block subsequent legitimate ballots or close.
+      for (const envelope of h.votes.slice(0, 3)) {
         const r = await request(`/v1/channels/${h.poll.channel}/messages`, envelope);
         expect(r.status, await r.clone().text()).toBe(200);
       }
       const route = `/v1/polls/${h.poll.id}`;
       const response = await request(route); expect(response.status).toBe(200);
       const body = await response.json() as any; expect(body.tally.counts).toEqual([0, 1]); expect(body.tally.closedBy).toBe('creator');
+      expect(body.tally.rejectedCloses).toEqual([]);
       for (const cutoff of ['-1', '2junk', '1.5', '', '9007199254740992']) {
         const r = await request(`${route}?atSeq=${cutoff}`); expect(r.status).toBe(400); expect(r.headers.get('cache-control')).toBe('no-store');
       }

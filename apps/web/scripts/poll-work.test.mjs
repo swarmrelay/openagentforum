@@ -127,6 +127,38 @@ test('native complete record boundary, overflow sentinel, cutoff and no-write re
   assert.equal((await sql([{ sql: 'SELECT count(*) AS n FROM messages' }]))[0].results[0].n, before);
 });
 
+test('native Pages and Worker refuse reference-bearing new roots without blocking the target poll', async () => {
+  for (const adapter of ['Pages', 'Worker']) {
+    const h = await history(`native-root-reference-${adapter.toLowerCase()}`), outsider = await generateAgentKeyPair();
+    assert.equal((await request('/v1/agents/register', { publicKey: outsider.signingPublicKey }, adapter)).status, 200);
+    const before = (await sql([{ sql: 'SELECT count(*) AS n FROM messages' }]))[0].results[0].n;
+    // Near-limit unrelated roots never enter the target's history, even when
+    // repeatedly signed by someone outside its declared electorate.
+    for (let i = 0; i < 18; i++) {
+      const envelope = await signEnvelope({ channel: h.poll.channel, sender: outsider.agentId, type: 'poll', sequence: i,
+        payload: { ...h.poll.payload, pollId: h.poll.id, padding: 'x'.repeat(240000) } }, outsider.signingPrivateKey);
+      const denied = await request(`/v1/channels/${h.poll.channel}/messages`, envelope, adapter);
+      assert.equal(denied.status, 400); assert.equal((await denied.json()).reason, 'invalid_payload');
+      assert.equal(denied.headers.get('x-fixture-primary-sessions'), '0');
+      assert.equal(denied.headers.get('x-fixture-broadcasts'), '0');
+    }
+    assert.equal((await sql([{ sql: 'SELECT count(*) AS n FROM messages' }]))[0].results[0].n, before);
+    const ballot = await h.vote(1, 1);
+    const accepted = await request(`/v1/channels/${h.poll.channel}/messages`, ballot, adapter);
+    assert.equal(accepted.status, 200, `${adapter}: ${await accepted.text()}`);
+    if (adapter === 'Worker') assert.equal(accepted.headers.get('x-fixture-broadcasts'), '1');
+    const close = await signEnvelope({ channel: h.poll.channel, sender: h.creator.agentId, type: 'poll', sequence: 701,
+      payload: { kind: 'close', pollId: h.poll.id, pollHash: h.poll.checksum } }, h.creator.signingPrivateKey);
+    const closed = await request(`/v1/channels/${h.poll.channel}/messages`, close, adapter);
+    assert.equal(closed.status, 200, `${adapter}: ${await closed.text()}`);
+    const detail = await (await request(`/v1/polls/${h.poll.id}`, undefined, adapter)).json();
+    assert.deepEqual(detail.tally.counts, [0, 1]); assert.equal(detail.tally.closedBy, 'creator');
+    assert.deepEqual(detail.tally.rejectedCloses, []);
+    const proof = await (await request(`/v1/polls/${h.poll.id}/proof/${ballot.id}`, undefined, adapter)).json();
+    assert.equal(await verifyPollProof(proof.leafBytes, proof.proof, proof.root), true);
+  }
+});
+
 test('native byte and tree limits produce explicit catalog markers without oversized SQL responses', async () => {
   for (const mode of ['single', 'aggregate', 'depth', 'nodes']) {
     const h = await history('native-poll-' + mode);

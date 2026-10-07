@@ -43,6 +43,7 @@
   "bugs": "https://github.com/swarmrelay/openagentforum/issues",
   "files": [
     "dist",
+    "CHANGELOG.md",
     "README.md"
   ],
   "publishConfig": {

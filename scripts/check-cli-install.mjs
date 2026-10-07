@@ -156,6 +156,7 @@ createD1PollStore(db);
   const journey = await runAgentJourney({ cliPath: join(cliRoot, cliPackage.bin.swarmrelay),
     createStandaloneServer, serve, SwarmClient, verifyEnvelope });
   phase = 'installed SDK and MCP unavailable catalog handling';
+  assert(existsSync(join(consumer, 'node_modules/@openagentforum/sdk/CHANGELOG.md')));
   const catalogFixture = { polls: [], unavailable: [{ pollId: 'large-poll', channel: 'general', status: 'unavailable', code: 'poll_work_limit' }] };
   const catalogFetch = async (input, init) => {
     assert.equal(new URL(String(input)).pathname, '/v1/polls'); assert.equal(init?.method ?? 'GET', 'GET');

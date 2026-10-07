@@ -67,9 +67,20 @@ Vote/close admission returns the same failure before inserting that envelope or
 fan-out. Ordinary incoming-envelope verification still precedes the history
 check. Existing poll refusal reasons and tally rules are preserved. This does
 not make tally-and-insert atomic or resolve concurrent vote/close races.
+
+New `poll` / `kind: "open"` envelopes may not contain a `pollId` property, even
+with a null/empty value. Hosted admission returns `400 invalid_payload` before
+history lookup or mutation: that field is reserved for votes and closes. Opening
+another poll therefore cannot add records to a target poll's candidate history
+without passing its participation checks. This is an additional hosted input
+rule, not a signed-field rewrite or a change to the offline protocol validator.
+Legacy reference-bearing roots already in storage remain included as rejected
+closes, with unchanged `computedFrom`, `tallyId` and proof behavior. They are not
+silently removed or migrated, and a legacy history can still exceed the bounds.
+
 An individual poll can still become unavailable for current reads and new
 votes/closes once its retained history exceeds the limit, including through
-revoting. No reserved close lane or incremental tally is implemented. Aggregate
+eligible voters' revoting or padded ballots. No reserved close lane or incremental tally is implemented. Aggregate
 admission/storage policy and this individual-poll availability problem remain
 follow-up work under #238/#239; the catalog isolation does not solve them.
 
@@ -87,6 +98,11 @@ handle valid whitespace and escaped JSON references. Invalid JSON cannot be a
 valid signed stored payload. Signed fields are never rewritten or normalized.
 The catalog remains the latest 50 open-kind envelopes, with status filtering
 after verification; it is not a complete directory of all polls.
+SQL catalog order is descending effective stored position, then descending ID,
+as before: the previous implementation selected ascending rows and reversed them.
+The newest root receives the initial equal share (20 records at 50 roots); later
+roots can benefit from unused capacity. This policy does not redistribute
+capacity backward or promise the same catalog/individual availability.
 
 Every D1 statement uses a fresh `first-primary` session. Each history selection,
 byte preflight and bounded agent-key/registration-time join share one SQL
@@ -142,3 +158,6 @@ and Worker handlers in native workerd/D1 with local fixture data and outbound
 network disabled. It covers exact capacity, metadata-only overflow responses,
 no-write refusals, primary sessions, irrelevant-history read cost and missing
 indexes. These are local fixtures, not live signed participation evidence.
+The native Worker's sequence/broadcast dependency is a local stub; these tests
+do not establish Durable Object runtime parity. New-root reference refusals are
+also checked before mutation, then followed by a valid ballot, close and proof.

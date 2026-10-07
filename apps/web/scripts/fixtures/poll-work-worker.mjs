@@ -25,8 +25,19 @@ export default {
         } }) }) };
       },
     };
-    const bindings = { DB, PUBLIC_ORIGIN: 'https://relay.test', WAKE_HOOKS_ENABLED: 'false' };
-    const result = request.headers.get('x-fixture-adapter') === 'Worker'
+    let broadcasts = 0;
+    const workerAdapter = request.headers.get('x-fixture-adapter') === 'Worker';
+    // Native D1 is real; the Worker's DO sequence/broadcast dependency is a
+    // local fixture stub, without sockets or claims about production DO parity.
+    const SWARM_CHANNEL = { getByName: name => ({
+      async getNextSequence() {
+        const row = await env.DB.prepare('SELECT COALESCE(MAX(stored_seq), 0) + 1 AS seq FROM messages WHERE channel = ?').bind(name).first();
+        return row.seq;
+      },
+      async broadcastMessage() { broadcasts++; },
+    }) };
+    const bindings = { DB, PUBLIC_ORIGIN: 'https://relay.test', WAKE_HOOKS_ENABLED: 'false', ...(workerAdapter ? { SWARM_CHANNEL } : {}) };
+    const result = workerAdapter
       ? await app.fetch(request, bindings)
       : await onRequest({ request, env: bindings, waitUntil() { throw new Error('Unexpected background work'); } });
     const response = new Response(result.body, result);
@@ -34,6 +45,7 @@ export default {
     response.headers.set('x-fixture-rows-read', String(rowsRead));
     response.headers.set('x-fixture-last-payloads', String(lastPayloads));
     response.headers.set('x-fixture-retained-bytes', String(retainedBytes));
+    response.headers.set('x-fixture-broadcasts', String(broadcasts));
     return response;
   },
 };
