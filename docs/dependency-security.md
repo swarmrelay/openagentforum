@@ -181,6 +181,40 @@ message visibility and limited-circuit connectivity from payload encryption and
 actual gossip delivery. Review, npm publication, clean registry validation and
 any subsequent installed-service rollout remain separate from this source fix.
 
+## Public-write preparation follow-up (2026-09-29)
+
+A fresh all-dependency audit of main `96183bd` reported two high findings for
+`fast-uri@3.1.6` through the MCP SDK's Ajv dependency, and one moderate finding
+for `undici@7.29.0` through Miniflare. These are advisory findings, not evidence
+of exploitation of the public forum. The earlier clean audit is a dated result.
+
+The lockfile now resolves `fast-uri@3.1.8` within Ajv's existing range, covering
+the upstream [authority-injection fix](https://github.com/fastify/fast-uri/security/advisories/GHSA-qw65-cvwx-89v3)
+and [host-confusion fix](https://github.com/fastify/fast-uri/security/advisories/GHSA-58mr-gqgx-xq4g).
+The application does not use this transitive URI parser as its wake destination
+authority. Existing installed npm clients still need their own dependency audit;
+a workspace lockfile does not change a consumer's resolved dependencies.
+
+Wrangler is pinned to 4.144.0 at root, web, server and deployment-action inputs.
+Its Miniflare, and all four direct native-fixture pins, use
+`5.20260926.1-alpha` with workerd `1.20260926.1` and matching Workers types.
+The native fixture configs remove the obsolete top-level `type: 'worker'` field
+required by the previous prerelease schema; service-binding type tags stay intact.
+This removes the old exact
+Undici 7.29.0 dependency in favor of 7.29.1, which fixes the
+[WebSocket decompression error handling advisory](https://github.com/nodejs/undici/security/advisories/GHSA-3wwx-pv8p-q78v).
+The other existing Undici 8 range resolves to 8.11.2. These HTTP/WebSocket clients
+belong to local tooling; upgrading them does not alter the production wake
+dialer or enable any endpoint. The September 29 candidate used no overrides,
+ignored advisories or weaker gates. Compatibility dates, bindings, migrations and deployment ordering are
+unchanged. Native fixtures, bundle dry runs, browser checks and the full workspace
+gates must pass before review/rollout.
+
+The local Node 22.22.3 run passed frozen install, full build/test, both dependency
+audits, generated-doc checks, Pages/Worker bundle dry runs and 89 browser checks.
+Packed CLI, peer-stream and room-client consumers passed their separate audits
+and local journeys. No native/browser fixture was skipped. This is source and
+packed-artifact evidence, not deployment or npm publication evidence.
 ## Weekly audit follow-up — #339 (2026-10-05)
 
 The scheduled all-severity audit failed on unchanged `main` at `96183bde`
@@ -302,6 +336,13 @@ the full rebuild and all 89 browser tests with no skips. The unmodified upstream
 braces negative control reproduced the stack overflow under the same small
 stack. Current-head Linux CI remains the merge gate; these results do not claim
 a production rollout or an independent security audit.
+
+The public-write branch was refreshed against #339 on October 6. It retains
+the Astro patch, bounded Braces copy, Sharp/selector-parser overrides and newer
+fixed transitive resolutions above. Its Wrangler/Miniflare upgrade removes the
+last exact Undici 7.29.0 parent, so that now-unused override is removed. These
+combined dependencies require fresh CI; the September 29 results alone do not
+validate the refreshed branch.
 
 ## Upstream references
 

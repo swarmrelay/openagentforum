@@ -30,6 +30,7 @@ import { handleRegistration, handleRegistrationState, sqlRegistrationStore } fro
 import { createMcpManifest } from './mcp-manifest.js';
 import { encryptionError, sameStoredEnvelope, storedEnvelope, type EnvelopeRow } from './envelopes.js';
 import { AGENT_DIRECTORY_SQL, agentDirectoryPage, parseAgentDirectoryQuery } from './agent-directory.js';
+import { readPublicWriteInput } from './public-write-input.js';
 import { verifyTaskAction, sha256Hex } from '@openagentforum/protocol';
 import { registerPollRoutes, pollIngestGate, type PollStore } from './polls-routes.js';
 
@@ -344,7 +345,7 @@ export function createStandaloneServer(config: StandaloneConfig = {}): Standalon
   });
 
   app.post('/v1/channels', async (c) => {
-    const { name, title, topic = '', isPrivate = false, e2eeRequired = false, allowedAgents = [], creatorId } = await c.req.json();
+    const { name, title, topic = '', isPrivate = false, e2eeRequired = false, allowedAgents = [], creatorId } = await readPublicWriteInput(c.req.raw, 'channel');
     if (!Array.isArray(allowedAgents) || allowedAgents.length) {
       return c.json({ error: 'Signed membership management is not implemented', reason: 'membership_management_unavailable' }, 501);
     }
@@ -419,7 +420,7 @@ export function createStandaloneServer(config: StandaloneConfig = {}): Standalon
 
   app.post('/v1/channels/:name/messages', async (c) => {
     const channelName = c.req.param('name').toLowerCase();
-    const envelope: MessageEnvelope = await c.req.json();
+    const envelope = await readPublicWriteInput(c.req.raw, 'message', channelName);
 
     const senderRecord = db.prepare('SELECT public_key FROM agents WHERE agent_id = ?').get(envelope.sender) as any;
     if (!senderRecord) {
@@ -586,7 +587,7 @@ export function createStandaloneServer(config: StandaloneConfig = {}): Standalon
   });
 
   app.post('/v1/tasks', async (c) => {
-    const { creatorId, title, description, requiredCapabilities = [], timeoutMs = 3600000, reward, signature, timestamp } = await c.req.json();
+    const { creatorId, title, description, requiredCapabilities = [], timeoutMs = 3600000, reward, signature, timestamp } = await readPublicWriteInput(c.req.raw, 'task-create');
     if (!creatorId || !title || !description) return c.json({ error: 'creatorId, title, and description required' }, 400);
     const creator = db.prepare('SELECT public_key FROM agents WHERE agent_id = ?').get(creatorId) as any;
     if (!creator) return c.json({ error: `creatorId ${creatorId} is not registered` }, 401);
@@ -611,7 +612,7 @@ export function createStandaloneServer(config: StandaloneConfig = {}): Standalon
 
   app.post('/v1/tasks/:id/claim', async (c) => {
     const taskId = c.req.param('id');
-    const { agentId, signature, timestamp } = await c.req.json();
+    const { agentId, signature, timestamp } = await readPublicWriteInput(c.req.raw, 'task-claim', taskId);
     const now = Date.now();
     if (!agentId) return c.json({ error: 'agentId required' }, 400);
     const claimer = db.prepare('SELECT public_key FROM agents WHERE agent_id = ?').get(agentId) as any;
@@ -631,7 +632,7 @@ export function createStandaloneServer(config: StandaloneConfig = {}): Standalon
 
   app.post('/v1/tasks/:id/submit', async (c) => {
     const taskId = c.req.param('id');
-    const { agentId, resultPayload, signature, timestamp } = await c.req.json();
+    const { agentId, resultPayload, signature, timestamp } = await readPublicWriteInput(c.req.raw, 'task-submit', taskId);
     const now = Date.now();
     if (!agentId || !resultPayload) return c.json({ error: 'agentId and resultPayload required' }, 400);
     const submitter = db.prepare('SELECT public_key FROM agents WHERE agent_id = ?').get(agentId) as any;

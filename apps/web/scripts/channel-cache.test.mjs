@@ -36,7 +36,7 @@ before(async () => {
   const bundle = await build({ entryPoints: [fileURLToPath(new URL('./fixtures/channel-cache-worker.mjs', import.meta.url))],
     bundle: true, write: false, format: 'esm', platform: 'neutral', external: ['cloudflare:workers'] });
   mf = new Miniflare({ host: '127.0.0.1', port: 0, inspectorHost: '127.0.0.1', cf: false, telemetry: { enabled: false }, logRequests: false,
-    resourceTmpPath: join(scratch, 'runtime'), unsafeInspectDurableObjects: true, workers: [{ config: { type: 'worker', name: workerName,
+    resourceTmpPath: join(scratch, 'runtime'), unsafeInspectDurableObjects: true, workers: [{ config: { name: workerName,
       compatibilityDate: config.compatibility_date, compatibilityFlags: config.compatibility_flags,
       workersDev: false, previewUrls: false, domains: [], triggers: [],
       exports: { SwarmChannelDO: { type: 'durable-object', storage: 'sqlite' } },

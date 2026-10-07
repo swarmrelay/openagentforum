@@ -4,7 +4,7 @@ import { handlePagesHookRequest, type HubEnv } from '../_lib/wake.js';
 import { encryptionError, storedEnvelope, type EnvelopeRow } from '../_lib/envelopes.js';
 import { AGENT_DIRECTORY_SQL, agentDirectoryPage, parseAgentDirectoryQuery } from '@openagentforum/server/agent-directory';
 import { handleRegistration, handleRegistrationState, memoryRegistrationStore, sqlRegistrationStore, type RegistrationRow } from '@openagentforum/server/registration';
-import { readTaskCreateInput, TaskCreateInputError } from '../_lib/task-create-input.js';
+import { readPublicWriteInput, PublicWriteInputError } from '@openagentforum/server/public-write-input';
 
 /**
  * Cloudflare Pages Functions Native API Handler for /v1/*
@@ -355,7 +355,7 @@ export const onRequest: PagesFunction<HubEnv> = async (context) => {
 
     // POST /v1/channels
     if (path === '/v1/channels' && method === 'POST') {
-      const body = (await request.json()) as any;
+      const body = await readPublicWriteInput(request, 'channel');
       const { name, title, topic = '', isPrivate = false, e2eeRequired = false, creatorId = 'system' } = body;
       // Membership is not an authenticated public API yet (#162). Never silently
       // accept or persist an unverified ACL (wake access also relies on this column).
@@ -593,7 +593,7 @@ export const onRequest: PagesFunction<HubEnv> = async (context) => {
       }
 
       if (method === 'POST') {
-        const envelope = (await request.json()) as any;
+        const envelope = await readPublicWriteInput(request, 'message', chName);
         if (!envelope.id || !envelope.sender || !envelope.type || !envelope.signature || !envelope.checksum) {
           return jsonResponse({ error: 'Malformed MessageEnvelope. Required: id, sender, type, payload, signature, checksum' }, 400);
         }
@@ -666,7 +666,6 @@ export const onRequest: PagesFunction<HubEnv> = async (context) => {
         let storedSeq = 1;
         let savedEnvelope: ReturnType<typeof storedEnvelope> | undefined;
         const now = Date.now();
-        envelope.channel = chName;
         // envelope.sequence is a SIGNED field and is stored verbatim (#7).
 
         if (env?.DB) {
@@ -894,11 +893,7 @@ export const onRequest: PagesFunction<HubEnv> = async (context) => {
 
     // POST /v1/tasks
     if (path === '/v1/tasks' && method === 'POST') {
-      let body;
-      try { body = await readTaskCreateInput(request); }
-      catch (error) {
-        return jsonResponse({ error: 'Invalid task create request' }, error instanceof TaskCreateInputError ? error.status : 400);
-      }
+      const body = await readPublicWriteInput(request, 'task-create');
       const { creatorId, title, description, requiredCapabilities = [], timeoutMs = 3600000, reward, signature, timestamp } = body;
       if (!creatorId || !title || !description) {
         return jsonResponse({ error: 'creatorId, title, and description required' }, 400);
@@ -966,7 +961,7 @@ export const onRequest: PagesFunction<HubEnv> = async (context) => {
     const claimMatch = path.match(/^\/v1\/tasks\/([a-zA-Z0-9-_]+)\/claim$/);
     if (claimMatch && method === 'POST') {
       const taskId = claimMatch[1];
-      const { agentId, signature, timestamp } = (await request.json()) as any;
+      const { agentId, signature, timestamp } = await readPublicWriteInput(request, 'task-claim', taskId);
       if (!agentId) return jsonResponse({ error: 'agentId required' }, 400);
 
       const now = Date.now();
@@ -1008,7 +1003,7 @@ export const onRequest: PagesFunction<HubEnv> = async (context) => {
     const submitMatch = path.match(/^\/v1\/tasks\/([a-zA-Z0-9-_]+)\/submit$/);
     if (submitMatch && method === 'POST') {
       const taskId = submitMatch[1];
-      const { agentId, resultPayload, signature, timestamp } = (await request.json()) as any;
+      const { agentId, resultPayload, signature, timestamp } = await readPublicWriteInput(request, 'task-submit', taskId);
       if (!agentId || !resultPayload) return jsonResponse({ error: 'agentId and resultPayload required' }, 400);
 
       const now = Date.now();
@@ -1079,6 +1074,7 @@ export const onRequest: PagesFunction<HubEnv> = async (context) => {
 
     return jsonResponse({ error: `Route ${method} ${path} not found` }, 404);
   } catch (err: any) {
+    if (err instanceof PublicWriteInputError) return err.getResponse();
     return jsonResponse({ error: err.message }, 500);
   }
 };

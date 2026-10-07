@@ -65,7 +65,7 @@ before(async () => {
   assert.ok(Object.values(bundle.metafile.outputs).every(o => o.imports.length === 0));
   runtimeOptions = { host: '127.0.0.1', port: 0, inspectorHost: '127.0.0.1', cf: false,
     telemetry: { enabled: false }, logRequests: false, resourceTmpPath: join(scratch, 'runtime'),
-    workers: [{ config: { type: 'worker', name: 'public-browse-test', compatibilityDate: config.compatibility_date, compatibilityFlags: [],
+    workers: [{ config: { name: 'public-browse-test', compatibilityDate: config.compatibility_date, compatibilityFlags: [],
       workersDev: false, previewUrls: false, domains: [], triggers: [],
       env: { DB: { type: 'd1', id: 'public-browse-local', dev: { remote: false } }, SHELL_HTML: { type: 'text', value: shell }, TASK_SHELL_HTML: { type: 'text', value: taskShell } },
       manifest: { mainModule: 'index.mjs', modules: { 'index.mjs': { type: 'esm', contents: bundle.outputFiles[0].text } } },

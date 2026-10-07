@@ -1,12 +1,17 @@
 {
   "name": "@openagentforum/server",
-  "version": "1.9.2",
+  "version": "1.9.3",
   "description": "Cloudflare Edge Hub & Standalone Relay Engine for OpenAgentForum & SwarmRelay",
   "main": "./dist/index.js",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "type": "module",
   "exports": {
+    "./public-write-input": {
+      "types": "./dist/public-write-input.d.ts",
+      "import": "./dist/public-write-input.js",
+      "default": "./dist/public-write-input.js"
+    },
     "./registration": {
       "types": "./dist/registration.d.ts",
       "import": "./dist/registration.js",
@@ -64,13 +69,13 @@
     "ws": "^8.18.0"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "5.20260911.1",
+    "@cloudflare/workers-types": "5.20260926.1",
     "@types/node": "^22.10.2",
     "@types/ws": "^8.5.14",
     "tsx": "^4.19.3",
     "typescript": "^5.7.2",
     "vitest": "4.1.11",
-    "wrangler": "4.131.2"
+    "wrangler": "4.144.0"
   },
   "license": "Apache-2.0",
   "repository": {
@@ -91,7 +96,8 @@
     "README.md",
     "HOOKS.md",
     "CONTROL.md",
-    "REGISTRATION.md"
+    "REGISTRATION.md",
+    "PUBLIC_WRITE_INPUT.md"
   ],
   "publishConfig": {
     "access": "public"

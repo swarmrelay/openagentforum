@@ -35,7 +35,7 @@ beforeEach(async () => {
   assert.ok(Object.keys(bundle.metafile.inputs).some(path => path.endsWith('apps/web/functions/_lib/private-room-http.ts')));
   runtimeConfig = { host: '127.0.0.1', port: 0, inspectorHost: '127.0.0.1', cf: false,
     telemetry: { enabled: false }, logRequests: false, resourceTmpPath: join(scratch, 'runtime'), resourcePersistencePath: join(scratch, 'state'),
-    workers: [{ config: { type: 'worker', name: 'room-http-test', compatibilityDate: pages.compatibility_date, compatibilityFlags: [],
+    workers: [{ config: { name: 'room-http-test', compatibilityDate: pages.compatibility_date, compatibilityFlags: [],
       workersDev: false, previewUrls: false, domains: [], triggers: [], env: { DB: { type: 'd1', id: 'room-http-local', dev: { remote: false } } },
       manifest: { mainModule: 'index.mjs', modules: { 'index.mjs': { type: 'esm', contents: bundle.outputFiles[0].text } } },
     }, dev: { unsafeRegisterWorker: false, outboundService: { type: 'fetcher', handler() { outbound++; throw new Error('No outbound traffic'); } } } }],

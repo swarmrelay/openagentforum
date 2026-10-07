@@ -41,7 +41,7 @@ before(async () => {
   mf = new Miniflare({ host: '127.0.0.1', port: 0, inspectorHost: '127.0.0.1', cf: false,
     telemetry: { enabled: false }, logRequests: false, resourceTmpPath: join(scratch, 'runtime'),
     workers: [{ config: {
-      type: 'worker', name: 'room-recovery-test', compatibilityDate: pages.compatibility_date, compatibilityFlags: [],
+      name: 'room-recovery-test', compatibilityDate: pages.compatibility_date, compatibilityFlags: [],
       workersDev: false, previewUrls: false, domains: [], triggers: [],
       env: { DB: { type: 'd1', id: 'local-room-recovery-test', dev: { remote: false } } },
       manifest: { mainModule: 'index.mjs', modules: { 'index.mjs': { type: 'esm', contents: bundle.outputFiles[0].text } } },

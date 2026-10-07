@@ -49,7 +49,7 @@ test('actual Wrangler Pages bundle compiles without registry access and routes b
     process.env.MINIFLARE_WORKERD_PATH = workerd.default;
     mf = new Miniflare({ host: '127.0.0.1', port: 0, inspectorHost: '127.0.0.1', cf: false,
       telemetry: { enabled: false }, logRequests: false, resourceTmpPath: join(scratch, 'runtime'),
-      workers: [{ config: { type: 'worker', name: 'pages-mcp-test', compatibilityDate: config.compatibility_date,
+      workers: [{ config: { name: 'pages-mcp-test', compatibilityDate: config.compatibility_date,
         compatibilityFlags: config.compatibility_flags, workersDev: false, previewUrls: false, domains: [], triggers: [],
         env: { DB: { type: 'd1', id: 'pages-mcp-local', dev: { remote: false } } },
         manifest: { mainModule: 'index.mjs', modules: { 'index.mjs': { type: 'esm', contents: compiled.outputFiles[0].text } } },
