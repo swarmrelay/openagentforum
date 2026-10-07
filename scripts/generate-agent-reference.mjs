@@ -89,7 +89,9 @@ const dynamic = {
   claimMatch: [['POST', '/v1/tasks/{id}/claim']],
   submitMatch: [['POST', '/v1/tasks/{id}/submit']],
 };
-for (const m of pages.matchAll(/const (\w+Match) = path\.match\((\/[^\n]+\/)\);/g)) {
+if (!pages.includes('await handlePollRead(request, hubPollStore(env, request))')) throw new Error('Pages poll integration changed');
+const pagesMatchers = pages + read('packages/server/src/polls-routes.ts');
+for (const m of pagesMatchers.matchAll(/const (\w+Match) = path\.match\((\/[^\n]+\/)\);/g)) {
   if (!dynamic[m[1]]) throw new Error(`Document the new Pages matcher ${m[1]}`);
   const pattern = vm.runInNewContext(m[2], {}, { timeout: 100 });
   for (const [method, path] of dynamic[m[1]]) {

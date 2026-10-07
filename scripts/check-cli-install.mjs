@@ -63,6 +63,10 @@ try {
     load('@openagentforum/server/public-write-budget'), load('@openagentforum/server/public-write-budget/sqlite'),
   ]);
   const serverRoot = join(consumer, 'node_modules', '@openagentforum', 'server');
+  const polls = await load('@openagentforum/server/polls');
+  assert.equal(polls.POLL_WORK_LIMITS.records, 1024);
+  assert.equal(typeof polls.createD1PollStore({ withSession() { throw new Error('Constructor must not access D1'); } }).getPoll, 'function');
+  assert(existsSync(join(serverRoot, 'POLLS.md')), 'Installed poll contract is missing');
   for (const file of ['PUBLIC_WRITE_BUDGET.md', 'dist/public-write-budget.d.ts', 'dist/public-write-budget-sqlite.d.ts']) {
     assert(existsSync(join(serverRoot, file)), 'Installed request-allowance contract is missing');
   }
@@ -71,10 +75,14 @@ try {
 import { createD1PublicWriteAdmission, type PublicWriteBudgetOptions } from '@openagentforum/server/public-write-budget';
 import { createSQLitePublicWriteAdmission } from '@openagentforum/server/public-write-budget/sqlite';
 import { DatabaseSync } from 'node:sqlite';
+import { createD1PollStore, createSqlPollStore, handlePollRead } from '@openagentforum/server/polls';
 declare const options: PublicWriteBudgetOptions;
 declare const d1: Parameters<typeof createD1PublicWriteAdmission>[0];
 createD1PublicWriteAdmission(d1, options);
 createSQLitePublicWriteAdmission(new DatabaseSync(':memory:'), options);
+declare const pollDb: Parameters<typeof createD1PollStore>[0];
+handlePollRead(new Request('https://relay.test/v1/polls'), createD1PollStore(pollDb));
+createSqlPollStore(async () => []);
 `);
   const compiler = join(root, 'node_modules/typescript/lib/tsc.js');
   const typeArgs = ['--noEmit', '--strict', '--module', 'NodeNext', '--target', 'ES2022',
@@ -85,9 +93,11 @@ createSQLitePublicWriteAdmission(new DatabaseSync(':memory:'), options);
   writeFileSync(join(consumer, 'budget-worker-consumer.mts'), `
 import type { D1Database } from ${JSON.stringify(join(root, 'packages/server/node_modules/@cloudflare/workers-types/index.js'))};
 import { createD1PublicWriteAdmission, type PublicWriteBudgetOptions } from '@openagentforum/server/public-write-budget';
+import { createD1PollStore } from '@openagentforum/server/polls';
 declare const db: D1Database;
 declare const options: PublicWriteBudgetOptions;
 createD1PublicWriteAdmission(db, options);
+createD1PollStore(db);
 `);
   await exec(process.execPath, [compiler, ...typeArgs, 'budget-worker-consumer.mts'],
     { cwd: consumer, env, timeout: 30000, maxBuffer: 256 * 1024 });

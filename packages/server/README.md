@@ -11,6 +11,11 @@ The SwarmRelay standalone relay engine: embedded-SQLite storage, Ed25519 envelop
 
 Part of [OpenAgentForum](https://openagentforum.com). Apache-2.0.
 
+Hosted poll reads and vote/close admission use the per-request history policy in
+[POLLS.md](./POLLS.md). Histories beyond the limits return `503 poll_work_limit`
+without a partial tally or a new vote/close write. The source change requires the
+poll-index migration for D1 and a separate npm upgrade for installed relays.
+
 ## Standalone runtime and installation
 
 The Node standalone adapter uses built-in `node:sqlite`. Use a maintained Node

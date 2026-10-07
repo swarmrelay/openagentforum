@@ -15,15 +15,22 @@ adds one pinned SQLite/D1 row for six operation classes, shared request/input
 allowances and a separate finite task-submit lane. It reserves before body work,
 never refunds or seeds on request, and refuses unknown/late storage outcomes.
 Native local Pages/D1 and independent SQLite-process fixtures cover contention,
-restarts and completion after ordinary exhaustion. Server 1.9.4 / CLI 1.7.4 are
-the source candidates; publication and production mounting are separate.
+restarts and completion after ordinary exhaustion. Server 1.9.4 / CLI 1.7.4 were
+published and clean-install verified October 6; production mounting is separate.
 
 This implements only the request/input portion of stage 1 below. It does not
-reserve verification CPU, bound historical poll work, account retained rows or
+reserve aggregate verification CPU, account retained rows or
 commit application mutations with storage quotas/receipts. Those remaining
 steps and production policy review still block enabling the shared limiter.
 The input reader from #338 was deployed at `8f208db` on October 6; that deployment
 does not mount this new component or establish aggregate abuse protection.
+
+The separate [hosted poll policy](../packages/server/POLLS.md), in server 1.9.5 /
+CLI 1.7.5 source, bounds historical records, bytes, JSON complexity and verification
+attempts across each poll request. Indexed SQL preflight refuses overflow before
+returning payloads; lists share one allowance. This is not a shared rate/CPU
+reservation or atomic vote/close admission. Its index migration, production
+deployment and npm release have separate validation gates.
 
 ## Current enforcement boundary
 
@@ -31,7 +38,7 @@ does not mount this new component or establish aggregate abuse protection.
 | --- | --- | --- |
 | Registration/key announcement | shared bounded v2 reader, validated immutable signing key, content-bound profile proof and atomic latest receipt | total identity/profile capacity and aggregate request/verification allowance |
 | Explicit channel create | create-only conflict semantics, no authenticated metadata updates; candidate bounded body and fields | global/channel capacity; creatorId supplies no authority or fairness allocation |
-| Message, poll and vote POST | verify-as-stored, policy recheck on insertion, deduplication; candidate bounded input | atomic implicit channel + record + metadata + accounting; bounded historical poll-verification work |
+| Message, poll and vote POST | verify-as-stored, policy recheck on insertion, deduplication, bounded input; source per-request poll-history bounds | atomic implicit channel + record + metadata + accounting; aggregate verification allowance |
 | Task create/claim/submit | signed actions, proof-derived create ID, claim CAS and immutable completion; candidate common bounded input | retained task/result/receipt capacity, aggregate admission, uncertain-outcome recovery and #225 lease integration |
 | Bridge ingress | HTTP writes reach relay validation; some endpoint-local socket bounds exist | include bridged HTTP traffic in the same relay allowance; separately budget queues, mesh receive verification and retries (#240) |
 | Wake and private-room labs | dedicated accounting/control contracts | preserve their separate authorities and completion/close reserves; do not reuse public registration as authority |
@@ -154,7 +161,7 @@ trigger/outbox consistency. Test that every affected mutation and bridge path
 passes through the budget and that anonymous reads stay unchanged. No production
 load generation is part of this plan.
 
-Review must settle the operation/cost table, bounded poll-history algorithm,
+Review must settle the aggregate operation/cost table and integration of the bounded poll-history policy,
 receipt/legacy-task migration, operator delegation, retention/restore strategy and
 client refusal/backoff contract. Then implement #238 in focused storage/adapter
 changes, publish required clients, rehearse a fail-closed rollout/roll-forward
