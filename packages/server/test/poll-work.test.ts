@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { generateAgentKeyPair, signEnvelope, tallyPoll, verifyPollProof, type StoredEnvelope } from '@openagentforum/protocol';
+import { generateAgentKeyPair, signEnvelope, tallyPoll, verifyEnvelope, verifyPollProof, type StoredEnvelope } from '@openagentforum/protocol';
 import { createSqlPollStore, createD1PollStore, createMemoryPollStore, computeTally, handlePollRead, POLL_WORK_LIMITS as limits } from '../src/polls-routes.js';
 import { adapterFixture } from './adapter-fixture.js';
 import { onRequest } from '../../../apps/web/functions/v1/[[route]].js';
@@ -34,6 +34,31 @@ const filler = (poll: StoredEnvelope, n: number, payload = {}) => ({ ...poll, id
   type: 'vote' as const, storedSeq: n + 2, payload: { pollId: poll.id, pollHash: poll.checksum, choice: 0, ...payload } });
 
 describe('bounded poll SQL and verification work', () => {
+  it('retains legacy padded ballots and closes with identical offline tally and proof results', async () => {
+    const f = adapterFixture('standalone');
+    try {
+      const h = await signedHistory();
+      const history = [];
+      for (const [index, original] of [h.votes[0], h.votes[2]].entries()) {
+        const key = original.type === 'vote' ? h.voter : h.creator;
+        history.push({ ...await signEnvelope({ ...original, payload: { ...original.payload as object, padding: 'x'.repeat(8000) } }, key.signingPrivateKey), storedSeq: index + 2 });
+      }
+      seed(f.db, [h.poll, ...history], h.keys);
+      const expected = await tallyPoll(h.poll, history, async id => h.keys.get(id), { now: 1 });
+      const actual = (await computeTally(createSqlPollStore(async (sql, args) => f.db.prepare(sql).all(...args)), h.poll, { now: 1 })).tally;
+      expect(actual).toEqual(expected); expect(actual.counts).toEqual([1, 0]); expect(actual.closedBy).toBe('creator');
+      const proof = await (await f.request(`/v1/polls/${h.poll.id}/proof/${history[0].id}`)).json() as any;
+      expect(await verifyPollProof(proof.leafBytes, proof.proof, proof.root)).toBe(true);
+      for (const envelope of history) {
+        const retry = await f.request(`/v1/channels/${h.poll.channel}/messages`, envelope);
+        expect(retry.status).toBe(400); expect(await retry.json()).toMatchObject({ reason: 'invalid_payload' });
+        const row = f.db.prepare('SELECT payload_json, signature FROM messages WHERE id = ?').get(envelope.id)!;
+        expect(row.payload_json).toBe(JSON.stringify(envelope.payload)); expect(row.signature).toBe(envelope.signature);
+      }
+      expect(f.db.prepare('SELECT count(*) AS n FROM messages').get()!.n).toBe(3);
+    } finally { f.close(); }
+  });
+
   it('matches the pure tally, signatures, revotes, closes, cutoffs and Merkle proofs', async () => {
     const f = adapterFixture('standalone');
     try {
@@ -332,6 +357,34 @@ describe.each(['Worker', 'standalone', 'Pages D1', 'Pages memory'] as const)('%s
       }
       expect(f.db.prepare('SELECT count(*) AS n FROM messages').get()!.n).toBe(beforeReferences);
       expect(f.broadcasts.length).toBe(beforeBroadcasts);
+      for (const base of [h.votes[0], h.votes[2]]) {
+        for (const change of [
+          { payload: { ...base.payload as object, padding: 'x'.repeat(240000) } },
+          { payload: { ...base.payload as object, padding: Array.from({ length: 7 }, () => Array(1000).fill(0)) } },
+          { recipientKeys: { [h.creator.agentId]: 'x'.repeat(240000) } },
+          { extension: Array(33).fill(0) },
+        ]) {
+          const padded = { ...await signEnvelope({ ...base, ...change }, (base.type === 'vote' ? h.voter : h.creator).signingPrivateKey), ...change };
+          const denied = await request(`/v1/channels/${h.poll.channel}/messages`, padded);
+          expect(denied.status).toBe(400); expect(denied.headers.get('cache-control')).toBe('no-store');
+          expect(await denied.json()).toEqual({ error: 'Poll action exceeds hosted input policy', reason: 'invalid_payload' });
+        }
+      }
+      expect(f.db.prepare('SELECT count(*) AS n FROM messages').get()!.n).toBe(beforeReferences);
+      expect(f.broadcasts.length).toBe(beforeBroadcasts);
+      // Exact UTF-8/JSON byte boundaries, using valid signed ballot fields.
+      const payload = { ...h.votes[0].payload as object, justificationRef: '' };
+      const space = 1024 - new TextEncoder().encode(JSON.stringify(payload)).byteLength;
+      payload.justificationRef = '\u0001'.repeat(Math.floor(space / 6)) + 'a'.repeat(space % 6);
+      expect(payload.justificationRef.length).toBeLessThanOrEqual(200);
+      const oversized = await signEnvelope({ ...h.votes[0], id: crypto.randomUUID(), payload: { ...payload, justificationRef: payload.justificationRef + 'a' } }, h.voter.signingPrivateKey);
+      expect((await request(`/v1/channels/${h.poll.channel}/messages`, oversized)).status).toBe(400);
+      const boundary = await signEnvelope({ ...h.votes[0], id: crypto.randomUUID(), payload }, h.voter.signingPrivateKey);
+      const acceptedBoundary = await request(`/v1/channels/${h.poll.channel}/messages`, boundary);
+      expect(acceptedBoundary.status).toBe(200);
+      const savedBoundary = (await acceptedBoundary.json() as any).envelope;
+      expect(savedBoundary.payload).toEqual(payload); expect(savedBoundary.signature).toBe(boundary.signature);
+      expect((await verifyEnvelope(savedBoundary, h.voter.signingPublicKey)).valid).toBe(true);
       // The refused roots cannot block subsequent legitimate ballots or close.
       for (const envelope of h.votes.slice(0, 3)) {
         const r = await request(`/v1/channels/${h.poll.channel}/messages`, envelope);

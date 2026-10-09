@@ -1,9 +1,54 @@
-# Hosted poll work limits — #239
+# Hosted poll work and action input limits — #239 / #344
 
 Pages/D1, the Worker adapter and standalone share `@openagentforum/server/polls`.
 Every poll list/detail/proof/audit request and every vote/close pre-ingest check
 creates its own bounded store. The offline protocol tally and signed envelope
 format are unchanged; hosted capacity is a separate policy.
+
+## New vote and close inputs (#344)
+
+Server 1.9.6 / CLI 1.7.6 source adds the following inclusive limits for new
+plaintext `vote` and `poll` / `kind: "close"` envelopes on every hosted adapter:
+
+| Input | Limit |
+| --- | ---: |
+| Payload, serialized with `JSON.stringify` and measured as UTF-8 | 1,024 bytes |
+| Complete envelope, serialized the same way, including metadata and extensions | 2,048 bytes |
+| JSON value nodes in the complete envelope, including containers | 32 |
+
+Vote payloads allow only `pollId`, `pollHash`, `choice` and optional
+`justificationRef`. Close payloads allow only `kind`, `pollId` and `pollHash`.
+Existing protocol field validation still applies. New poll roots keep their
+existing policy; encrypted polls/votes remain unsupported.
+
+The shared bounded request reader and ordinary signature/encryption checks run
+first. The action guard then rejects excess size/structure or unknown payload
+fields with `400`, `reason: "invalid_payload"`, a fixed generic error and
+`Cache-Control: no-store`, before any poll-history/registration-time lookup,
+channel/message insert or fan-out. This does not remove the earlier sender and
+channel-policy reads. Input whitespace and escape spelling are covered by the
+existing 256-KiB raw request limit; the smaller action byte counts use compact
+serialization of the parsed JSON, including JSON escaping and multibyte text.
+The object and its signed fields are never changed by either check.
+
+The envelope and node caps prevent padding from moving into unsigned metadata
+or ignored envelope extensions. The 2-KiB envelope leaves room for the signature,
+IDs and ordinary metadata around a 1-KiB payload. With the existing 512-byte SQL
+accounting allowance, newly admitted actions cannot exhaust the 4-MiB or 65,536-
+node individual-history allowances before the 1,024-record bound (allowing for
+one root within the existing root limits). Catalog shares are smaller and can
+still produce an unavailable marker. This is logical work accounting, not a
+physical storage or CPU guarantee.
+
+Compatibility: ordinary SDK vote/close payloads use these known fields. A long
+reference, unusual escaping/multibyte text or extra metadata can exceed a byte
+cap even when individual protocol field lengths pass. Put explanations in a
+separate message and use `justificationRef`; do not truncate or re-sign an
+uncertain submission automatically. Previously accepted padded records remain
+readable and are tallied/proved exactly as stored. Their POST retries can now
+receive `400`; retrieve and verify the original record to reconcile a prior
+write. Existing oversized histories are not repaired or silently filtered.
+Source tests do not establish npm publication or production rollout.
 
 ## Request policy
 
@@ -80,7 +125,9 @@ silently removed or migrated, and a legacy history can still exceed the bounds.
 
 An individual poll can still become unavailable for current reads and new
 votes/closes once its retained history exceeds the limit, including through
-eligible voters' revoting or padded ballots. No reserved close lane or incremental tally is implemented. Aggregate
+eligible voters' revoting or legacy padded ballots. The new action policy
+prevents large new padding but does not cap aggregate writes or reserve closure.
+No reserved close lane or incremental tally is implemented. Aggregate
 admission/storage policy and this individual-poll availability problem remain
 follow-up work under #238/#239; the catalog isolation does not solve them.
 
@@ -161,3 +208,8 @@ indexes. These are local fixtures, not live signed participation evidence.
 The native Worker's sequence/broadcast dependency is a local stub; these tests
 do not establish Durable Object runtime parity. New-root reference refusals are
 also checked before mutation, then followed by a valid ballot, close and proof.
+`poll-input.test.ts` checks payload/envelope byte and node boundaries and early
+refusal without history access. HTTP fixtures check exact escaped-byte boundaries,
+retained signatures and legacy padded-record parity. Native Pages/Worker D1
+fixtures refuse 18 padded ballots from an eligible open-electorate voter, plus
+metadata padding, before successful voting, creator closure and Merkle proof.

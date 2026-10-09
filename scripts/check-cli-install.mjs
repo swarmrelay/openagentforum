@@ -150,11 +150,41 @@ createD1PollStore(db);
     assert(report.checks.some(check => check.id === 'packages' && check.code === 'version_unavailable'));
   } finally { renameSync(heldMcp, mcp); }
   phase = 'installed client journey against loopback relay';
-  const [{ createStandaloneServer }, { serve }, { SwarmClient }, { verifyEnvelope }] = await Promise.all([
+  const [{ createStandaloneServer }, { serve }, { SwarmClient }, { verifyEnvelope, signEnvelope, verifyPollProof }] = await Promise.all([
     load('@openagentforum/server/standalone'), load('@hono/node-server'), load('@openagentforum/sdk'), load('@openagentforum/protocol'),
   ]);
   const journey = await runAgentJourney({ cliPath: join(cliRoot, cliPackage.bin.swarmrelay),
     createStandaloneServer, serve, SwarmClient, verifyEnvelope });
+  phase = 'installed poll action limits and SDK participation';
+  const relay = createStandaloneServer({ dbPath: ':memory:', publicOrigin: 'https://relay.test' });
+  try {
+    const localFetch = async (input, init) => {
+      assert.equal(new URL(String(input)).origin, 'https://relay.test');
+      return relay.app.fetch(new Request(input, init));
+    };
+    const creator = await SwarmClient.init({ hubUrl: 'https://relay.test', fetch: localFetch });
+    const voter = await SwarmClient.init({ hubUrl: 'https://relay.test', fetch: localFetch });
+    const poll = await creator.openPoll('installed-poll-input', { title: 'Installed input policy', options: ['yes', 'no'],
+      electorate: { type: 'open' }, closes: { at: Date.now() + 60000 }, closePolicy: { creator: true },
+      rule: { method: 'plurality' }, revote: 'latest' });
+    assert.equal(polls.POLL_ACTION_LIMITS.payloadBytes, 1024);
+    for (const kind of ['vote', 'close']) {
+      const signer = kind === 'vote' ? voter : creator;
+      const envelope = await signEnvelope({ channel: poll.channel, sender: signer.agentId, type: kind === 'vote' ? 'vote' : 'poll', sequence: 50,
+        payload: { pollId: poll.id, pollHash: poll.checksum, ...(kind === 'vote' ? { choice: 0 } : { kind: 'close' }), padding: 'x'.repeat(240000) } }, signer.keyPair.signingPrivateKey);
+      const refused = await localFetch(`https://relay.test/v1/channels/${poll.channel}/messages`, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(envelope),
+      });
+      assert.equal(refused.status, 400); assert.equal((await refused.json()).reason, 'invalid_payload');
+    }
+    assert.equal(relay.db.prepare('SELECT count(*) AS n FROM messages').get().n, 1);
+    const ballot = await voter.vote(poll.channel, poll.id, 1);
+    await creator.closePoll(poll.channel, poll.id);
+    const detail = await voter.getPoll(poll.id, poll.channel);
+    assert.deepEqual(detail.tally.counts, [0, 1]); assert.equal(detail.tally.closedBy, 'creator');
+    const proof = await (await localFetch(`https://relay.test/v1/polls/${poll.id}/proof/${ballot.id}`)).json();
+    assert.equal(await verifyPollProof(proof.leafBytes, proof.proof, proof.root), true);
+  } finally { relay.db.close(); }
   phase = 'installed SDK and MCP unavailable catalog handling';
   assert(existsSync(join(consumer, 'node_modules/@openagentforum/sdk/CHANGELOG.md')));
   const catalogFixture = { polls: [], unavailable: [{ pollId: 'large-poll', channel: 'general', status: 'unavailable', code: 'poll_work_limit' }] };
@@ -184,7 +214,7 @@ createD1PollStore(db);
     { cwd: consumer, env, timeout: 120_000, maxBuffer: 2 * 1024 * 1024 });
   console.log(JSON.stringify({ ok: true, versions, sourceBuildForced: true, pythonUnavailable: true,
     installScriptsEnabled: true, nativeSqliteAddonAbsent: true, aliases: 2, doctorWithoutMcp: true,
-    publicWriteBudgetExports: true, publicWriteBudgetTypes: true, unavailableCatalogClients: true, consumerAudit: true, journey }));
+    publicWriteBudgetExports: true, publicWriteBudgetTypes: true, pollActionInputs: true, unavailableCatalogClients: true, consumerAudit: true, journey }));
 } catch {
   // Package managers and subprocesses can include paths or environment diagnostics.
   console.error(`Clean CLI check failed during: ${phase}. No subprocess output was printed.`);

@@ -15,6 +15,10 @@ Hosted poll reads and vote/close admission use the per-request history policy in
 [POLLS.md](./POLLS.md). Histories beyond the limits return `503 poll_work_limit`
 without a partial tally or a new vote/close write. The source change requires the
 poll-index migration for D1 and a separate npm upgrade for installed relays.
+Source 1.9.6 also bounds new vote/close inputs to known payload fields, 1 KiB of
+compact UTF-8 payload JSON, 2 KiB of envelope JSON and 32 value nodes. Refusal is
+400 before poll-history work or mutation; retained records and offline proofs
+are unchanged. This action-input change adds no migration.
 
 ## Standalone runtime and installation
 

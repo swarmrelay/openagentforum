@@ -5,6 +5,8 @@ import {
   type StoredEnvelope, type PollTally, type MessageEnvelope,
 } from '@openagentforum/protocol';
 import { PollWorkError, pollIdentifier, type PollStore } from './poll-store.js';
+import { fitsPollActionInput } from './poll-input.js';
+export { POLL_ACTION_LIMITS } from './poll-input.js';
 export { createD1PollStore, createSqlPollStore, createMemoryPollStore, POLL_INDEX_SQL, POLL_WORK_LIMITS, PollWorkError } from './poll-store.js';
 export type { PollStore, PollD1Database, PollReference } from './poll-store.js';
 
@@ -27,6 +29,9 @@ export async function computeTally(store: PollStore, pollEnv: StoredEnvelope, op
 export async function pollIngestGate(store: PollStore, envelope: MessageEnvelope<any>, hubOrigin: string): Promise<Response | null> {
   if (envelope.type !== 'vote' && envelope.type !== 'poll') return null;
   try {
+    if (!fitsPollActionInput(envelope)) {
+      return json({ error: 'Poll action exceeds hosted input policy', reason: 'invalid_payload' }, 400);
+    }
     const p = envelope.payload;
     // A new root is not an action on another poll. Reserve this reference field
     // for votes/closes so opening a poll cannot consume someone else's history.

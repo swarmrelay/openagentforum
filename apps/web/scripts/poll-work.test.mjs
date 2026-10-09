@@ -50,12 +50,13 @@ after(async () => {
   else process.env.MINIFLARE_WORKERD_PATH = previousRuntime;
 });
 
-async function history(channel) {
+async function history(channel, open = false) {
   const creator = await generateAgentKeyPair(), voter = await generateAgentKeyPair();
   for (const key of [creator, voter]) assert.equal((await request('/v1/agents/register', { publicKey: key.signingPublicKey })).status, 200);
   const poll = { ...await signEnvelope({ channel, sender: creator.agentId, type: 'poll', sequence: 700,
     payload: { kind: 'open', title: 'Native bounded poll', options: ['yes', 'no'], ledger: { hub: origin },
-      electorate: { type: 'list', agentIds: [creator.agentId, voter.agentId] }, closes: { allVoted: true },
+      electorate: open ? { type: 'open' } : { type: 'list', agentIds: [creator.agentId, voter.agentId] },
+      closes: open ? { at: Date.now() + 600000 } : { allVoted: true },
       closePolicy: { creator: true }, rule: { method: 'plurality' }, revote: 'latest' } }, creator.signingPrivateKey), storedSeq: 1 };
   assert.equal((await request(`/v1/channels/${channel}/messages`, poll)).status, 200);
   const vote = (choice, sequence) => signEnvelope({ channel, sender: voter.agentId, type: 'vote', sequence,
@@ -156,6 +157,46 @@ test('native Pages and Worker refuse reference-bearing new roots without blockin
     assert.deepEqual(detail.tally.rejectedCloses, []);
     const proof = await (await request(`/v1/polls/${h.poll.id}/proof/${ballot.id}`, undefined, adapter)).json();
     assert.equal(await verifyPollProof(proof.leafBytes, proof.proof, proof.root), true);
+  }
+});
+
+test('native open-electorate padding refusals leave normal voting and creator closure available', async () => {
+  for (const adapter of ['Pages', 'Worker']) {
+    const h = await history(`native-action-input-${adapter.toLowerCase()}`, true);
+    const path = `/v1/channels/${h.poll.channel}/messages`;
+    const before = (await sql([{ sql: 'SELECT count(*) AS n FROM messages' }]))[0].results[0].n;
+    // This eligible voter can revote. The old admission accepted enough padding
+    // to exceed 4 MiB; all 18 attempts must now leave retained history untouched.
+    for (let n = 0; n < 18; n++) {
+      const padded = await signEnvelope({ channel: h.poll.channel, sender: h.voter.agentId, type: 'vote', sequence: n,
+        payload: { pollId: h.poll.id, pollHash: h.poll.checksum, choice: 0, padding: 'x'.repeat(240000) } }, h.voter.signingPrivateKey);
+      const refused = await request(path, padded, adapter);
+      assert.equal(refused.status, 400); assert.equal(refused.headers.get('cache-control'), 'no-store');
+      assert.deepEqual(await refused.json(), { error: 'Poll action exceeds hosted input policy', reason: 'invalid_payload' });
+      assert.equal(refused.headers.get('x-fixture-primary-sessions'), '0');
+      assert.equal(refused.headers.get('x-fixture-broadcasts'), '0');
+    }
+    const close = await signEnvelope({ channel: h.poll.channel, sender: h.creator.agentId, type: 'poll', sequence: 701,
+      payload: { kind: 'close', pollId: h.poll.id, pollHash: h.poll.checksum } }, h.creator.signingPrivateKey);
+    for (const envelope of [await h.vote(1, 100), close]) {
+      for (const metadata of [{ recipientKeys: { [h.voter.agentId]: 'x'.repeat(240000) } }, { extension: Array(33).fill(0) }]) {
+        const refused = await request(path, { ...envelope, ...metadata }, adapter);
+        assert.equal(refused.status, 400); assert.equal((await refused.json()).reason, 'invalid_payload');
+        assert.equal(refused.headers.get('x-fixture-primary-sessions'), '0');
+        assert.equal(refused.headers.get('x-fixture-broadcasts'), '0');
+      }
+    }
+    assert.equal((await sql([{ sql: 'SELECT count(*) AS n FROM messages' }]))[0].results[0].n, before);
+    const ballot = await h.vote(1, 101);
+    assert.equal((await request(path, ballot, adapter)).status, 200);
+    assert.equal((await request(path, close, adapter)).status, 200);
+    const detail = await (await request(`/v1/polls/${h.poll.id}`, undefined, adapter)).json();
+    assert.deepEqual(detail.tally.counts, [0, 1]); assert.equal(detail.tally.closedBy, 'creator');
+    assert.equal(detail.tally.ballots.length, 1);
+    const proof = await (await request(`/v1/polls/${h.poll.id}/proof/${ballot.id}`, undefined, adapter)).json();
+    assert.equal(await verifyPollProof(proof.leafBytes, proof.proof, proof.root), true);
+    const catalog = await (await request(`/v1/polls?channel=${h.poll.channel}`, undefined, adapter)).json();
+    assert.equal(catalog.polls.length, 1); assert.deepEqual(catalog.unavailable, []);
   }
 });
 
