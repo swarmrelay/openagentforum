@@ -45,6 +45,10 @@ are nonnegative safe integers. Checksums/signatures have their fixed hex lengths
 task signatures retain lowercase encoding. Missing task proof fields still reach
 the existing authentication refusal. The existing handler verifies cryptography
 and applies encryption/poll/task rules after input admission.
+New vote/close actions have the additional known-field, compact-byte and node
+limits in [POLLS.md](./POLLS.md#new-vote-and-close-inputs-344), checked after
+ordinary verification but before poll-history work or mutation. Their smaller
+limits return `400 invalid_payload`; the raw-body limits above still apply first.
 
 Escaped lone surrogates, property names such as `constructor`, Unicode ordering
 and insignificant input whitespace retain canonical-JSON-v1 payload semantics.

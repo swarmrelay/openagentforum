@@ -36,6 +36,13 @@ not prevent an individual poll from exhausting its retained-history allowance;
 current reads and new votes/closes then remain unavailable pending the separate
 admission/storage work under #238/#239.
 
+The #344 source follow-up (server 1.9.6 / CLI 1.7.6) rejects new vote/close
+padding with known payload fields, 1-KiB compact UTF-8 payload JSON, 2-KiB
+envelope JSON and 32 value nodes before history work or mutation. Metadata
+cannot bypass the whole-envelope bounds. Legacy stored ballots and closes keep
+their original tally/proof semantics. This limits per-action work; the record
+cap, aggregate admission and reserved completion capacity remain separate work.
+
 ## Current enforcement boundary
 
 | Entry | Existing protection / current input candidate | Remaining shared work |
