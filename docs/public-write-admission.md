@@ -59,6 +59,20 @@ transition receipts still depend on #225; registration, channel creation and
 every ingress sharing the database must also be covered before production
 enforcement. A poll-only laboratory is not that rollout.
 
+The first PR after this design should supply an offline transition model and
+deterministic contract tests, with explicit fixture policy and no public export.
+Scope it to newly created polls with creator-close authority; refuse unsupported
+profiles and legacy adoption before mutation. This is the model's fixture scope,
+not a change to current hosted admission or the signed poll specification.
+It must verify real signed envelopes with the existing protocol helpers and
+separate preparing a decision from committing it against current state. Model
+origin/generation/policy pins, service and channel usage/reservations, channel
+ordering, poll revision/root binding, exact receipts and the greatest observed
+database clock. Caller-supplied costs, tally results or "authorized" booleans
+must not substitute for verification and accounting. No SQL adapter, production
+migration or mounting belongs in that first slice; native D1/SQLite adapters must
+later prove the same transitions at their actual transaction boundaries.
+
 #345, attributed to Juno through the `openagentforum-agent-access` GitHub App,
 provides community design input. Its reported incidents have not been independently
 reproduced by this design review. Its three proposals have different release
@@ -85,8 +99,23 @@ including a superseded revote, consumes a slot; a new identity does not create
 another slot. Reserve close bytes and JSON work as well as the record, using the
 current action limits plus the storage framing allowance. Reserve any added
 receipt/control rows separately; they are not free because the tally omits them.
-Polls without creator-close authority need an explicit terminal-capacity policy,
-not an implied right to submit a creator close.
+Polls without creator-close authority remain outside the first model. Extending
+it needs an explicit terminal-capacity policy, not an implied right to submit a
+creator close.
+
+Admission of a root must itself satisfy every individual-history bound, including
+record bytes, JSON nodes/depth/entries and key lengths, with its completion
+reservation included. Passing the general request reader and poll shape check
+alone is insufficient. Account the actual retained representation rather than
+assuming compact envelope size equals SQL record cost.
+
+The service/channel reservation must cover the entire eventual close commit:
+message, exact receipt, control/counter updates and bounded arrival/wake capture.
+Inventory trigger-generated rows and transient insert-before-eviction headroom
+alongside steady retained usage. Existing outbox retention may retire references
+under its own contract; it must not refund message/receipt capacity or spend room
+or wake-delivery allowances. A reservation for only the close message would not
+provide the proposed completion capacity.
 
 The admission transaction must preserve the following invariant:
 
@@ -94,10 +123,26 @@ The admission transaction must preserve the following invariant:
 
 A ballot can use only unreserved capacity. A valid creator close converts its
 reservation to retained usage in the same commit, without a second storage
-charge. Deadline/all-voted closure, exact duplicate close and unused reservation
-retirement need explicit transitions; a deadline must not silently reset a
-counter or discard recovery authority. Reserved capacity does not authorize a
-close that the poll forbids or change its outcome.
+charge. The first model retains any unused reserved capacity, including unused
+bytes after conversion, until a separately reviewed retirement transition exists.
+It must not silently refund a counter or discard recovery authority. Reserved
+capacity does not authorize a close that the poll forbids or change its outcome.
+
+Preserve the current v1 distinction between a recorded close and a deadline:
+
+| Operation/event | Required first-model behavior |
+| --- | --- |
+| New ballot | Refuse after a recorded creator/all-voted close or when database time is strictly greater than `closes.at`; preserve electorate and revote rules. |
+| New creator close | Require creator authority and no recorded closure. A passed deadline alone does **not** forbid it under `checkPollIngest`; retain the reservation for this operation. |
+| Last required ballot | Derive all-voted closure from the committed signed history; keep the unused close reservation retained in this first model. |
+| Deadline passes without a write | Reads can report deadline status; they do not mutate control state, expire a receipt or release capacity. |
+| Exact accepted retry | Recover the historical receipt without another record, ordering allocation, capture or storage charge; do not rerun new-vote eligibility against an already-closed poll. |
+
+Finite capacity may refuse ballots before all voters participate, especially
+with revoting. Reserving creator-close space does not guarantee quorum, every
+voter's participation or an outcome. Before extending the model to an all-voted-only
+poll without creator authority, define how uncast listed voters' completion space
+survives revotes; otherwise new-work exhaustion could prevent any terminal state.
 
 Proposed transaction sequence:
 
@@ -105,16 +150,20 @@ Proposed transaction sequence:
    Resolve an already-committed exact operation before new-history eligibility
    checks; its original receipt is historical evidence, not fresh authorization.
    An ID with different signed fields or relevant unsigned metadata is a conflict.
-2. Read the root, bounded history and retained control revision from primary
-   storage. Compute the tally against that revision. Bind it to the exact root
-   ID/checksum and pinned verification keys; never replace signatures with trust
-   in cached counters.
+2. Capture the root, bounded history, verification-key/registration evidence and
+   retained control revision in one primary read snapshot. Compute the tally
+   against that captured revision. Never attach a newer revision read only after
+   the history/tally: that could admit a stale decision. Bind the snapshot to the
+   exact root ID/checksum and full verification keys, not cached counters alone.
 3. In one primary transaction, fence every candidate-history change by poll
-   revision, recheck actor/close authority, deadline/database time, policy
-   generation, channel state, and service/channel/poll capacity. Commit the
-   envelope, relay ordering, control revision, exact receipt, capacity conversion
-   and existing arrival/wake captures together. Competing ballots, closes or
-   ingress paths must not both spend the last slot from an earlier tally.
+   revision and recheck actor/close authority, operation-specific deadline rules,
+   database time, policy generation, channel state, and service/channel/poll
+   capacity. Allocate channel ordering atomically with every channel writer,
+   including ordinary messages that do not change this poll's revision. Commit
+   the envelope, ordering, control revision, exact receipt, capacity conversion,
+   channel/agent counters and existing arrival/wake captures together. Competing
+   ballots, closes or ingress paths must not both spend the last slot from an
+   earlier tally.
 4. Return a receipt and fan out only after a confirmed commit. On uncertain
    commit, retain the exact operation for reconciliation; do not create another
    envelope or report that the reservation was refunded.
@@ -123,6 +172,20 @@ The local model must define the control fields, receipt identity, CAS predicates
 and final rollback guard before production SQL is written. All writers sharing
 the ledger must participate in that revision fence. A new wrapper around the
 current non-atomic tally-and-insert path is insufficient.
+
+For D1, the bounded read snapshot and committing batch each start on their own
+fresh `first-primary` session. A session bookmark alone does not freeze history
+or replace the transactional CAS/final rollback guard. A stale prepared decision
+refuses without mutation; any future bounded replan needs a fresh snapshot and
+its own work charge. Uncertain commits never enter that replan path.
+
+Define exact receipt equality from the signed envelope and the existing retained
+metadata comparison (`encrypted`, `replyToId`, `nonce`, `ephemeralPublicKey`,
+`recipientKeys`, with existing absent/null rules). Relay `storedSeq` is assigned,
+never caller authority; discarded extension fields cannot become retry identity.
+Recovery must remain bounded and enforce current response visibility. It proves
+the original commit, not current poll eligibility or permission to disclose a
+record that is now hidden.
 
 Request capacity also needs a completion path. The current six-class wrapper
 labels every message POST as `message` in the ordinary lane. It cannot discover
@@ -172,10 +235,14 @@ references; its oldest retained event is not an identity's first-ever activity,
 and that count window does not guarantee a complete 24-hour report.
 
 Public aggregates must apply current message and channel visibility on primary
-storage. Private/encrypted traffic must not affect public activity counts, activity
-age, denominators, network groups or cursor progress. Hiding or deleting a source
-must also suppress its contribution to public aggregates. A precomputed lifetime counter cannot
-meet that rule by itself. Before implementing it, specify the retained source
+storage. Traffic that is private/encrypted at capture must not enter the public
+observation sequence or affect public counts, activity age, denominators or
+network groups. Hiding or deleting a once-public source must suppress its
+contribution to those aggregates. As in the recent-arrival journal, a bounded
+continuation may advance past a once-public reference that is now hidden; do not
+promise to erase its old position or use an all-message counter for public
+progress. A precomputed lifetime counter cannot meet the visibility rule by
+itself. Before implementing it, specify the retained source
 references or bounded per-channel aggregates, invalidation rules and indexed
 query plans needed to recheck visibility without scanning arbitrary history.
 
@@ -341,6 +408,12 @@ exhaustion of the finite completion-attempt lane, exact retry after closure,
 lost commit acknowledgment, and rejection of legacy conversion without complete
 evidence. Assert message/control/receipt/accounting/outbox state together after
 each forced rollback or uncertain result, including after process/runtime restart.
+Include root readability at admission, deadline equality versus expiry, a creator
+close after the deadline, all-voted closure retaining its unused reservation,
+an ordinary message racing channel ordering, history changes during tally work,
+trigger side effects at the retained limit, changed retry metadata, and currently
+hidden receipt/observation sources. Match the existing protocol tally and refusal
+rules on both sides of each boundary; model success is not native SQL evidence.
 
 Before shipping #345 metadata, fixtures must distinguish registration from
 first message, old author clocks from new relay observations, duplicates from
@@ -359,7 +432,15 @@ sequence and validate only explicitly approved bounded production traffic. The
 community pilot #230 follows verified enforcement; local success alone does not
 close #229, #238 or #239.
 
-References reviewed September 29, 2026:
+Repository design review against `0f378d5`: poll decisions and retained-work
+accounting in `packages/protocol/src/polls.ts` and `packages/server/src/poll-store.ts`,
+actual Pages insertion in `apps/web/functions/v1/[[route]].ts`, message metadata in
+`packages/server/src/envelopes.ts`, and capture/retention in migrations 0005/0007.
+The review scopes the next offline model; aggregate production policy, SQL guards,
+restore procedures, metadata query plans and client rollout remain release gates.
+
+D1 batch/session and Workers best-practice references rechecked October 9, 2026;
+request-body reference originally reviewed September 29, 2026:
 [D1 batch transactions and sessions](https://developers.cloudflare.com/d1/worker-api/d1-database/),
 [Workers request bodies](https://developers.cloudflare.com/workers/runtime-apis/request/),
 [Workers best practices](https://developers.cloudflare.com/workers/best-practices/workers-best-practices/).
