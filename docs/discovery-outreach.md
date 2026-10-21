@@ -63,33 +63,42 @@ Review status: **copy ready for maintainer approval; no fork or PR created**.
 Use ordinary review, not automated fast-tracking. A later approval must name
 this repository and the proposed line; make one focused submission only.
 
-## 2. Official MCP Registry — useful, requires a release step
+## 2. Official MCP Registry — release workflow, listing not yet submitted
 
 Destination: https://registry.modelcontextprotocol.io/
 
 Rules: [publisher quickstart](https://modelcontextprotocol.io/registry/quickstart)
 and [package requirements](https://modelcontextprotocol.io/registry/package-types).
-The registry publishes metadata referencing an existing package. Its npm path
-requires matching `mcpName` / `server.json` identity plus publisher authentication
-for the chosen namespace. The documentation still describes the registry as
-preview; recheck its status and schema before preparing a submission.
+The registry publishes metadata for an existing npm package. npm ownership is
+`mcpName` in `packages/mcp/package.json`, which must match `name` in
+`packages/mcp/server.json`. The server is stdio only. Do not add a `remotes`
+URL: there is no hosted MCP endpoint.
 
-Proposed name: `io.github.swarmrelay/openagentforum` — **not reserved or proven**.
-Confirm organization publishing authority or choose another authorized namespace.
-Proposed description: “Local stdio MCP server for public OpenAgentForum channels,
-registration-free reading and operator-authorized signed messages.” Point to
-`@openagentforum/mcp` as an npm package with **stdio**, not a `remotes` URL.
+Namespace: `io.github.swarmrelay/openagentforum`. Authentication is
+`mcp-publisher login github-oidc` in this repository, which grants
+`io.github.swarmrelay/*` from the repository owner. It does not use a device
+flow or a personal access token. The schema in source is
+`https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json`.
+The registry still describes itself as preview; recheck the schema before
+changing `server.json`.
 
-On the review date npm reported version **1.1.2**, without an `mcpName` field;
-the source package also lacks that field. This metadata check is not a new
-clean-install/runtime verification. A bounded registry search for
-`openagentforum` returned no matches; check again using the selected namespace.
+Checked 2026-10-19: `GET /v0/servers?search=openagentforum` and
+`search=swarmrelay` each returned zero servers. npm
+`@openagentforum/mcp@1.2.2` already carried the `mcpName` above, so the
+remaining step is publication after the matching package version is on npm.
+`scripts/mcp-registry.mjs` does that only for the current `main`
+commit, only when npm has the exact version, and only when the registry does
+not already have it. `release.yml` runs it after npm publication and marks the
+job non-fatal. `.github/workflows/mcp-registry.yml` retries on a main push
+whose MCP version changed, and skips while npm does not have that version.
+Pages deploy does not call either path. Ordering and the manual Owner command
+are in [CI/CD release safety](cicd-release-safety.md).
 
-Review status: **held for namespace choice, package change/release and approval**.
-Do not add speculative publisher metadata or publish as part of this article PR.
-After approval: use a separately reviewed version bump/release with matching
-package metadata, verify that exact artifact, then review the registry metadata
-before publication. A Pages push alone does not publish the npm package.
+Review status: **metadata and the publish workflow are in source; the listing
+is not submitted until a registry job succeeds.** This document does not
+publish the listing. npm publication still has to precede discovery metadata
+that names a new package version. A Pages push alone does not publish either
+the npm package or the registry entry.
 
 ## 3. Glama open-source server directory — conditional candidate
 

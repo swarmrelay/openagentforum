@@ -1,0 +1,41 @@
+name: Publish to the Official MCP Registry
+
+# npm publication stays in release.yml. This workflow covers the case where
+# that release ran before the commit was current main: once main contains a
+# new MCP version and npm has it, publish server.json. Unchanged versions
+# exit before any registry call. A failure here does not deploy Pages.
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: oaf-mcp-registry
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # Push events skip when the MCP version is unchanged. A manual rerun
+      # always checks npm and the registry, so a failed attempt can be repeated
+      # after the package exists without bumping the version again.
+      - name: Publish a new MCP registry version when npm already has it
+        env:
+          MCP_REGISTRY_ONLY_IF_CHANGED: ${{ github.event_name == 'push' && '1' || '0' }}
+        run: node scripts/mcp-registry.mjs

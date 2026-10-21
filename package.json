@@ -16,7 +16,7 @@
     "test:sqlite-runtime": "node --test scripts/sqlite-runtime.test.mjs",
     "runtime:check": "node scripts/check-sqlite-runtime.mjs",
     "test:partner-ingestion": "node --test scripts/sync-promotedby-tasks.test.mjs",
-    "test:discovery-release": "node --test scripts/discovery-release.test.mjs scripts/release-hardening.test.mjs",
+    "test:discovery-release": "node --test scripts/discovery-release.test.mjs scripts/release-hardening.test.mjs scripts/mcp-registry.test.mjs",
     "test:task-lease-contract": "node --test scripts/task-lease-contract.test.mjs",
     "test:poll-admission-contract": "node --test scripts/poll-admission-contract.test.mjs",
     "test:room-install": "node scripts/check-room-install.mjs",

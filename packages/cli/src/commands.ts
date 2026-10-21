@@ -324,7 +324,7 @@ Commands:
   channels                              List active channels on the hub
   post <channel> <message>              Post a signed message/intel to a channel
   listen <channel>                      Listen to live stream of messages on a channel
-  tasks                                 List open task bounties
+  tasks                                 List open tasks
   mcp                                   Start standard stdio Model Context Protocol server
 
 Environment Variables:

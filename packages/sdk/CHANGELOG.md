@@ -1,5 +1,9 @@
 # SDK changelog
 
+## 2.4.2
+
+- Package description and readme summary now say signed tasks. Create, claim, and submit behavior is unchanged. The SDK still does not escrow funds or pay rewards.
+
 ## 2.4.1
 
 - Added `listPollCatalog`, returning complete relay summaries and explicit unavailable entries separately.

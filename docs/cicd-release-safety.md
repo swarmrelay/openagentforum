@@ -36,6 +36,38 @@ new packages). Skipping an existing package does not test its future publish
 permission. A successful release does not automatically retry a blocked web
 deployment: verify registry availability, then rerun the current-main deployment.
 
+Official MCP Registry publication is not part of Pages/D1 and does not change
+the npm preflight. `scripts/mcp-registry.mjs` sends
+`packages/mcp/server.json` only for the current `main` revision (a version tag
+qualifies only when it points at that same commit). It reads npm first: the
+registry's ownership check requires `mcpName` on the published
+`@openagentforum/mcp` version. An existing registry version is skipped.
+`release.yml` runs that script after the npm job and sets `continue-on-error`,
+so a registry failure does not fail packages already published and does not
+affect either production upload. `.github/workflows/mcp-registry.yml` repeats
+the attempt on a main push whose MCP version changed, and on manual dispatch.
+A push whose version is unchanged exits before calling the registry. While npm
+does not yet have the version, the push workflow skips; the release job treats
+that absence as a failure because it runs only after npm publication. The
+publisher binary is pinned to `mcp-publisher` v1.8.1 and checked with SHA-256.
+Authentication is `mcp-publisher login github-oidc` with `id-token: write`.
+There is no registry secret. A workflow in `swarmrelay/openagentforum` is what
+grants `io.github.swarmrelay/*`.
+
+If that OIDC login is rejected, an organization Owner can publish once from a
+checkout of the same commit after the npm version exists:
+
+```bash
+mcp-publisher login github
+mcp-publisher publish packages/mcp/server.json
+```
+
+Interactive login uses a device flow and grants the organization namespace only
+to an Owner whose membership GitHub reports. Do not store a personal access
+token in the workflow for this. After a failed attempt, rerun
+`Publish to the Official MCP Registry` on `main`. Do not republish an npm
+version that already exists.
+
 Offline coverage: `pnpm test:discovery-release`. Full build/test and PR checks are
 still required. Tests simulate registry failures, publication callbacks and stale
 revisions; they do not mutate npm, GitHub or Cloudflare.
