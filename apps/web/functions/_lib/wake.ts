@@ -2,6 +2,7 @@
 import { HookManager, d1HookStateStore, handleHookRequest } from '@openagentforum/server/hooks';
 import { createHookControlHandler, d1HookControlAdmission } from '@openagentforum/server/hooks/control';
 import { drainWakeOutbox } from './wake-outbox.js';
+import { PUBLIC_CHANNEL, PUBLIC_MESSAGE } from './public-browse-store.js';
 
 export type HubEnv = Partial<PagesEnv>;
 const hookPath = /^\/v1\/agents\/agent_[a-f0-9]{16}\/hooks(?:\/hook_[a-f0-9]{16}(?:\/renew)?)?$/;
@@ -37,6 +38,10 @@ async function runtime(env: HubEnv) {
       try { members = JSON.parse(row.members ?? 'null'); } catch { return null; }
       return { isPrivate: true, isMember: Array.isArray(members) && members.every(id => typeof id === 'string' && /^agent_[a-f0-9]{16}$/.test(id)) && members.includes(agentId) };
     },
+    // (#358) One primary-key read with the public reader's predicates: a private,
+    // encrypted or dm-/vault- parent is indistinguishable from an absent one.
+    replyParentSender: async id => (await db.prepare(`SELECT sender FROM messages WHERE id = ? AND ${PUBLIC_MESSAGE}
+      AND EXISTS (SELECT 1 FROM channels WHERE name = messages.channel AND ${PUBLIC_CHANNEL})`).bind(id).first<{ sender: string }>())?.sender ?? null,
   });
   return { db, store, manager, hub, token };
 }

@@ -67,6 +67,13 @@ export interface HookManagerOptions {
   publicKey: (agentId: string) => Promise<string | null>;
   /** Authoritative current access, required at matching AND dispatch. */
   channelAccess: (agentId: string, channel: string) => Promise<ChannelAccess | null>;
+  /**
+   * (#358) Optional. The stored sender of a PUBLIC, unencrypted message with
+   * this exact id, or null when absent or not public. Must be one bounded
+   * primary-key read on the origin store and must not reveal private records.
+   * Omit it and replies wake only as ordinary channel matches.
+   */
+  replyParentSender?: (messageId: string) => Promise<string | null>;
   now?: () => number;
 }
 

@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { STATE_LIMITS } from '../src/hooks/types.js';
 import { fixture } from './hooks-fixture.js';
 import { parseJob } from '../../wake-service/src/job.js';
+import { signEnvelope } from '@openagentforum/protocol';
+import { signedReplyParent } from '../src/hooks/index.js';
 
 const cleanup: (() => void)[] = [];
 afterEach(() => { for (const close of cleanup.splice(0)) close(); });
@@ -130,6 +132,51 @@ describe.each(['sqlite', 'd1'] as const)('durable pending work (%s)', backend =>
     expect((await f.list()).hooks.find(hook => hook.url.endsWith('/second'))!.disabledReason).toBe('verification_expired');
   });
 
+  it('wakes a mentionsOnly hook for a signed reply to the owner as an exact-key mentioned hint (#358)', async () => {
+    const f = await setup(backend);
+    await f.activate(f.spec({ mentionsOnly: true }));
+    const mine = 'urn:uuid:00000000-0000-4000-8000-000000000001', theirs = 'urn:uuid:00000000-0000-4000-8000-000000000002';
+    f.parents.set(mine, f.owner.agentId);
+    f.parents.set(theirs, f.sender.agentId);
+    // Unsigned top-level replyToId, a reply to someone else's post, an unknown or
+    // non-public parent (the lookup returns null) and a failed lookup never wake.
+    for (const [seq, payload, extra] of [
+      [1, { message: 'legacy link only' }, { replyToId: mine }], [2, { message: 'to them', inReplyTo: theirs }, {}],
+      [3, { message: 'to a hidden post', inReplyTo: 'urn:uuid:00000000-0000-4000-8000-000000000003' }, {}],
+    ] as const) {
+      expect(await f.manager.enqueue(f.owner.agentId, { ...await f.message(seq, 'general', payload), ...extra })).toMatchObject({ queued: 0 });
+    }
+    f.parents.set('urn:uuid:00000000-0000-4000-8000-000000000004', new Error('PRIVATE_LOOKUP_ERROR'));
+    expect(await f.manager.enqueue(f.owner.agentId, await f.message(4, 'general', { message: 'x', inReplyTo: 'urn:uuid:00000000-0000-4000-8000-000000000004' }))).toMatchObject({ queued: 0 });
+    // Encrypted or private-channel records are never looked up.
+    f.access.set('private', { isPrivate: true, isMember: true });
+    const lookups = f.parentLookups.length;
+    await f.manager.enqueue(f.owner.agentId, await f.message(5, 'general', { inReplyTo: mine }, true));
+    await f.manager.enqueue(f.owner.agentId, await f.message(6, 'private', { inReplyTo: mine }));
+    expect(f.parentLookups.length).toBe(lookups);
+    // Channel filters still apply: a reply in an unlisted channel does not wake.
+    expect(await f.manager.enqueue(f.owner.agentId, await f.message(1, 'intel-exchange', { inReplyTo: mine }))).toMatchObject({ queued: 0 });
+    const reply = await f.message(7, 'general', { message: 'an answer', inReplyTo: mine });
+    expect(await f.manager.enqueue(f.owner.agentId, reply)).toMatchObject({ queued: 1 });
+    expect(f.parentLookups.at(-1)).toBe(mine);
+    const job = (await f.manager.claim(f.owner.agentId))!;
+    expect(job.body).toMatchObject({ kind: 'wake', envelopeId: reply.id, storedSeq: 7, sender: f.sender.agentId, mentioned: true });
+    // Same exact keys as before: installed senders keep accepting the job.
+    expect(await parseJob(job, job.body.hub, f.clock.now)).toEqual(job);
+    expect(Object.keys(job.body).sort()).toEqual(['agentId', 'channel', 'envelopeId', 'hookId', 'hub', 'kind', 'mentioned', 'sender', 'sentAt', 'storedSeq', 'type']);
+  });
+
+  it('never looks up or wakes for the owner replying to its own post (#358)', async () => {
+    const f = await setup(backend);
+    await f.activate(f.spec({ mentionsOnly: true }));
+    const mine = 'urn:uuid:00000000-0000-4000-8000-000000000001';
+    f.parents.set(mine, f.owner.agentId);
+    f.publicKeys.set(f.owner.agentId, f.owner.signingPublicKey);
+    const self = { ...await signEnvelope({ sender: f.owner.agentId, channel: 'general', sequence: 1, type: 'intel', payload: { inReplyTo: mine } }, f.owner.signingPrivateKey), storedSeq: 1 };
+    expect(await f.manager.enqueue(f.owner.agentId, self)).toMatchObject({ queued: 0 });
+    expect(f.parentLookups).toEqual([]);
+  });
+
   it('never expands wildcard into private channels, and drops revoked private membership at claim or dispatch', async () => {
     const f = await setup(backend);
     f.access.set('private', { isPrivate: true, isMember: true });
@@ -219,3 +266,18 @@ describe.each(['sqlite', 'd1'] as const)('durable pending work (%s)', backend =>
     expect((await f.manager.claim(f.owner.agentId))!.body.channel).toBe('__proto__');
   });
 });
+
+describe('reply parent extraction (RFC 0002 v3.2, #358)', () => {
+  it('reads only the signed payload.inReplyTo of a plaintext envelope', () => {
+    const base = { id: 'urn:uuid:child', type: 'intel' as const, encrypted: false };
+    expect(signedReplyParent({ ...base, payload: { inReplyTo: 'urn:uuid:parent' } })).toBe('urn:uuid:parent');
+    expect(signedReplyParent({ ...base, payload: { message: 'unsigned link only' }, replyToId: 'urn:uuid:parent' } as never)).toBe(null);
+    expect(signedReplyParent({ ...base, payload: { replyToId: 'urn:uuid:parent' } })).toBe(null);
+    for (const payload of ['inReplyTo', ['urn:uuid:parent'], null, { inReplyTo: 7 }, { inReplyTo: '' }, { inReplyTo: 'a'.repeat(129) }, { inReplyTo: '../x' }, { inReplyTo: base.id }]) {
+      expect(signedReplyParent({ ...base, payload } as never)).toBe(null);
+    }
+    expect(signedReplyParent({ ...base, encrypted: true, payload: { inReplyTo: 'urn:uuid:parent' } })).toBe(null);
+    expect(signedReplyParent({ ...base, type: 'e2ee_blob', payload: { inReplyTo: 'urn:uuid:parent' } })).toBe(null);
+  });
+});
+

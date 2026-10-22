@@ -53,6 +53,21 @@ function clean(state: HookState, now: number) {
   }
 }
 
+const REPLY_PARENT = /^[a-zA-Z0-9_:-]{1,128}$/;
+
+/**
+ * RFC 0002 v3.2 (#358): the parent a reply-aware hub may look up, read only from
+ * the SIGNED `payload.inReplyTo` of a plaintext envelope, or null. The unsigned
+ * top-level `replyToId` is deliberately ignored.
+ */
+export function signedReplyParent(record: Pick<StoredEnvelope, 'id' | 'type' | 'payload' | 'encrypted'>): string | null {
+  if (record.encrypted || record.type === 'e2ee_blob') return null;
+  const payload: unknown = record.payload;
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return null;
+  const parent = (payload as Record<string, unknown>).inReplyTo;
+  return typeof parent === 'string' && REPLY_PARENT.test(parent) && parent !== record.id ? parent : null;
+}
+
 function dueAt(state: HookState): number | null {
   const due: number[] = [];
   for (const hook of state.hooks) {
@@ -193,15 +208,29 @@ export class HookManager {
     if (!/^[a-z0-9_-]{1,64}$/.test(record.channel) || !/^[a-z_]{1,32}$/.test(record.type) || !idPattern.test(record.sender)) throw new HookError('invalid_record', 400);
     const key = await this.options.publicKey(record.sender);
     if (!key || !(await verifyEnvelope(record, key)).valid) throw new HookError('invalid_record', 400);
+    // The signed parent is covered by the verified checksum. Look it up at most
+    // once per call (CAS retries reuse it), and only for a public channel.
+    const parent = record.sender === agentId ? null : signedReplyParent(record);
+    let parentSender: Promise<string | null> | undefined;
+    const repliesToAgent = async () => {
+      if (!parent || !this.options.replyParentSender) return false;
+      // A failed lookup only loses the reply signal; hints are best-effort.
+      parentSender ??= this.options.replyParentSender(parent).catch(() => null);
+      return (await parentSender) === agentId;
+    };
     return this.update(agentId, async (state, now) => {
       if (storedAt !== undefined && (storedAt > now || now - storedAt > STATE_LIMITS.queuedMs)) return { value: { queued: 0, limited: false }, write: false };
       let queued = 0;
       let limited = false;
       const access = await this.options.channelAccess(agentId, record.channel);
+      const replied = Boolean(access && !access.isPrivate && state.hooks.length && await repliesToAgent());
       for (const hook of state.hooks) {
         if (hook.disabledReason || hook.verifiedAt === null || (storedAt !== undefined && hook.verifiedAt > storedAt)) continue;
         if (!access || (access.isPrivate && !access.isMember)) { this.removeChannel(hook, record.channel); continue; }
-        const match = hookMatches(hook.spec, record, { agentId, channelIsPrivate: access.isPrivate, agentIsMember: access.isMember });
+        // A confirmed signed reply on a public channel satisfies mentionsOnly (v3.2);
+        // channel/type filters and every other protocol rule still apply.
+        const spec = replied && hook.spec.mentionsOnly ? { ...hook.spec, mentionsOnly: false } : hook.spec;
+        const match = hookMatches(spec, record, { agentId, channelIsPrivate: access.isPrivate, agentIsMember: access.isMember });
         if (!match) continue;
         let slot = hook.channels.find(entry => entry.channel === record.channel);
         if (!slot) {
@@ -211,7 +240,9 @@ export class HookManager {
         }
         if (storedSeq <= slot.highSeq) continue;
         slot.highSeq = storedSeq;
-        const hint = { channel: record.channel, storedSeq, envelopeId: record.id, sender: record.sender, type: record.type, mentioned: match.mentioned || Boolean(slot.pending?.hint?.mentioned) };
+        // The wake body schema is fixed (installed senders accept exact keys), so a
+        // signed reply to the owner's post is reported through `mentioned` (v3.2).
+        const hint = { channel: record.channel, storedSeq, envelopeId: record.id, sender: record.sender, type: record.type, mentioned: match.mentioned || replied || Boolean(slot.pending?.hint?.mentioned) };
         const firstDue = slot.lastDispatchedAt === null ? now : Math.max(now, slot.lastDispatchedAt + (hook.spec.coalesceSeconds ?? HOOK_LIMITS.coalesceDefault) * 1000);
         slot.pending = { id: slot.pending?.id ?? crypto.randomUUID(), kind: 'wake', dueAt: slot.pending?.dueAt ?? firstDue, queuedAt: now, attempt: 0, hint };
         queued++;

@@ -52,8 +52,8 @@ export async function pagesWakeFixture() {
     });
   };
   const control = (value: unknown, token = env.WAKE_CONTROL_TOKEN) => send('/internal/wake-control', value, 'POST', { authorization: `Bearer ${token}` });
-  const post = async (payload: unknown = { message: 'hello' }, channel = 'general') => {
-    const envelope = await signEnvelope({ channel, sender: sender.agentId, type: 'intel', sequence: 17, payload }, sender.signingPrivateKey);
+  const post = async (payload: unknown = { message: 'hello' }, channel = 'general', keys = sender) => {
+    const envelope = await signEnvelope({ channel, sender: keys.agentId, type: 'intel', sequence: 17, payload }, keys.signingPrivateKey);
     return { envelope, response: await send(`/v1/channels/${channel}/messages`, envelope) };
   };
   return { db, env, owner, sender, spec, dispatch, send, set, mutate, list, control, post, close: () => db.close() };

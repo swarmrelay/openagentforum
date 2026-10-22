@@ -74,6 +74,58 @@ describe('actual Pages wake routes and atomic message outbox', () => {
     expect(String(cipher)).not.toContain(f.spec.secret);
     expect((await (await f.list()).json()).hooks[0].secret).toBeUndefined();
   });
+  it('wakes a mentionsOnly hook for a signed public reply to the owner, and for nothing else (#358)', async () => {
+    const f = await setup();
+    f.spec.mentionsOnly = true;
+    await activate(f);
+    const outbox = () => Number(f.db.prepare('SELECT COUNT(*) AS n FROM wake_message_outbox').get()?.n);
+    // Operator control admits 16 requests per second across the hub.
+    const control = async (value: unknown) => {
+      for (let tries = 0; ; tries++) {
+        const response = await f.control(value);
+        if (response.status !== 429 || tries === 5) return response;
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+    };
+    const drain = async () => {
+      // SQL stored_at is rounded to the millisecond; a same-millisecond poll would
+      // see a "future" event and drop it (as activate() above also avoids).
+      await new Promise(resolve => setTimeout(resolve, 5));
+      const refs: { kind: string }[] = [];
+      let after: unknown = null;
+      // A poll scans due work as of its start, so a hint fanned out during the
+      // poll that drains its event surfaces on the next one: poll once more.
+      for (let polls = 0, settled = 0; polls < 40 && settled < 2; polls++) {
+        const polled = await (await control({ op: 'poll', after })).json();
+        if (polled.ref) refs.push(polled.ref);
+        after = polled.after ?? null;
+        if (outbox() === 0) settled++;
+      }
+      expect(outbox()).toBe(0);
+      return refs.filter(ref => ref.kind === 'wake');
+    };
+    const { envelope: mine } = await f.post({ message: 'my question' }, 'general', f.owner);
+    const { envelope: theirs } = await f.post({ message: 'their question' });
+    // Ingest refuses plaintext in private channels, so a private parent is a legacy row.
+    f.db.prepare("INSERT INTO channels (name, title, topic, is_private, e2ee_required, creator_id, created_at) VALUES ('locked', 'locked', '', 1, 1, 'fixture', 1)").run();
+    f.db.prepare(`INSERT INTO messages (id, channel, sender, type, sequence, stored_seq, timestamp, payload_json, signature, checksum)
+      SELECT 'urn:uuid:00000000-0000-4000-8000-00000000abcd', 'locked', sender, type, sequence, 1, timestamp, payload_json, signature, checksum FROM messages WHERE id = ?`).run(mine.id);
+    const { envelope: vaulted } = await f.post({ message: 'in an excluded name' }, 'vault-notes', f.owner);
+    await f.post({ message: 'legacy link only' }, 'general');
+    f.db.prepare('UPDATE messages SET reply_to_id = ? WHERE id = (SELECT id FROM messages ORDER BY rowid DESC LIMIT 1)').run(mine.id);
+    for (const parent of [theirs.id, 'urn:uuid:00000000-0000-4000-8000-00000000abcd', vaulted.id, 'urn:uuid:00000000-0000-4000-8000-00000000ffff']) {
+      expect((await f.post({ message: 'an answer', inReplyTo: parent })).response.status).toBe(200);
+    }
+    expect((await f.post({ message: 'replying to myself', inReplyTo: mine.id }, 'general', f.owner)).response.status).toBe(200);
+    expect(await drain()).toEqual([]);
+    const { envelope: reply } = await f.post({ message: 'an answer for you', inReplyTo: mine.id });
+    const [wake] = await drain();
+    expect(wake).toBeDefined();
+    const { job } = await (await control({ op: 'authorize', ref: wake })).json();
+    expect(job.body).toMatchObject({ kind: 'wake', envelopeId: reply.id, sender: f.sender.agentId, mentioned: true });
+    expect(Object.keys(job.body).sort()).toEqual(['agentId', 'channel', 'envelopeId', 'hookId', 'hub', 'kind', 'mentioned', 'sender', 'sentAt', 'storedSeq', 'type']);
+    expect(JSON.stringify(job)).not.toContain('an answer for you');
+  });
   it.each(['delete', 'renew'] as const)('cancels an existing claim after signed %s', async action => {
     const f = await setup();
     await f.set();
