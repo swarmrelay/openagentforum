@@ -1,4 +1,4 @@
-import { AGENT_ID, CHANNEL_NAME, MESSAGE_ID, POST_CURSOR, type BrowseRoute, type PublicMessage, type RecentCursor } from './public-browse-store.js';
+import { AGENT_ID, CHANNEL_NAME, MESSAGE_ID, POST_CURSOR, type BrowseRoute, type ReplyCursor, type PublicMessage, type RecentCursor } from './public-browse-store.js';
 
 export const ORIGIN = 'https://openagentforum.com';
 export type BrowseRepresentation = 'html' | 'markdown';
@@ -16,11 +16,14 @@ export function browsePath(route: BrowseRoute, representation: BrowseRepresentat
     : route.kind === 'channel' ? channelPath(route.channel) : messagePath(route.channel, route.id);
   const query = route.kind === 'recent' ? (route.after ? `?after=${recentCursorText(route.after)}` : route.before ? `?before=${recentCursorText(route.before)}` : '')
     : route.kind === 'replies' ? (route.before ? `?before=${encodeURIComponent(route.before)}` : '')
+    : route.kind === 'message' ? (route.after ? `?after=${replyCursorText(route.after)}` : '')
     : route.kind === 'directory' && route.after ? `?after=${encodeURIComponent(route.after)}`
     : route.kind === 'channel' && route.before !== undefined ? `?before=${route.before}` : '';
   return base + (representation === 'markdown' ? 'index.md' : '') + query;
 }
 export const recentCursorText = (cursor: RecentCursor) => `v1.${cursor.epoch}.${cursor.position}`;
+// Channel names cannot contain '.', so the last dot separates the relay position.
+export const replyCursorText = (cursor: ReplyCursor) => `${cursor.channel}.${cursor.storedSeq}`;
 export class InputError extends Error {
   constructor(readonly status: number) { super('Public browse request rejected'); }
 }
@@ -40,7 +43,8 @@ export function parseBrowseRoute(url: URL): { route: BrowseRoute; path: string; 
   else throw new InputError(404);
   // Encoded separators must not manufacture path segments.
   if (/%2f|%5c/i.test(url.pathname)) throw new InputError(400);
-  const allowed = route.kind === 'recent' ? ['before', 'after'] : route.kind === 'directory' ? ['after'] : route.kind === 'channel' || route.kind === 'replies' ? ['before'] : [];
+  const allowed = route.kind === 'recent' ? ['before', 'after'] : route.kind === 'directory' || route.kind === 'message' ? ['after']
+    : route.kind === 'channel' || route.kind === 'replies' ? ['before'] : [];
   url.searchParams.forEach((_, key) => { if (!allowed.includes(key) || url.searchParams.getAll(key).length !== 1) throw new InputError(400); });
   if (route.kind === 'recent') {
     if (url.searchParams.has('after') && url.searchParams.has('before')) throw new InputError(400);
@@ -54,6 +58,11 @@ export function parseBrowseRoute(url: URL): { route: BrowseRoute; path: string; 
     const after = url.searchParams.get('after')!;
     if (!CHANNEL_NAME.test(after)) throw new InputError(400);
     route.after = after;
+  }
+  if (route.kind === 'message' && url.searchParams.has('after')) {
+    const match = /^([a-z0-9_-]{1,128})\.([1-9][0-9]{0,15})$/.exec(url.searchParams.get('after')!);
+    if (!match || !CHANNEL_NAME.test(match[1]) || !Number.isSafeInteger(Number(match[2]))) throw new InputError(400);
+    route.after = { channel: match[1], storedSeq: Number(match[2]) };
   }
   if (route.kind === 'replies' && url.searchParams.has('before')) {
     const before = url.searchParams.get('before')!;

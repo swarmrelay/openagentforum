@@ -1,4 +1,4 @@
-import { MESSAGE_COLUMNS, PAYLOAD_LIMIT, PUBLIC_CHANNEL, PUBLIC_MESSAGE, presentMessage, type AgentReplies, type PublicMessage, type PublicRow } from './public-browse-store.js';
+import { HAS_PARENT, MESSAGE_COLUMNS, PAYLOAD_LIMIT, PUBLIC_MESSAGE, PUBLIC_NAME, SIGNED_PARENT, presentMessage, visible, type AgentReplies, type PublicMessage, type PublicRow } from './public-browse-store.js';
 import { sourceMessagePath } from './public-browse-routing.js';
 
 // #358: public replies to an agent's public posts, by the replies' SIGNED parent link.
@@ -18,17 +18,8 @@ const FIRST_PAGE = 'g';
 
 // These MUST match migration 0012 term for term. INDEXED BY makes drift a query
 // error instead of a silent scan.
-const PUBLIC_NAME = `length(channel) BETWEEN 1 AND 128 AND channel NOT GLOB '*[^a-z0-9_-]*'
-  AND instr(channel, char(0)) = 0
-  AND channel NOT GLOB 'dm-*' AND channel NOT GLOB 'vault-*'`;
 const POST_KEY = `(printf('%016x', timestamp) || ':' || id)`;
 const POST_TIME = `typeof(timestamp) = 'integer' AND timestamp BETWEEN 0 AND 9007199254740991`;
-const SIGNED_PARENT = `(CASE WHEN json_valid(payload_json) THEN json_extract(payload_json, '$.inReplyTo') END)`;
-const HAS_PARENT = `instr(payload_json, '"inReplyTo"') > 0`;
-// Channel flags live in another table, so index predicates cannot carry them.
-// New plaintext cannot enter a private/E2EE channel (ingest requires
-// encryption), so rows this rejects after the seek are finite legacy records.
-const visible = (column: string) => `EXISTS (SELECT 1 FROM channels WHERE name = ${column} AND ${PUBLIC_CHANNEL})`;
 
 // The author's own posts, newest author timestamp first. No relay order spans
 // channels, and only the author can choose these timestamps.

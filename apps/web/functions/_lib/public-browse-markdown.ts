@@ -1,4 +1,4 @@
-import type { BrowseData, BrowseRoute, PublicChannel, PublicMessage } from './public-browse-store.js';
+import { AGENT_ID, PARTICIPANTS_NOTE, THREAD_ENDS, THREAD_SCOPE, type BrowseData, type BrowseRoute, type PublicChannel, type PublicMessage } from './public-browse-store.js';
 import { ORIGIN, authorTimestamp, browsePath, channelPath, messagePath, repliesPath, sourceMessagePath } from './public-browse-routing.js';
 import { moreRepliesPath, REPLIES_RETURN, REPLIES_SCOPE } from './agent-replies-store.js';
 import { participation, renderParticipationMarkdown } from '../../src/data/first-visit.mjs';
@@ -45,6 +45,19 @@ function messageMarkdown(message: PublicMessage, arrivedAt?: number) {
   return text;
 }
 
+// (#359) Same records, order and bounds as the HTML thread view.
+function threadMarkdown(route: Extract<BrowseRoute, { kind: 'message' }>, target: PublicMessage, thread: NonNullable<BrowseData['thread']>) {
+  const end = THREAD_ENDS[thread.ancestorsEnd];
+  let text = thread.ancestors.length || end ? `## Earlier in this thread\n\n${end ? end + '\n\n' : ''}${thread.ancestors.map(message => messageMarkdown(message)).join('')}` : '';
+  text += `---\n\nThis message:\n\n${messageMarkdown(target)}## Replies\n\n${THREAD_SCOPE}\n\n${thread.replies.map(message => messageMarkdown(message)).join('')}`;
+  if (!thread.replies.length) text += `No public replies ${route.after ? 'after this point' : 'to this message'}. This is not proof that no one replied elsewhere.\n\n`;
+  if (route.after) text += link(messagePath(route.channel, route.id) + 'index.md', 'First replies') + '\n\n';
+  if (thread.nextReplies) text += link(browsePath({ ...route, after: thread.nextReplies }, 'markdown'), 'More replies →') + '\n\n';
+  if (thread.participants.length) text += `## Who took part on this page\n\n${PARTICIPANTS_NOTE}\n\n${thread.participants.map(({ sender, records }) =>
+    `- ${AGENT_ID.test(sender) ? link(repliesPath(sender) + 'index.md', sender) : escapeLabel(sender)}: ${records} verified ${records === 1 ? 'record' : 'records'}`).join('\n')}\n\n`;
+  return text;
+}
+
 export function renderPublicMarkdown(route: BrowseRoute, data: BrowseData) {
   const title = route.kind === 'recent' ? 'Recent changes' : route.kind === 'directory' ? 'Public channels' : route.kind === 'replies' ? `Replies to ${route.agentId}`
     : route.kind === 'channel' ? `#${route.channel} — Public conversation` : `Message ${route.id}`;
@@ -80,7 +93,8 @@ export function renderPublicMarkdown(route: BrowseRoute, data: BrowseData) {
     if (data.nextChannel) text += link(browsePath({ kind: 'directory', after: data.nextChannel }, 'markdown'), 'More channels →') + '\n\n';
   } else {
     text += channelMetadata(data.channel!);
-    text += data.messages.map(message => messageMarkdown(message)).join('');
+    if (route.kind === 'message' && data.thread) text += threadMarkdown(route, data.messages[0], data.thread);
+    else text += data.messages.map(message => messageMarkdown(message)).join('');
     if (!data.messages.length) text += 'No eligible public messages on this page. Empty is not proof of a complete history.\n\n';
     text += link(channelPath(route.channel) + 'index.md', 'Latest messages') + '\n\n';
     if (data.olderThan) text += link(browsePath({ kind: 'channel', channel: route.channel, before: data.olderThan }, 'markdown'), 'Older messages →') + '\n\n';
