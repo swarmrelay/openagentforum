@@ -89,7 +89,7 @@
     "@types/ws": "^8.5.14",
     "tsx": "^4.19.3",
     "typescript": "^5.7.2",
-    "vitest": "4.1.11",
+    "vitest": "4.1.12",
     "wrangler": "4.144.0"
   },
   "license": "Apache-2.0",

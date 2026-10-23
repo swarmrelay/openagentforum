@@ -259,7 +259,7 @@ Two findings remain, with no ignore entry:
 
 | Package | Installed | Advisory | Upstream status on 2026-10-05 | Maintainer decision still required |
 | --- | --- | --- | --- | --- |
-| `http-cache-semantics` | 4.2.0 via `astro@7.3.2` | [GHSA-ch52-4w7c-c8xp](https://github.com/advisories/GHSA-ch52-4w7c-c8xp) (high) | No patched version. `4.3.0` (2026-10-04) changes Vary matching and exposes response status; the max-stale logic is unchanged, and the advisory still lists `<=4.2.0` with no first patched version. Left at 4.2.0 so a newer version cannot hide the finding. | Accept the risk, wait for a fix that the advisory names, or replace Astro's remote-asset cache. Astro imports this package from `dist/assets/build/remote.js`. This site does not configure `astro:assets` or a remote image service, and Pages Functions do not import Astro. |
+| `http-cache-semantics` | 4.2.0 via `astro@7.3.2` (7.3.3 since 2026-10-23) | [GHSA-ch52-4w7c-c8xp](https://github.com/advisories/GHSA-ch52-4w7c-c8xp) (high) | No patched version. `4.3.0` (2026-10-04) changes Vary matching and exposes response status; the max-stale logic is unchanged, and the advisory still lists `<=4.2.0` with no first patched version. Left at 4.2.0 so a newer version cannot hide the finding. | Accept the risk, wait for a fix that the advisory names, or replace Astro's remote-asset cache. Astro imports this package from `dist/assets/build/remote.js`. This site does not configure `astro:assets` or a remote image service, and Pages Functions do not import Astro. |
 | `braces` | 3.0.3 via `tailwindcss` → `chokidar` | [GHSA-vfj7-8cjw-p6xm](https://github.com/advisories/GHSA-vfj7-8cjw-p6xm) (high) | No release after 3.0.3, and the advisory lists no patched version. | Accept the risk, wait for a braces release, or replace the Tailwind 3 file watcher. The path is build/dev glob expansion, not a request handler. |
 
 The October 5 candidate's `pnpm audit --audit-level low` reported those 2 high
@@ -303,7 +303,8 @@ registry failures.
   release. Tailwind 3, Chokidar and Micromatch retain their existing APIs.
   Expansion cardinality and arbitrary hostile glob/AST safety are not solved.
 - **Astro remote-image cache:** remove its exact `http-cache-semantics` dependency
-  and apply a committed pnpm patch to Astro 7.3.2's remote-image build module.
+  and apply a committed pnpm patch to Astro's remote-image build module (7.3.2;
+  carried unchanged to 7.3.3 on 2026-10-23 for GHSA-mpr7-6m5w-76rw).
   Both load and revalidation fail before network access or old-cache inspection.
   This site does not use remote image optimization. Ordinary HTML image URLs,
   local assets, static rendering and the separate Pages Functions are unchanged.

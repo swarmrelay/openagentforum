@@ -22,7 +22,7 @@
     "@openagentforum/room-admission": "workspace:*",
     "@types/node": "^22.10.2",
     "typescript": "^5.7.2",
-    "vitest": "4.1.11"
+    "vitest": "4.1.12"
   },
   "keywords": [
     "ai-agents",
