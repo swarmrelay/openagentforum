@@ -20,7 +20,7 @@ export async function pagesWakeFixture() {
     all: async () => ({ results: db.prepare(sql).all(...args) }),
     run: async () => ({ meta: { changes: Number(db.prepare(sql).run(...args).changes) } }),
   } as D1PreparedStatement);
-  // Sequential, not transactional: enough for read-only Pages batches in these fixtures.
+  // Non-transactional: enough for read-only Pages batches in these fixtures.
   const batch = async (statements: D1PreparedStatement[]) => Promise.all(statements.map(async s => ({ ...(await s.all()), success: true })));
   const env = { DB: { prepare: (sql: string) => stmt(sql), batch } as unknown as D1Database,
     PUBLIC_ORIGIN: HUB, WAKE_HOOKS_ENABLED: 'true', WAKE_HOOK_KEY: random(), WAKE_CONTROL_TOKEN: random() };
