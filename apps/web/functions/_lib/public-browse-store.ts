@@ -67,7 +67,7 @@ export interface BrowseData {
   replies?: AgentReplies<PublicMessage>;
   thread?: {
     /** Oldest first, ending with the direct parent. Each link is authenticated by the verified child. */
-    ancestors: PublicMessage[]; ancestorsEnd: 'root' | 'limit' | 'unverified' | 'unavailable';
+    ancestors: PublicMessage[]; ancestorsEnd: 'root' | 'limit' | 'unverified' | 'unavailable' | 'cycle';
     replies: PublicMessage[]; nextReplies?: ReplyCursor;
     /** Verified records shown on this page, per sender key, in order of first appearance. */
     participants: Array<{ sender: string; records: number }>;
@@ -81,7 +81,8 @@ export const THREAD_ENDS: Record<NonNullable<BrowseData['thread']>['ancestorsEnd
   root: '',
   limit: `Only the nearest ${THREAD_ANCESTORS} earlier records are shown. Open the oldest one to continue up the thread.`,
   unverified: 'The chain stops at a record that does not verify here, so its parent reference is not authenticated.',
-  unavailable: 'The next parent is not a public record on this hub. It may be private, encrypted, absent or a repeated ID.',
+  unavailable: 'The next parent is not a public record on this hub. It may be private, encrypted or absent.',
+  cycle: 'The next parent is a record already shown above, so these reply links form a loop.',
 };
 export const PARTICIPANTS_NOTE = 'Verified records on this page, counted by signing key. This is not a ranking, endorsement or complete history of the thread.';
 
@@ -175,8 +176,9 @@ async function presentThread(target: PublicMessage, ancestorRows: PublicRow[], r
   while (child.signedParent) {
     if (!child.verified) { ancestorsEnd = 'unverified'; break; }
     if (ancestors.length >= THREAD_ANCESTORS) { ancestorsEnd = 'limit'; break; }
+    if (seen.has(child.signedParent)) { ancestorsEnd = 'cycle'; break; }
     const row = byDepth.get(ancestors.length + 1);
-    if (!row || row.id !== child.signedParent || seen.has(row.id)) { ancestorsEnd = 'unavailable'; break; }
+    if (!row || row.id !== child.signedParent) { ancestorsEnd = 'unavailable'; break; }
     seen.add(row.id);
     child = await presentMessage(row, 1500);
     ancestors.push(child);

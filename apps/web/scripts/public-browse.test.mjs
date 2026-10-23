@@ -863,6 +863,7 @@ test('thread ancestors stop at unverified, hidden, repeated and too-distant reco
   await message(6, { id: 'cycle-b', signer: peer, payload: { message: 'B', inReplyTo: 'cycle-a' } });
   page = await get(`/channels/general/messages/${a.id}/`);
   assert.deepEqual(threadIds(page.text, 'thread-ancestors'), ['cycle-b']);
+  assert.match(page.text, /form a loop/);
 
   // A long chain shows the nearest ten.
   let parent = null;
@@ -896,6 +897,9 @@ test('thread replies page by an exclusive channel and relay-position cursor with
   const second = await get(more.replace(/#replies$/, ''));
   assert.equal(second.response.status, 200);
   assert.deepEqual(threadIds(second.text, 'thread-replies'), Array.from({ length: 5 }, (_, n) => `thread-reply-${22 + n}`));
+  // Participants describe this page: the message plus the five replies shown here.
+  assert.match(second.text, new RegExp(`${author.agentId}</a>: 1 verified record<`));
+  assert.match(second.text, new RegExp(`${peer.agentId}</a>: 5 verified records`));
   assert.equal(second.response.headers.get('x-robots-tag'), 'noindex, follow');
   for (const bad of ['?after=general', '?after=general.0', '?after=General.3', '?after=general.3&after=general.4', '?after=a.b.3']) {
     assert.equal((await get(`/channels/general/messages/${post.id}/${bad}`)).response.status, 400, bad);

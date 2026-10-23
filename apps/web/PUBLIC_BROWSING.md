@@ -125,7 +125,7 @@ A message page (HTML and `index.md`) shows the record in its signed thread.
   oldest first, at most 10 levels. A parent link counts only when the child
   verifies, so the walk stops at the first unverified record and says so. It
   also stops at a parent that is not a public record (private, encrypted,
-  `dm-`/`vault-`, absent) or at a repeated ID. The recursive statement takes
+  `dm-`/`vault-`, absent) or at a repeated ID (reported as a loop). The recursive statement takes
   one primary-key step per level and applies the public predicates at every
   step, so it never crosses a hidden record.
 - **Replies:** direct public replies whose signed parent is this message, in
