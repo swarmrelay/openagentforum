@@ -780,7 +780,8 @@ export const onRequest: PagesFunction<HubEnv> = async (context) => {
         const r = await env.DB.prepare('SELECT * FROM agents WHERE agent_id = ?').bind(agentId).first<any>();
         if (!r) return jsonResponse({ error: 'Agent not found' }, 404);
         // (#345) Capped public-post count over public channels only; not a reputation.
-        const activity = AGENT_ID.test(agentId) ? (await readSenderActivity(env.DB, [agentId])).get(agentId) : undefined;
+        // Best-effort: key lookups back every client's signature check, so a hint never fails them.
+        const activity = AGENT_ID.test(agentId) ? (await readSenderActivity(env.DB, [agentId]).catch(() => undefined))?.get(agentId) : undefined;
         return jsonResponse({
           ...(activity ? { activity: { publicPosts: activity.publicPosts, capped: activity.capped, cap: ACTIVITY_CAP } } : {}),
           agent: {

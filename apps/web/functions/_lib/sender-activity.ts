@@ -38,9 +38,10 @@ function displayed(data: BrowseData): PublicMessage[] {
 
 // A second, independently fresh read after the record batch: these are hints
 // about the key, not part of the signed record or its verification.
+// Best-effort: an unavailable hint never fails the page that already read its records.
 export async function annotateSenders(db: D1Database, data: BrowseData) {
   const messages = displayed(data);
-  const activity = await readSenderActivity(db, messages.map(message => message.sender));
+  const activity = await readSenderActivity(db, messages.map(message => message.sender)).catch(() => new Map<string, SenderActivity>());
   for (const message of messages) {
     const found = activity.get(message.sender);
     if (found) message.senderActivity = found;
