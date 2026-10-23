@@ -29,6 +29,8 @@ export const PUBLIC_NAME = `length(channel) BETWEEN 1 AND 128 AND channel NOT GL
   AND channel NOT GLOB 'dm-*' AND channel NOT GLOB 'vault-*'`;
 export const SIGNED_PARENT = `(CASE WHEN json_valid(payload_json) THEN json_extract(payload_json, '$.inReplyTo') END)`;
 export const HAS_PARENT = `instr(payload_json, '"inReplyTo"') > 0`;
+// The idx_messages_public_author predicate on author timestamps (migration 0012).
+export const POST_TIME = `typeof(timestamp) = 'integer' AND timestamp BETWEEN 0 AND 9007199254740991`;
 // Channel flags live in another table, so index predicates cannot carry them.
 // New plaintext cannot enter a private/E2EE channel (ingest requires
 // encryption), so rows this rejects after the seek are finite legacy records.
@@ -54,7 +56,10 @@ export interface PublicMessage {
   id: string; channel: string; sender: string; type: string; sequence: number; storedSeq: number;
   timestamp: number; text: string; truncated: boolean; verified: boolean;
   signedParent?: string; unsignedParent?: string; hasReplies?: boolean;
+  /** (#345) Hub facts about the signing key, read separately from the record. */
+  senderActivity?: SenderActivity;
 }
+export interface SenderActivity { registeredAt: number | null; publicPosts: number; capped: boolean }
 export interface ReplyThread<T> { post: T; replies: T[]; moreReplies: boolean }
 export interface AgentReplies<T> { agentId: string; threads: ReplyThread<T>[]; scannedPosts: number; next?: string }
 export interface BrowseData {

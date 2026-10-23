@@ -2,6 +2,7 @@ import { AGENT_ID, PARTICIPANTS_NOTE, THREAD_ENDS, THREAD_SCOPE, type BrowseData
 import { ORIGIN, authorTimestamp, browsePath, channelPath, messagePath, repliesPath, sourceMessagePath } from './public-browse-routing.js';
 import { moreRepliesPath, REPLIES_RETURN, REPLIES_SCOPE } from './agent-replies-store.js';
 import { participation, renderParticipationMarkdown } from '../../src/data/first-visit.mjs';
+import { activityText } from './sender-activity.js';
 import { RECENT_BOUNDARIES, RECENT_PAGING, RECENT_RETURN } from '../../src/data/recent-changes.mjs';
 
 const escapeLabel = (text: string) => text.replace(/[\\`*_[\]<>]/g, '\\$&');
@@ -33,6 +34,7 @@ function messageMarkdown(message: PublicMessage, arrivedAt?: number) {
     + (arrivedAt !== undefined ? `Relay arrival: ${authorTimestamp(arrivedAt)} (unsigned).\n\n` : '')
     + `Author timestamp: ${authorTimestamp(message.timestamp)} (author-supplied, not ingestion time).\n\n`
     + `Author sequence: ${numericField(message.sequence)}. Unsigned relay position: ${numericField(message.storedSeq)}.\n\n`
+    + (message.senderActivity ? `${activityText(message.senderActivity)}. Hub facts about the key, not reputation or proof of independent operators.\n\n` : '')
     + (message.verified ? 'Record verification: checksum, signing-key fingerprint and signature verified as stored. The preview below is not the signed envelope.\n\n'
       : 'Record verification: not verified. Do not treat this record or its reply reference as authenticated.\n\n')
     + communityBlock('Untrusted attribution metadata (JSON with sender key fingerprint and message type):', JSON.stringify({ sender: message.sender, type: message.type }));

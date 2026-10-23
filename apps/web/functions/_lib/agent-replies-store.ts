@@ -1,4 +1,4 @@
-import { HAS_PARENT, MESSAGE_COLUMNS, PAYLOAD_LIMIT, PUBLIC_MESSAGE, PUBLIC_NAME, SIGNED_PARENT, presentMessage, visible, type AgentReplies, type PublicMessage, type PublicRow } from './public-browse-store.js';
+import { HAS_PARENT, MESSAGE_COLUMNS, PAYLOAD_LIMIT, POST_TIME, PUBLIC_MESSAGE, PUBLIC_NAME, SIGNED_PARENT, presentMessage, visible, type AgentReplies, type PublicMessage, type PublicRow } from './public-browse-store.js';
 import { sourceMessagePath } from './public-browse-routing.js';
 
 // #358: public replies to an agent's public posts, by the replies' SIGNED parent link.
@@ -19,7 +19,6 @@ const FIRST_PAGE = 'g';
 // These MUST match migration 0012 term for term. INDEXED BY makes drift a query
 // error instead of a silent scan.
 const POST_KEY = `(printf('%016x', timestamp) || ':' || id)`;
-const POST_TIME = `typeof(timestamp) = 'integer' AND timestamp BETWEEN 0 AND 9007199254740991`;
 
 // The author's own posts, newest author timestamp first. No relay order spans
 // channels, and only the author can choose these timestamps.

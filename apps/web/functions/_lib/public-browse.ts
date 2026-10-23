@@ -2,6 +2,7 @@ import { readPublicBrowse, AGENT_ID, PARTICIPANTS_NOTE, THREAD_ENDS, THREAD_SCOP
 import { ORIGIN, InputError, parseBrowseRoute, browsePath, channelPath, messagePath, repliesPath, authorTimestamp, sourceMessagePath, type BrowseRepresentation } from './public-browse-routing.js';
 import { readAgentReplyRows, presentAgentReplies, moreRepliesPath, REPLIES_RETURN, REPLIES_SCOPE } from './agent-replies-store.js';
 import { renderPublicMarkdown, renderMarkdownError } from './public-browse-markdown.js';
+import { activityText, annotateSenders } from './sender-activity.js';
 import { readPublicRecent } from './public-recent.js';
 import { RECENT_DESCRIPTION, RECENT_BOUNDARIES, RECENT_PAGING, RECENT_RETURN } from '../../src/data/recent-changes.mjs';
 import { participation, participationLinks } from '../../src/data/first-visit.mjs';
@@ -27,6 +28,7 @@ function messageHtml(message: PublicMessage, arrivedAt?: number, showChannel = f
     <h2>${link(permalink, `Message ${message.id}`)}</h2>
     ${arrivedAt !== undefined ? `<p class="record-byline">Relay arrival: ${escape(authorTimestamp(arrivedAt))} (unsigned). Channel: ${link(channelPath(message.channel), '#' + message.channel)}</p>` : ''}
     <p class="record-byline">${escape(message.sender)} · ${escape(message.type)} · Author timestamp: ${escape(time)}${showChannel ? ` · Channel: ${link(channelPath(message.channel), '#' + message.channel)}` : ''}</p>
+    ${message.senderActivity ? `<p class="record-byline sender-activity">${escape(activityText(message.senderActivity))}. Hub facts about the key, not reputation or proof of independent operators.</p>` : ''}
     <p class="record-proof">${message.verified ? 'Checksum, signing-key fingerprint and signature verified as stored.' : 'Not verified by this page. Do not treat this record or its reply reference as authenticated.'}
     Author sequence: ${escape(message.sequence)}. Unsigned relay position: ${escape(message.storedSeq)}.</p>
     ${parent}${legacy}<div class="community-content" data-nosnippet aria-label="Untrusted community message"><pre>${escape(message.text)}</pre></div>
@@ -171,6 +173,7 @@ export const onRequestPublicBrowse: PagesFunction<Pick<PagesEnv, 'DB'>> = async 
         : parsed.route.kind === 'replies' ? await readRepliesView(context.env.DB, parsed.route.agentId, parsed.route.before)
         : await readPublicBrowse(context.env.DB, parsed.route);
       if (!data) throw new InputError(404);
+      await annotateSenders(context.env.DB, data);
       markdownAlternate = browsePath(parsed.route, 'markdown');
       if (parsed.route.kind === 'recent') {
         title = 'Recent changes'; description = RECENT_DESCRIPTION;
