@@ -7,7 +7,7 @@ import { POLL_WORK_LIMITS } from '@openagentforum/server/polls';
 import { assertSqliteWalRuntime } from '../../server/dist/sqlite-runtime.js';
 import { PollAdmissionError, configuration, need, bytes, safe, equal, tree, parseWire, recordRow, recordCost,
   decodeRow, exact, refusal, fitsPollActionInput, within, plus, minus, columnCost, wireColumns,
-  messageIdentifier, channelIdentifier, agentIdentifier, hex,
+  messageIdentifier, channelIdentifier, agentIdentifier, hex, readAdmissionInput, type AdmissionInput,
   FIXED_ROW_BYTES, RECEIPT_BYTES, CAPTURE_BYTES, CLOSE_RESERVATION, CLOSE_HISTORY, MAX_IN_FLIGHT,
   type Capacity, type PollAdmissionOptions, type WriteRoute, type Lane, type Receipt, type ReceiptResult } from './contract.js';
 import { DB_NOW, SCHEMA_OBJECTS, arrivalColumns, wakeColumns, pollReference } from './schema.js';
@@ -250,7 +250,8 @@ export class SQLitePollAdmission {
     this.#inFlight++;
   }
 
-  async prepare(wire: string, route: WriteRoute = {}): Promise<PreparedPollWrite> {
+  async prepare(input: AdmissionInput, route: WriteRoute = {}): Promise<PreparedPollWrite> {
+    route = { ...route };
     this.#enter();
     try {
       const lane = route.lane ?? 'ordinary';
@@ -259,7 +260,10 @@ export class SQLitePollAdmission {
       const expiresAt = preparedAt + p.preparationMs;
       need(safe(expiresAt), 'clock');
       this.#fresh({ started, preparedAt, expiresAt }, preparedAt);
+      const wire = await readAdmissionInput(input);
+      this.#active(); this.#fresh({ started, preparedAt, expiresAt }, preparedAt);
       const env = parseWire(wire, p), close = env.type === 'poll' && env.payload?.kind === 'close';
+      need(route.channel === undefined || route.channel === env.channel, 'route');
       need(close ? lane === 'completion' && route.pollId === env.payload.pollId : lane === 'ordinary' && route.pollId === undefined, 'route');
       const target = env.type === 'vote' || close ? env.payload?.pollId : null;
       need(target === null || messageIdentifier(target), 'invalid_payload');
@@ -316,14 +320,17 @@ export class SQLitePollAdmission {
     return { outcome: 'found', receipt: r, historical: true };
   }
 
-  async recover(wire: string): Promise<ReceiptResult> {
+  async recover(input: AdmissionInput, channel?: string): Promise<ReceiptResult> {
     this.#enter();
     try {
       const started = performance.now(), preparedAt = this.#charge('recovery');
       const expiresAt = preparedAt + this.#config.policy.preparationMs;
       need(safe(expiresAt), 'clock');
       this.#fresh({ started, preparedAt, expiresAt }, preparedAt);
+      const wire = await readAdmissionInput(input);
+      this.#active(); this.#fresh({ started, preparedAt, expiresAt }, preparedAt);
       const env = parseWire(wire, this.#config.policy);
+      need(channel === undefined || channel === env.channel, 'route');
       const actor = this.#transaction(false, () => { this.#time(this.#authority()); return this.#agent(env.sender); });
       need(actor && (await verifyEnvelope(env, actor.public_key)).valid, 'signature');
       this.#active();

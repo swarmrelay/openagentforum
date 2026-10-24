@@ -4,7 +4,7 @@ This private package implements the next native-storage slice of
 [#238](https://github.com/swarmrelay/openagentforum/issues/238). It persists new
 creator-closable polls, ballots, creator closes and ordinary `intel` messages in
 an explicitly provisioned, dedicated SQLite laboratory database. It implements
-atomic retained-capacity accounting and historical receipts; no Pages, Worker
+atomic retained-capacity accounting and historical receipts; no mounted Pages, Worker
 or standalone adapter imports it. It is not published to npm or a public API.
 
 The [offline model](../../docs/poll-admission-model.md) remains an independent
@@ -16,6 +16,11 @@ package chooses no production limits and adds no production migration.
 The separate [D1 laboratory](D1.md) implements the same scope on a dedicated
 native D1 binding, with primary snapshots, a transactional batch and a final SQL
 guard. This document describes SQLite; neither adapter is mounted publicly.
+
+The [HTTP/client integration](HTTP.md) adds an unmounted Pages factory, separate
+close/recovery paths and an exact-operation client with a bounded durable local
+journal. It preserves the dedicated schema; production admission and client
+publication remain separate.
 
 ## Running the native fixtures
 

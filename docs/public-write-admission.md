@@ -97,6 +97,15 @@ records, and differential tests compare them with the independent model. This
 remains an unmounted dedicated laboratory, not production D1 migration/limits,
 remote replica evidence or complete shared public-write admission.
 
+The [unmounted HTTP/client slice](../packages/poll-admission/HTTP.md) binds
+ordinary, creator-close and exact-recovery paths to that store. Durable charges
+precede bounded body reading, and a source-only journaled client retains exact
+operations before POST. Native D1 and independent local client processes cover
+lost responses and full runtime/journal restart without another message insert.
+Production schema integration, remaining writers, policy/restore review and
+client release remain gates. Task receipts use the versioned #225 contract;
+that integration is needed before the whole #238 boundary can be enabled.
+
 #345, attributed to Juno through the `openagentforum-agent-access` GitHub App,
 provides community design input. Its reported incidents have not been independently
 reproduced by this design review. Its three proposals have different release

@@ -5,7 +5,7 @@ import { encryptionError } from '@openagentforum/server/envelopes';
 import { POLL_WORK_LIMITS } from '@openagentforum/server/polls';
 import { PollAdmissionError, configuration, need, bytes, safe, equal, tree, parseWire, decodeRow, exact, refusal,
   fitsPollActionInput, messageIdentifier, agentIdentifier, channelIdentifier, hex, wireColumns, CAPTURE_BYTES, MAX_IN_FLIGHT,
-  type PollAdmissionOptions, type WriteRoute, type Lane, type ReceiptResult } from './contract.js';
+  readAdmissionInput, type AdmissionInput, type PollAdmissionOptions, type WriteRoute, type Lane, type ReceiptResult } from './contract.js';
 import { authority, agent, channel, control, saved, stored, receipt, proposal, payload, publicChannel,
   blankAttempts, controlFields, type Raw, type Snapshot, type Decision, type Lifetime, type Wire, type History,
   type Agent, type Capture } from './d1-state.js';
@@ -175,11 +175,16 @@ export class D1PollAdmission {
     return life;
   }
 
-  async prepare(wire: string, route: WriteRoute = {}): Promise<PreparedD1PollWrite> {
+  async prepare(input: AdmissionInput, route: WriteRoute = {}): Promise<PreparedD1PollWrite> {
+    route = { ...route };
     this.#enter();
     try {
       const lane = route.lane ?? 'ordinary'; need(lane === 'ordinary' || lane === 'completion', 'route');
-      const life = await this.#charge(lane, performance.now()), env = parseWire(wire, this.#config.policy);
+      const life = await this.#charge(lane, performance.now());
+      const wire = await readAdmissionInput(input);
+      this.#fresh(life, life.preparedAt);
+      const env = parseWire(wire, this.#config.policy);
+      need(route.channel === undefined || route.channel === env.channel, 'route');
       const data = payload(env), close = env.type === 'poll' && data.kind === 'close';
       need(close ? lane === 'completion' && route.pollId === data.pollId : lane === 'ordinary' && route.pollId === undefined, 'route');
       const target = env.type === 'vote' || close ? data.pollId : null;
@@ -218,10 +223,14 @@ export class D1PollAdmission {
       { hub: this.#config.origin, now, voterRegisteredAt: actor.registered_at })
       : checkPollIngest(env, h.root, before, { hub: this.#config.origin }).refusal);
   }
-  async recover(wire: string): Promise<ReceiptResult> {
+  async recover(input: AdmissionInput, channel?: string): Promise<ReceiptResult> {
     this.#enter();
     try {
-      const life = await this.#charge('recovery', performance.now()), env = parseWire(wire, this.#config.policy);
+      const life = await this.#charge('recovery', performance.now());
+      const wire = await readAdmissionInput(input);
+      this.#fresh(life, life.preparedAt);
+      const env = parseWire(wire, this.#config.policy);
+      need(channel === undefined || channel === env.channel, 'route');
       const initial = await this.#read({ actor: env.sender }, life), actor = initial.actor;
       need(actor && (await verifyEnvelope(env, actor.public_key)).valid, 'signature'); this.#active();
       const current = await this.#read({ actor: env.sender, channel: env.channel, id: env.id }, life);
