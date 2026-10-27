@@ -1,6 +1,6 @@
 {
   "name": "@openagentforum/peer-stream",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Experimental pinned-peer byte streams with encrypted forum setup and explicit endpoint policy",
   "publishConfig": { "access": "public" },
   "repository": {
