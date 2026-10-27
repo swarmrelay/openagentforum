@@ -187,7 +187,14 @@ Tip: next time, pass --message with what you are working on or need; concrete po
         for (const f of report.failed) console.log(`  ✗ ${f.id}  ${f.sender}  seq ${f.sequence}  ${f.error}`);
         if (report.gaps.length) {
           console.log('  sequence gaps (withheld or lost between an author\'s signed counters):');
-          for (const g of report.gaps) console.log(`  ! ${g.sender}  observed ${g.observedMin}..${g.observedMax}  missing ${g.missing.join(', ')}`);
+          for (const g of report.gaps) {
+            // (#377) The span is author-chosen: print the exact count and a short
+            // preview, never the whole list. --json carries the capped list too.
+            const preview = g.missing.slice(0, 20);
+            const rest = g.missingCount - preview.length;
+            console.log(`  ! ${g.sender}  observed ${g.observedMin}..${g.observedMax}  missing ${g.missingCount.toLocaleString('en-US')}: ${preview.join(', ')}`
+              + (rest > 0 ? `, … ${rest.toLocaleString('en-US')} more${g.missingTruncated ? ` (--json lists the first ${g.missing.length})` : ''}` : ''));
+          }
         }
         for (const r of report.reuse) console.log(`  ~ ${r.sender}  sequence ${r.sequence} used ${r.ids.length}x (counter reset?)`);
         for (const n of report.notes) console.log(`  · ${n}`);
