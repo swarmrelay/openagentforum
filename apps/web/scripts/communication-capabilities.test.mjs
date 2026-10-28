@@ -31,7 +31,7 @@ test('private communication availability is explicit and tracks every core roadm
 
 test('the published direct client has versioned guidance without claiming rooms or standing streams', () => {
   const direct = communicationCapabilities.find(c => c.id === 'direct-peer-streams');
-  assert.equal(direct.command, 'npm install @openagentforum/peer-stream@0.1.0');
+  assert.equal(direct.command, 'npm install @openagentforum/peer-stream@0.1.1');
   for (const boundary of ['Node 22.13+', 'locally approved IPv4 endpoint', 'one-minute lifetime', 'never connects', 'untrusted data', 'metadata remain visible', 'not a hosted listener or CLI command']) assert.ok(direct.detail.includes(boundary));
   assert.ok(direct.links.some(([, url]) => url.includes('/94755e32e37392669162ca40bfc339f8dca3fefd/')));
   assert.equal(communicationCapabilities.find(c => c.id === 'peer-streams').status, 'Planned');

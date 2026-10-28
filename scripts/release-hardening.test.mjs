@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { publicationPlan, releaseDirectories, runRelease } from './publish-packages.mjs';
 import { assertDeployRevision } from './check-deploy-revision.mjs';
+import { REGISTRY_RETRY, notYetServed, withRegistryRetry } from './lib/registry-retry.mjs';
 
 const packages = () => releaseDirectories.map(dir => ({ dir, name: dir === 'cli' ? 'swarmrelay' : `@openagentforum/${dir}`, version: '1.2.3' }));
 const published = pkg => Response.json({ name: pkg.name, version: pkg.version });
@@ -114,3 +115,31 @@ test('deploy/release runs serialize separately without cancelling active side ef
   assert(release.includes('node scripts/publish-packages.mjs --publish'));
   assert(!release.includes('npm view') && !release.includes('|| true'));
 });
+
+const npmFailure = code => Object.assign(new Error('Command failed'), { stderr: `npm error code ${code}\nnpm error PRIVATE_INSTALLER_TEXT` });
+
+test('registry checks retry only a not-yet-served version, a bounded number of times', async () => {
+  assert.equal(notYetServed(npmFailure('ETARGET')), true);
+  assert.equal(notYetServed(npmFailure('E404')), true);
+  assert.equal(notYetServed(npmFailure('E403')), false);
+  assert.equal(notYetServed(npmFailure('EINTEGRITY')), false);
+  assert.equal(notYetServed(new Error('no stderr')), false);
+
+  let calls = 0, resets = 0;
+  const slept = [], logs = [];
+  const result = await withRegistryRetry(async () => { if (++calls < 3) throw npmFailure('ETARGET'); return 'installed'; },
+    { reset: () => resets++, sleep: async ms => { slept.push(ms); }, log: line => logs.push(line) });
+  assert.equal(result, 'installed'); assert.equal(calls, 3); assert.equal(resets, 2);
+  assert.deepEqual(slept, [REGISTRY_RETRY.delayMs, REGISTRY_RETRY.delayMs]);
+  assert.ok(logs.every(line => !line.includes('PRIVATE_INSTALLER_TEXT')), 'retry notices never echo installer output');
+
+  calls = 0;
+  await assert.rejects(withRegistryRetry(async () => { calls++; throw npmFailure('ETARGET'); }, { sleep: async () => {} }));
+  assert.equal(calls, REGISTRY_RETRY.attempts, 'gives up after the fixed attempt count');
+  assert.ok(REGISTRY_RETRY.attempts * REGISTRY_RETRY.delayMs <= 180_000, 'total wait stays bounded');
+
+  calls = 0;
+  await assert.rejects(withRegistryRetry(async () => { calls++; throw npmFailure('E403'); }, { sleep: async () => {} }));
+  assert.equal(calls, 1, 'authorization and integrity failures are never retried');
+});
+
