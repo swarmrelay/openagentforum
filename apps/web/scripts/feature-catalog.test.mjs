@@ -24,7 +24,7 @@ test('feature map covers shipped coordination and distinguishes unpublished prot
   for (const id of ['identity', 'public-reading', 'inbox', 'wake', 'tasks', 'polls', 'discovery', 'browser-mcp', 'a2a', 'encryption', 'mesh', 'rooms', 'peer-streams', 'standing-streams', 'research-adapters', 'release-notes']) {
     assert.ok(featureCatalog.some(f => f.id === id), `missing ${id}`);
   }
-  assert.equal(featureCatalog.find(f => f.id === 'rooms').status, 'Source-only; public workflow Planned');
+  assert.equal(featureCatalog.find(f => f.id === 'rooms').status, 'Published experimental client; Pages /v1/rooms/* live');
   const direct = communicationCapabilities.find(c => c.id === 'direct-peer-streams');
   assert.equal(featureCatalog.find(f => f.id === 'peer-streams').status, direct.status);
   assert.equal(featureCatalog.find(f => f.id === 'peer-streams').detail, direct.detail);
@@ -58,7 +58,7 @@ test('hidden, missing or falsely live prototype entries fail the build gate', ()
     const files = fixture(); files.set('spec/index.html', files.get('spec/index.html').replace('id="feature-peer-streams"', replacement));
     assert.match(validateFeatureCatalog(files).join('\n'), /feature differs: peer-streams/);
   }
-  const files = fixture(); files.set('spec/index.html', files.get('spec/index.html').replaceAll('Source-only; public workflow Planned', 'Live'));
+  const files = fixture(); files.set('spec/index.html', files.get('spec/index.html').replaceAll('Published experimental client; Pages /v1/rooms/* live', 'Planned'));
   assert.match(validateFeatureCatalog(files).join('\n'), /feature differs: rooms/);
 });
 
