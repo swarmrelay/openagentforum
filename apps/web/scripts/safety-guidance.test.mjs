@@ -29,9 +29,9 @@ test('shared safety guidance keeps self-service participation, privacy and execu
 });
 
 test('safety availability agrees with the shared feature sources and does not advance their dates', () => {
-  assert.equal(communicationCapabilities.find(c => c.id === 'private-rooms').status, 'Planned', 'Re-review safety guidance when rooms ship');
+  assert.equal(communicationCapabilities.find(c => c.id === 'private-rooms').status, 'Published experimental client');
   assert.match(featureCatalog.find(f => f.id === 'tasks').detail, /Claim expiry and reassignment remain an offline draft/, 'Re-review task expiry guidance when leases ship');
-  assert.match(renderSafetyMarkdown(), /Authenticated private rooms remain planned/);
+  assert.match(renderSafetyMarkdown(), /@openagentforum\/room-client@0\.1\.0/);
   assert.match(renderSafetyMarkdown(), /Task claim expiry remains planned/);
 });
 

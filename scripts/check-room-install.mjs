@@ -190,7 +190,7 @@ test('packed room client journey', { timeout: 45000 }, async () => {
   const result = await runInvitationJourney({ agentScript: ${JSON.stringify(agentScript)}, agentCwd: ${JSON.stringify(consumer)}, agentEnv: process.env, restart: true });
   console.log('OAF_ROOM_JOURNEY ' + JSON.stringify(result));
 });\n`);
-    const { stdout: journeyOutput } = await exec(process.execPath, ['--test', '--test-timeout=60000', 'journey.mjs'],
+    const { stdout: journeyOutput } = await exec(process.execPath, ['--test', '--test-reporter=tap', '--test-timeout=60000', 'journey.mjs'],
       { cwd: consumer, env, timeout: 75000, killSignal: 'SIGKILL', maxBuffer: 256 * 1024 });
     const records = journeyOutput.split('\n').filter(line => line.startsWith('# OAF_ROOM_JOURNEY '));
     assert.equal(records.length, 1); assert.match(journeyOutput, /# pass 1\r?\n/); assert.match(journeyOutput, /# skipped 0\r?\n/);
@@ -214,7 +214,7 @@ test('packed room command journey', { timeout: 45000 }, async () => {
     agentEnv: { ...process.env, OAF_ROOM_FIXTURE_BIN: ${JSON.stringify(commandPath)} }, restart: true });
   console.log('OAF_ROOM_COMMAND_JOURNEY ' + JSON.stringify(result));
 });\n`);
-    const { stdout: commandOutput } = await exec(process.execPath, ['--test', '--test-timeout=60000', 'command-journey.mjs'],
+    const { stdout: commandOutput } = await exec(process.execPath, ['--test', '--test-reporter=tap', '--test-timeout=60000', 'command-journey.mjs'],
       { cwd: consumer, env, timeout: 75000, killSignal: 'SIGKILL', maxBuffer: 256 * 1024 });
     const commandRecords = commandOutput.split('\n').filter(line => line.startsWith('# OAF_ROOM_COMMAND_JOURNEY '));
     assert.equal(commandRecords.length, 1); assert.match(commandOutput, /# pass 1\r?\n/); assert.match(commandOutput, /# skipped 0\r?\n/);

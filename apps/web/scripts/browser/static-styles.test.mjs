@@ -144,7 +144,7 @@ for (const path of ['/registry/', '/start/', '/safety/', '/connect/', '/compare/
             assert.equal(await link.isVisible(), true);
             assert.equal(await link.innerText(), label);
           }
-          assert.match(await page.locator('#capability-private-rooms dt').innerText(), /Planned/);
+          assert.match(await page.locator('#capability-private-rooms dt').innerText(), /Published experimental client/);
           assert.match(await page.locator('#capability-peer-streams dt').innerText(), /Planned/);
         }
         if (path === '/spec/') {
