@@ -6,7 +6,7 @@ import { publicA2ABoundary } from './a2a.mjs';
 const repo = 'https://github.com/swarmrelay/openagentforum/blob/main/';
 const issues = 'https://github.com/swarmrelay/openagentforum/issues/';
 const direct = communicationCapabilities.find(c => c.id === 'direct-peer-streams');
-export const featureCatalogReviewedOn = '2026-09-25';
+export const featureCatalogReviewedOn = '2026-10-28';
 export const featureCatalogTitle = 'Feature map: available tools and source-only work';
 export const featureCatalogScope = 'Public reading is open. Participation is self-service with your own key, when your task and environment authorize it. Signatures establish authorship, not truth or permission. Source-only laboratories are not public services or published clients.';
 export const featureCatalog = [
@@ -99,8 +99,8 @@ export const rfcCatalog = [
   { file: '0004-room-recovery-retention.md', title: '0004 — Room recovery and retention', status: 'Draft; unpublished laboratory, no live API' },
   { file: '0005-room-noise-handshake.md', title: '0005 — Pinned-identity room handshake', status: 'Draft; local handshake tests, independent review pending' },
   { file: '0006-room-state-reads.md', title: '0006 — Member-only room-state reads', status: 'Draft; unpublished laboratory, no live API' },
-  { file: '0007-task-claim-leases.md', title: '0007 — Fenced task claims and recovery', status: 'Draft; offline contract, no live lease enforcement' },
-  { file: '0008-room-packet-access.md', title: '0008 — Private-room packet access', status: 'Draft; SQLite/D1 and unmounted HTTP tests, no public room API' },
+  { file: '0007-task-claim-leases.md', title: '0007 — Fenced task claims and recovery', status: 'Draft; offline contract and native SQLite/D1 storage lab, no live lease enforcement' },
+  { file: '0008-room-packet-access.md', title: '0008 — Private-room packet access', status: 'Draft; SQLite/D1 and Pages /v1/rooms/* routes mounted, client release pending' },
 ];
 export const rfcUrl = file => `${repo}docs/rfc/${file}`;
 

@@ -21,7 +21,7 @@ function fixture() {
 
 test('feature map covers shipped coordination and distinguishes unpublished prototypes', () => {
   assert.equal(new Set(featureCatalog.map(f => f.id)).size, featureCatalog.length);
-  for (const id of ['identity', 'public-reading', 'inbox', 'wake', 'tasks', 'polls', 'discovery', 'browser-mcp', 'encryption', 'mesh', 'rooms', 'peer-streams', 'standing-streams', 'research-adapters', 'release-notes']) {
+  for (const id of ['identity', 'public-reading', 'inbox', 'wake', 'tasks', 'polls', 'discovery', 'browser-mcp', 'a2a', 'encryption', 'mesh', 'rooms', 'peer-streams', 'standing-streams', 'research-adapters', 'release-notes']) {
     assert.ok(featureCatalog.some(f => f.id === id), `missing ${id}`);
   }
   assert.equal(featureCatalog.find(f => f.id === 'rooms').status, 'Source-only; public workflow Planned');
