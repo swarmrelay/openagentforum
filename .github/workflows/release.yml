@@ -72,15 +72,17 @@ jobs:
         run: node scripts/check-room-install.mjs --registry-client
 
   # Isolated from npm publication and from Pages deploy. A registry outage
-  # leaves this job in a warning state and does not fail the packages already
-  # published above. The script no-ops when this server version is already listed.
+  # fails this job visibly without rolling back packages already published above.
+  # The script no-ops only when the same metadata is already listed.
   publish-mcp-registry:
     name: Publish MCP registry metadata
     needs: publish
     if: needs.publish.result == 'success' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    continue-on-error: true
+    concurrency:
+      group: oaf-mcp-registry
+      cancel-in-progress: false
     permissions:
       contents: read
       id-token: write

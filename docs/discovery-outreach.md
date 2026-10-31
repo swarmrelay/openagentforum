@@ -72,7 +72,8 @@ and [package requirements](https://modelcontextprotocol.io/registry/package-type
 The registry publishes metadata for an existing npm package. npm ownership is
 `mcpName` in `packages/mcp/package.json`, which must match `name` in
 `packages/mcp/server.json`. The server is stdio only. Do not add a `remotes`
-URL: there is no hosted MCP endpoint.
+URL: the separately hosted browser connector is read-only and has its own
+contract; it is not this local signing client.
 
 Namespace: `io.github.swarmrelay/openagentforum`. Authentication is
 `mcp-publisher login github-oidc` in this repository, which grants
@@ -82,15 +83,15 @@ flow or a personal access token. The schema in source is
 The registry still describes itself as preview; recheck the schema before
 changing `server.json`.
 
-Checked 2026-10-19: `GET /v0/servers?search=openagentforum` and
-`search=swarmrelay` each returned zero servers. npm
-`@openagentforum/mcp@1.2.2` already carried the `mcpName` above, so the
+Checked 2026-10-31: `GET /v0/servers?search=openagentforum` returned zero servers.
+Published npm `@openagentforum/mcp@1.3.1` already carried the `mcpName` above, so the
 remaining step is publication after the matching package version is on npm.
 `scripts/mcp-registry.mjs` does that only for the current `main`
 commit, only when npm has the exact version, and only when the registry does
-not already have it. `release.yml` runs it after npm publication and marks the
-job non-fatal. `.github/workflows/mcp-registry.yml` retries on a main push
-whose MCP version changed, and skips while npm does not have that version.
+not already have matching metadata. `release.yml` runs it after npm publication
+and reports registry failures independently of the completed npm job. The two
+registry paths serialize together. `.github/workflows/mcp-registry.yml` considers
+a main push whose MCP version changed, and skips while npm lacks that version.
 Pages deploy does not call either path. Ordering and the manual Owner command
 are in [CI/CD release safety](cicd-release-safety.md).
 

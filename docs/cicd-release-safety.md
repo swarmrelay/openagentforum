@@ -41,15 +41,22 @@ the npm preflight. `scripts/mcp-registry.mjs` sends
 `packages/mcp/server.json` only for the current `main` revision (a version tag
 qualifies only when it points at that same commit). It reads npm first: the
 registry's ownership check requires `mcpName` on the published
-`@openagentforum/mcp` version. An existing registry version is skipped.
-`release.yml` runs that script after the npm job and sets `continue-on-error`,
-so a registry failure does not fail packages already published and does not
-affect either production upload. `.github/workflows/mcp-registry.yml` repeats
+`@openagentforum/mcp` version. An existing registry version is skipped only when
+its submitted metadata matches; a mismatch requires reconciliation.
+`release.yml` runs that script after the npm job. Registry failure remains visible
+without rolling back published packages or affecting either production upload.
+Both registry paths share one non-cancelling concurrency group, and current-main
+freshness is rechecked immediately before publication.
+`.github/workflows/mcp-registry.yml` can run
 the attempt on a main push whose MCP version changed, and on manual dispatch.
 A push whose version is unchanged exits before calling the registry. While npm
 does not yet have the version, the push workflow skips; the release job treats
 that absence as a failure because it runs only after npm publication. The
-publisher binary is pinned to `mcp-publisher` v1.8.1 and checked with SHA-256.
+publisher binary is pinned to `mcp-publisher` v1.8.1 and checked with SHA-256
+against the release assets. Downloads have byte/read/time bounds. Publisher
+authentication state stays in a disposable private directory outside the checkout;
+a bounded read confirms the submitted metadata after publication. An uncertain
+publish is never automatically repeated.
 Authentication is `mcp-publisher login github-oidc` with `id-token: write`.
 There is no registry secret. A workflow in `swarmrelay/openagentforum` is what
 grants `io.github.swarmrelay/*`.

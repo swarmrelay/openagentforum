@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { releaseDirectories } from './publish-packages.mjs';
 import {
   MCP_NAMESPACE, MCP_REGISTRY, PUBLISHER_RELEASE,
-  assertCurrentMainForRegistry, assertServerMetadata, installPublisherArchive,
+  assertCurrentMainForRegistry, assertServerMetadata, downloadBounded, installPublisherArchive,
   planMcpRegistryPublication, publisherAsset, sha256Hex, shouldConsiderRegistryVersion,
 } from './mcp-registry.mjs';
 
@@ -98,7 +98,7 @@ test('skips when the registry already has the version and does not publish when 
   const present = await planMcpRegistryPublication({ pkg: manifest, server: metadata, fetchImpl: async (url) => {
     if (url.startsWith(MCP_REGISTRY)) {
       registryCalls++;
-      return Response.json({ server: { name: metadata.name, version: metadata.version } });
+      return Response.json({ server: metadata, _meta: { registry: 'annotation' } });
     }
     return Response.json({ name: manifest.name, version: manifest.version, mcpName: manifest.mcpName });
   } });
@@ -119,6 +119,24 @@ test('registry plan failures stay closed and do not echo response bodies', async
   await assert.rejects(planMcpRegistryPublication({ pkg: manifest, server: metadata, fetchImpl: async () => Response.json({
     name: manifest.name, version: manifest.version, mcpName: 'io.github.example/other',
   }) }), /does not match/);
+  await assert.rejects(planMcpRegistryPublication({ pkg: manifest, server: metadata, fetchImpl: async url => {
+    if (url.startsWith(MCP_REGISTRY)) return Response.json({ server: { ...metadata, description: 'Different submitted metadata' } });
+    return Response.json({ name: manifest.name, version: manifest.version, mcpName: manifest.mcpName });
+  } }), /different metadata/);
+});
+
+test('publisher downloads reject stalled headers, stalled bodies, excessive bytes and excessive reads', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  for (const fetchImpl of [async () => new Promise(() => {}), async () => new Response(new ReadableStream())]) {
+    const rejected = assert.rejects(downloadBounded('https://example.invalid/publisher', fetchImpl), /timed out/);
+    for (let i = 0; i < 8; i++) await Promise.resolve();
+    t.mock.timers.tick(60_001);
+    await rejected;
+  }
+  await assert.rejects(downloadBounded('https://example.invalid/publisher', async () => new Response('too large'), 2), /size limit/);
+  await assert.rejects(downloadBounded('https://example.invalid/publisher', async () => new Response(new ReadableStream({
+    pull(controller) { controller.enqueue(new Uint8Array()); },
+  }))), /read limit/);
 });
 
 test('publisher install accepts only the pinned checksum and a regular binary member', () => {
@@ -149,7 +167,9 @@ test('registry publication is isolated from Pages deploy and runs only after npm
   const registry = readFileSync(new URL('../.github/workflows/mcp-registry.yml', import.meta.url), 'utf8');
   const job = release.split('\n  publish-mcp-registry:')[1];
   assert.match(job, /^\n    name: Publish MCP registry metadata\n    needs: publish\n/);
-  assert.match(job, /continue-on-error: true/);
+  assert.doesNotMatch(job, /continue-on-error/);
+  assert.match(job, /group: oaf-mcp-registry/);
+  assert.match(job, /cancel-in-progress: false/);
   assert.match(job, /github\.ref == 'refs\/heads\/main'/);
   assert.match(job, /MCP_REGISTRY_REQUIRE_NPM: '1'/);
   assert.match(job, /node scripts\/mcp-registry\.mjs/);
@@ -161,4 +181,5 @@ test('registry publication is isolated from Pages deploy and runs only after npm
   assert.doesNotMatch(registry, /pull_request/);
   assert.match(registry, /id-token: write/);
   assert.match(registry, /cancel-in-progress: false/);
+  assert.match(registry, /node --test scripts\/mcp-registry.test.mjs/);
 });

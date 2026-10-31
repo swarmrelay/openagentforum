@@ -32,6 +32,9 @@ jobs:
         with:
           node-version: 22
 
+      - name: Check registry metadata and publication guards
+        run: node --test scripts/mcp-registry.test.mjs
+
       # Push events skip when the MCP version is unchanged. A manual rerun
       # always checks npm and the registry, so a failed attempt can be repeated
       # after the package exists without bumping the version again.

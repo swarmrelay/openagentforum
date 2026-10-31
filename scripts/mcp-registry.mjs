@@ -24,6 +24,8 @@ const ASSET_NAMES = {
   'linux-arm64': 'mcp-publisher_linux_arm64.tar.gz',
 };
 const PUBLISHER_BYTES = 12 * 1024 * 1024;
+const stableJson = value => JSON.stringify(value, (_, item) => item && typeof item === 'object' && !Array.isArray(item)
+  ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => a.localeCompare(b))) : item);
 
 export function assertServerMetadata(pkg, server) {
   const problems = [];
@@ -147,23 +149,33 @@ export async function planMcpRegistryPublication({ pkg, server, fetchImpl = glob
   if (published.version !== server.version || published.name !== server.name) {
     throw new Error('MCP registry returned a mismatched server');
   }
+  assertServerMetadata(pkg, published);
+  // Registry annotations outside `server` are not submitted metadata. Compare
+  // every submitted field; never overwrite a version with unexpected contents.
+  if (stableJson(Object.fromEntries(Object.keys(server).map(key => [key, published[key]]))) !== stableJson(server)) {
+    throw new Error('MCP registry version has different metadata; reconcile before publication');
+  }
   return { action: 'skip', reason: 'version already published', version: pkg.version };
 }
 
 export async function downloadBounded(url, fetchImpl, maxBytes = PUBLISHER_BYTES) {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 60_000);
+  let timer;
+  const deadline = new Promise((_, reject) => {
+    timer = setTimeout(() => { controller.abort(); reject(new Error('mcp-publisher download timed out')); }, 60_000);
+  });
   let reader;
   try {
-    const response = await fetchImpl(url, {
+    const response = await Promise.race([fetchImpl(url, {
       method: 'GET', redirect: 'follow', credentials: 'omit', cache: 'no-store', signal: controller.signal,
-    });
+    }), deadline]);
     reader = response.body?.getReader();
     if (!response.ok || !reader) throw new Error('mcp-publisher download failed');
     const chunks = [];
     let bytes = 0;
-    for (;;) {
-      const { value, done } = await reader.read();
+    for (let reads = 0; ; reads++) {
+      if (reads >= 4096) throw new Error('mcp-publisher download exceeded its read limit');
+      const { value, done } = await Promise.race([reader.read(), deadline]);
       if (done) break;
       bytes += value.byteLength;
       if (bytes > maxBytes) throw new Error('mcp-publisher download exceeded its size limit');
@@ -185,9 +197,11 @@ function note(line) {
   if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${line}\n`);
 }
 
-function runPublisher(binary, args) {
+function runPublisher(binary, args, directory) {
   try {
-    execFileSync(binary, args, { stdio: 'inherit', timeout: 120_000 });
+    // Keep the publisher's local authentication state in the disposable private
+    // directory, outside the checkout. The manifest path is absolute.
+    execFileSync(binary, args, { cwd: directory, stdio: 'inherit', timeout: 120_000 });
   } catch {
     throw new Error(`mcp-publisher ${args[0]} failed`);
   }
@@ -197,10 +211,18 @@ function readJson(path) {
   return JSON.parse(readFileSync(path, 'utf8'));
 }
 
+function assertCurrentRevision() {
+  const git = { cwd: root, encoding: 'utf8', timeout: 20_000, maxBuffer: 16 * 1024, stdio: ['ignore', 'pipe', 'pipe'] };
+  const checkout = execFileSync('git', ['rev-parse', 'HEAD'], git).trim();
+  const remote = execFileSync('git', ['ls-remote', '--exit-code', 'origin', 'refs/heads/main'], git).trim();
+  const main = /^([a-f0-9]{40})\trefs\/heads\/main$/.exec(remote)?.[1];
+  assertCurrentMainForRegistry({ ref: process.env.GITHUB_REF, sha: process.env.GITHUB_SHA, checkout, main });
+}
+
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   let directory;
   try {
-    if (process.argv.length !== 2) throw new Error('Usage: node scripts/publish-mcp-registry.mjs');
+    if (process.argv.length !== 2) throw new Error('Usage: node scripts/mcp-registry.mjs');
     const pkg = readJson(join(root, 'packages/mcp/package.json'));
     const server = readJson(join(root, 'packages/mcp/server.json'));
     const onlyIfChanged = process.env.MCP_REGISTRY_ONLY_IF_CHANGED === '1';
@@ -217,11 +239,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
       }
     }
     assertServerMetadata(pkg, server);
-    const git = { encoding: 'utf8', timeout: 20_000, maxBuffer: 16 * 1024, stdio: ['ignore', 'pipe', 'pipe'] };
-    const checkout = execFileSync('git', ['rev-parse', 'HEAD'], git).trim();
-    const remote = execFileSync('git', ['ls-remote', '--exit-code', 'origin', 'refs/heads/main'], git).trim();
-    const main = /^([a-f0-9]{40})\trefs\/heads\/main$/.exec(remote)?.[1];
-    assertCurrentMainForRegistry({ ref: process.env.GITHUB_REF, sha: process.env.GITHUB_SHA, checkout, main });
+    assertCurrentRevision();
     const plan = await planMcpRegistryPublication({ pkg, server });
     note(`MCP registry ${plan.action} ${pkg.name}@${plan.version}`);
     if (plan.action === 'skip') process.exit(0);
@@ -234,8 +252,12 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     const asset = publisherAsset();
     const bytes = await downloadBounded(asset.url, globalThis.fetch);
     const binary = installPublisherArchive({ bytes, expectedSha256: asset.sha256, directory });
-    runPublisher(binary, ['login', 'github-oidc']);
-    runPublisher(binary, ['publish', join(root, 'packages/mcp/server.json')]);
+    assertCurrentRevision();
+    runPublisher(binary, ['login', 'github-oidc'], directory);
+    assertCurrentRevision();
+    runPublisher(binary, ['publish', join(root, 'packages/mcp/server.json')], directory);
+    const confirmed = await planMcpRegistryPublication({ pkg, server });
+    if (confirmed.action !== 'skip') throw new Error('MCP registry publication is not confirmed; reconcile before rerunning');
     note(`published ${server.name}@${server.version}`);
   } catch (error) {
     console.error(error instanceof Error ? error.message : 'MCP registry publication failed');
