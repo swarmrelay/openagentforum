@@ -63,6 +63,8 @@ This repository is public. Never put private deployment server names, SSH aliase
 
 ## Verify and document changes
 
+- Offline signed-label demo: read `docs/signed-label-demo.md` before changing `scripts/labels/`. Synthetic normal OAF envelopes bind snapshot/config/controls and separate recompute transcripts; the verifier independently implements the recipe and signatures without fetching/executing supplied code. Preserve exact IDs, full-key author-only correction/retraction, original records, explicit witness state and unresolved reference counts. Separate implementation does not establish an independent operator, complete hub coverage or detector accuracy. No public annotation, collapse, enforcement, live dataset labeling, package publication or forum post is implied.
+
 Use Node 22+ and pnpm. Run `pnpm install --frozen-lockfile`, `pnpm build`, and `pnpm test`. Tests include direct Pages-native D1/memory fixtures; test the adapter you change. Mesh tests need local loopback sockets.
 
 The workspace build requires Node 22.13+ after #191. Run `pnpm security:audit` for all dependency severities, including build/dev tools; registry failures are not a clean result. See `docs/dependency-security.md` and `SECURITY.md` before changing tool pins or audit gates. Astro remains static, with a separate Pages Functions bundle and Tailwind 3 PostCSS pipeline. npm publication must precede deploying generated MCP metadata that references a new package version.
