@@ -174,14 +174,15 @@ test('help works with native implementation missing; startup/argv failures are r
     for (const file of ['cli.mjs', 'cli-io.mjs']) await copyFile(new URL(`../dist/${file}`, import.meta.url), join(dir, file));
     const help = await exec(process.execPath, [join(dir, 'cli.mjs'), '--help'], { timeout: 5000 });
     assert.match(help.stdout, /No listener/); assert.equal(help.stderr, '');
-    assert.match((await exec(process.execPath, [join(dir, 'cli.mjs'), '--version'], { timeout: 5000 })).stdout, /unpublished/);
+    const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url)));
+    assert.equal((await exec(process.execPath, [join(dir, 'cli.mjs'), '--version'], { timeout: 5000 })).stdout, `${pkg.version}\n`);
+    assert.match(help.stdout, /experimental private-room command/);
     for (const args of [['run'], ['init'], ['--private-key', 'SECRET_ARG']]) {
       await assert.rejects(exec(process.execPath, [join(dir, 'cli.mjs'), ...args], { timeout: 5000 }), error => {
         assert.ok(error.code === 1 || error.code === 2); assert.doesNotMatch(error.stderr, /SECRET_ARG|ERR_MODULE|file:\/\/|oaf-room-help-/);
         assert.match(error.stderr, /startup_unavailable|invalid_arguments/); return true;
       });
     }
-    const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url)));
     assert.deepEqual(pkg.bin, { 'oaf-room': './dist/cli.mjs' });
   } finally { await rm(dir, { recursive: true, force: true }); }
 });

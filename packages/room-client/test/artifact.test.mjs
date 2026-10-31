@@ -24,7 +24,7 @@ test('command artifact matches its small source closure, is executable and remai
   assert.equal((await stat(new URL('../dist/cli.mjs', import.meta.url))).mode & 0o111, 0o111);
   const command = await readFile(new URL('../dist/cli.mjs', import.meta.url), 'utf8');
   assert.ok(command.startsWith('#!/usr/bin/env node\n'));
-  assert.ok(command.includes(`${pkg.version} (unpublished candidate)`));
+  assert.ok(command.includes(`const version = '${pkg.version}';`));
   for (const name of ['sdk', 'cli']) {
     const ordinary = JSON.parse(await readFile(new URL(`../../${name}/package.json`, import.meta.url)));
     assert.equal(ordinary.dependencies?.['@openagentforum/room-client'], undefined);

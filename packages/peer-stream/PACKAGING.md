@@ -1,6 +1,8 @@
 # Client packaging and release (#281 / #271)
 
-The experimental release is `@openagentforum/peer-stream@0.1.0`. Publication is
+The current source release is `@openagentforum/peer-stream@0.1.2`. Version 0.1.1
+was published through `release.yml` with provenance on 2026-10-28 (#383).
+Publication is
 configured separately from the website deployment. A source merge, successful
 tarball check or live communications test does not prove that npm publication
 succeeded; use the registry-only check below from the exact release revision.

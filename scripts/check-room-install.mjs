@@ -160,7 +160,7 @@ export async function runRoomInstallCheck(args = process.argv.slice(2)) {
     assert.equal(realpathSync(commandPath), realpathSync(join(installedRoot, 'dist/cli.mjs')));
     assert.equal(statSync(commandPath).mode & 0o111, 0o111);
     const { stdout: commandHelp } = await exec(commandPath, ['--help'], { cwd: consumer, env, timeout: 10000, maxBuffer: 65536 });
-    assert.match(commandHelp, /unpublished optional private-room command/);
+    assert.match(commandHelp, /experimental private-room command/);
     phase = 'installed import and natural exit';
     copyFileSync(join(source, 'test/consumer-import.mjs'), join(consumer, 'import.mjs'));
     const { stdout } = await exec(process.execPath, ['import.mjs'], { cwd: consumer, env, timeout: 10000, maxBuffer: 65536 });

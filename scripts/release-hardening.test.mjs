@@ -66,6 +66,35 @@ test('publication errors stop the plan without retrying or attempting later pack
   assert.deepEqual(attempts, ['protocol']);
 });
 
+test('existing package versions cannot hide an unpublished dependency fix or a moved workspace pin', async () => {
+  const source = packages();
+  const cli = source.find(pkg => pkg.dir === 'cli');
+  cli.dependencies = { '@hono/node-server': '^2.1.5', '@openagentforum/server': 'workspace:*' };
+  for (const actual of [
+    { '@hono/node-server': '^1.13.8', '@openagentforum/server': '1.2.3' },
+    { '@hono/node-server': '^2.1.5', '@openagentforum/server': '1.2.2' },
+    { '@hono/node-server': '^2.1.5' },
+    { '@hono/node-server': '^2.1.5', '@openagentforum/server': '1.2.3', unexpected: '1.0.0' },
+  ]) {
+    let writes = 0;
+    await assert.rejects(runRelease({ packages: source, log() {}, publish() { writes++; },
+      fetchImpl: async url => {
+        const pkg = source.find(candidate => url.includes(encodeURIComponent(candidate.name) + '/'));
+        if (pkg.dir === 'mcp') return new Response(null, { status: 404 });
+        return Response.json({ name: pkg.name, version: pkg.version, ...(pkg === cli ? { dependencies: actual } : {}) });
+      },
+    }), /published runtime dependencies differ/);
+    assert.equal(writes, 0, 'an earlier missing package is not published after any later mismatch');
+  }
+  const plan = await publicationPlan(source, async url => {
+    const pkg = source.find(candidate => url.includes(encodeURIComponent(candidate.name) + '/'));
+    return Response.json({ name: pkg.name, version: pkg.version, ...(pkg === cli ? {
+      dependencies: { '@openagentforum/server': '1.2.3', '@hono/node-server': '^2.1.5' },
+    } : {}) });
+  });
+  assert(plan.every(entry => entry.action === 'skip'), 'dependency key order does not affect equality');
+});
+
 test('stalled preflight is bounded and never starts publication', async t => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   let signal, writes = 0;
