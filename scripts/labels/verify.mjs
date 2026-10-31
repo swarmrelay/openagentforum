@@ -129,7 +129,7 @@ export function verifyBundle(bundle, now = Date.now()) {
     need(exact(p.reference, ['resolved', 'unresolved']) && integer(p.reference.resolved) && integer(p.reference.unresolved)
       && p.reference.resolved + p.reference.unresolved <= 100, 'reference_counts');
     need(integer(p.expiresAt) && p.expiresAt > event.timestamp && p.expiresAt - event.timestamp <= 7 * 86400000, 'label_expiry');
-    if (p.supersedes) {
+    if (Object.hasOwn(p, 'supersedes')) {
       need(p.supersedes === p.inReplyTo && labels.has(p.supersedes), 'correction_target');
       need(authors.get(p.supersedes) === key, 'correction_author');
       labels.get(p.supersedes).supersededBy.push(event.id);
