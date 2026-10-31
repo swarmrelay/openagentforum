@@ -4,6 +4,7 @@ import { D1TaskLeases } from '../../src/d1.ts';
 import { SCHEMA_OBJECTS } from '../../src/schema.ts';
 import { FIXED_BYTES, GUARD_BYTES } from '../../src/contract.ts';
 import { CHARGE_SQL, SNAPSHOT_SQL, FINAL_SQL } from '../../src/sql.ts';
+import { createD1TaskLeaseHttpHandler } from '../../../../apps/web/functions/_lib/task-lease-http.ts';
 
 const tables = ['task_lease_authority', 'task_lease_actors', 'task_lease_tasks', 'task_lease_guard'];
 const caught = async operation => {
@@ -89,6 +90,27 @@ export default { async fetch(request, env) {
   }
   const trace = { sessions: 0, reads: 0, charges: 0, batches: 0, pulls: 0 };
   const store = () => new D1TaskLeases(binding(env.DB, input, trace), input.options);
+  if (path === '/test-only/http') {
+    const handle = createD1TaskLeaseHttpHandler(binding(env.DB, input, trace),
+      { ...input.options, bodyTimeoutMs: input.bodyTimeoutMs ?? 1000 });
+    const replies = [];
+    for (const operation of input.requests) {
+      let consumed = false;
+      const body = ['GET', 'HEAD'].includes(operation.method) ? undefined : new ReadableStream({ async pull(controller) {
+        if (consumed) { controller.close(); return; }
+        consumed = true; trace.pulls++;
+        // Read the persisted row at the first actual inner-body pull, rather
+        // than merely observing that a charge query was dispatched.
+        trace.atPull = JSON.parse((await env.DB.prepare('SELECT attempts_json FROM task_lease_authority').first()).attempts_json);
+        if (operation.stall) return;
+        controller.enqueue(operation.bytes ? new Uint8Array(operation.bytes) : new TextEncoder().encode(operation.body ?? ''));
+        controller.close();
+      } }, { highWaterMark: 0 });
+      const response = await handle(new Request(operation.url, { method: operation.method, headers: operation.headers, body }));
+      replies.push({ status: response.status, headers: Object.fromEntries(response.headers), body: await response.text() });
+    }
+    return Response.json({ replies, trace });
+  }
   if (path === '/test-only/read') return Response.json({ ...await caught(() => store().readTask(input.id)), trace });
   if (path === '/test-only/recover') return Response.json({ ...await caught(() => store().recover(input.wire)), trace });
   if (path === '/test-only/sequence') {

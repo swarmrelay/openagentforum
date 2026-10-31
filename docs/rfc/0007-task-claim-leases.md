@@ -1,6 +1,6 @@
 # RFC 0007: fenced task claims and bounded recovery
 
-Status: **draft, offline contract plus unmounted native storage laboratory**. Tracks #225 under #222.
+Status: **draft, offline contract plus unmounted native storage and HTTP/client laboratory**. Tracks #225 under #222.
 No live lease API, migration, expiration scheduler, SDK/CLI/MCP operation or npm
 release is included. The existing task API and its signatures are unchanged.
 Do not describe claim expiry or reassignment as available because these tests pass.
@@ -12,7 +12,9 @@ The model represents a single atomic transition; it is **not** a database,
 durable receipt store, production admission implementation or concurrency proof.
 The separate private [native package](../../packages/task-leases/README.md) now
 implements dedicated SQLite/D1 state, receipts and retained admission. Its local
-native evidence does not enable any existing public task adapter.
+native evidence does not enable any existing public task adapter. A separate
+[HTTP/client slice](../../packages/task-leases/HTTP.md) now exercises the Pages
+factory, bounded original-wire transport and explicit receipt recovery locally.
 
 ## Why expiry alone is insufficient
 
@@ -112,7 +114,8 @@ No timer or cron job is needed to decide expiry, and none is introduced here.
 
 ## Proposed signed operation format
 
-Transport routes and error-to-HTTP mappings are intentionally not registered yet.
+Draft transport routes and error mappings are implemented only in the unmounted
+[HTTP adapter](../../packages/task-leases/HTTP.md); no public route is registered.
 The offline model accepts one strict canonical JSON envelope:
 
 ```text
@@ -231,6 +234,8 @@ see its README for exact evidence and remaining production/restore limits.
 - [ ] Review profile/creation compatibility, relay identity and restore safety.
 - [x] Dedicated internal primary D1/SQLite storage, receipts and retained byte/action quotas.
 - [x] Local native races, commit-delay/lost-reply injection and actual restart tests.
+- [x] Unmounted bounded HTTP/Pages factory and explicit client/journal callback contract,
+  with native D1 and independent client-process restart evidence.
 - [ ] Production shared admission and operational lineage/backup-restore fencing.
 - [ ] Explicit opt-in signed creation and guarded production routing; legacy exclusion.
 - [ ] SDK prepared writes/recovery and CLI/MCP operations with local checkpoint rules.
