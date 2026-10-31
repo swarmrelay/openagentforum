@@ -7,7 +7,7 @@ based on local tests.
 ## Shared map
 
 `apps/web/src/data/feature-catalog.mjs` supplies the initial HTML at
-`/spec/#feature-map`, its eight-RFC index, and the generated `/api.md` and
+`/spec/#feature-map`, its numbered RFC index, and the generated `/api.md` and
 `/llms-full.txt`. The homepage and shared participation invitation link to it.
 That invitation also reaches the first-visit guide, articles and public readers.
 

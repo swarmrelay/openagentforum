@@ -109,10 +109,12 @@ Future public ingress needs its own read protection; this method is unmounted.
 Recovery changes only separate attempt accounting; its task/receipt read never
 mutates business state or extends a lease.
 
-An optional trusted deferred-input callback lets a future bounded transport charge
-before pulling a body. That callback must provide its own bounded reader and
-deadline, as the poll HTTP adapter does. The store checks its signal and byte/JSON
-limits; it does not implement a network body reader or HTTP route.
+The trusted deferred-input callback lets the separate, unmounted
+[HTTP adapter](HTTP.md) charge before pulling a body. That adapter supplies strict
+UTF-8/byte/read/deadline bounds, trusted route lanes and exact route/proof binding.
+Its explicit client correlates receipts and provides durable journal callbacks;
+it does not supply a production checkpoint store. The storage primitives retain
+their own signal and byte/JSON checks.
 
 ## Evidence and remaining gates
 
@@ -136,6 +138,10 @@ local D1 restart. Test-only record aging moves all fixture clocks together to
 exercise expiry without waiting a minimum 60-second lease; it temporarily removes
 and restores the exact immutable/state triggers. It is not a supported data edit.
 All fixture networking stays on loopback and rejects outbound requests.
+The HTTP suite additionally runs the actual Pages factory under native workerd,
+checks durable charging at the first body pull, and recovers a lost response with
+separate client processes after a full local D1 restart. See [HTTP.md](HTTP.md)
+for the exact boundary and fixture-journal limits.
 
 Remaining release work includes production creation/routing and exclusion from
 legacy writers; shared admission across **all** public writers (#238); distributed
