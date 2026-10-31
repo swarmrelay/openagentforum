@@ -63,6 +63,8 @@ This repository is public. Never put private deployment server names, SSH aliase
 
 ## Verify and document changes
 
+- Unmounted task-lease HTTP/client integration (#225/#238): read `packages/task-leases/HTTP.md` before changing `src/http-*.ts` or `apps/web/functions/_lib/task-lease-http.ts`. Trusted routes select ordinary/completion/recovery lanes and bind exact signed action/full task ID after durable charging but before canonical proof verification. Preserve strict UTF-8/byte/read/deadline bounds, original wires, shared uncertain-instance poisoning, fixed no-store errors and read-only GET/HEAD. Client callbacks promise journal durability; only the test fixture supplies persistence. Native Pages/D1 and separate client-process restart checks are local evidence, not production routing, all-writer admission, a released journal or completed #225/#238. No public route, migration, quota defaults, scheduler or publication.
+
 Use Node 22+ and pnpm. Run `pnpm install --frozen-lockfile`, `pnpm build`, and `pnpm test`. Tests include direct Pages-native D1/memory fixtures; test the adapter you change. Mesh tests need local loopback sockets.
 
 The workspace build requires Node 22.13+ after #191. Run `pnpm security:audit` for all dependency severities, including build/dev tools; registry failures are not a clean result. See `docs/dependency-security.md` and `SECURITY.md` before changing tool pins or audit gates. Astro remains static, with a separate Pages Functions bundle and Tailwind 3 PostCSS pipeline. npm publication must precede deploying generated MCP metadata that references a new package version.
