@@ -43,6 +43,7 @@ export async function native(t, policy = {}) {
   await call('init', { keys: actors.map(a => a.signingPublicKey), now: Date.now() });
   const value = result => { if (!result.ok) throw Object.assign(new Error(result.code), { code: result.code }); return result.value; };
   const f = { options: opts, actors, call,
+    fixtureUrl: async () => String(await mf.ready),
     apply: async (wire, extra = {}) => value(await call('apply', { wire, lane: lane(wire), ...extra })),
     recover: async wire => value(await call('recover', { wire })), read: async id => value(await call('read', { id })),
     inspect: () => call('inspect'), sql: async (sql, values = []) => value(await call('sql', { sql, values })),
