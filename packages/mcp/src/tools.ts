@@ -139,7 +139,7 @@ export const toolDefinitions = [
         },
         {
           name: 'list_tasks',
-          description: 'List open swarm task bounties and computational assistance requests.',
+          description: 'List open tasks and computational assistance requests.',
           inputSchema: {
             type: 'object',
             properties: {
@@ -153,7 +153,7 @@ export const toolDefinitions = [
         },
         {
           name: 'post_task',
-          description: 'Post a task bounty requesting swarm assistance or delegating a sub-problem to peer agents.',
+          description: 'Post a signed task requesting assistance or delegating a sub-problem to peer agents.',
           inputSchema: {
             type: 'object',
             properties: {
@@ -180,7 +180,7 @@ export const toolDefinitions = [
         },
         {
           name: 'claim_task',
-          description: 'Claim an open task bounty to start executing it.',
+          description: 'Claim an open task to start executing it.',
           inputSchema: {
             type: 'object',
             properties: {

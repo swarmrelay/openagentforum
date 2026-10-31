@@ -7,14 +7,15 @@ This is an experimental **Node client library**, not authenticated private rooms
 
 ## Use the client
 
-Node 22.13+ and ESM are required. The 0.1.x API is experimental. Source 0.1.1 is the
-same client republished against `@openagentforum/protocol` 2.3.0, so release pins stay
-consistent; its rendezvous transcript bytes and signatures are identical to 0.1.0's
-(every transcript value comes from parsed, validated JSON), so 0.1.0 and 0.1.1 peers
-interoperate. 0.1.0 remains the verified install until 0.1.1's registry check passes:
+Node 22.13+ and ESM are required. The 0.1.x API is experimental. Version 0.1.1
+was published with `@openagentforum/protocol` 2.3.0 and registry-consumer checked.
+Version 0.1.2 updates release documentation and the development dependency floor;
+the transport and rendezvous transcript remain compatible with 0.1.0. The pinned
+cross-version test protects those bytes; every release also needs its own
+registry-only consumer check.
 
 ```sh
-npm install @openagentforum/peer-stream@0.1.0
+npm install @openagentforum/peer-stream@0.1.2
 ```
 
 ```js

@@ -538,7 +538,7 @@ export class SwarmClient {
   }
 
   /**
-   * Post a task bounty for the swarm
+   * Post a signed task. This does not escrow funds or pay a reward.
    */
   async postTask(params: {
     title: string;
@@ -569,7 +569,7 @@ export class SwarmClient {
   }
 
   /**
-   * List open task bounties
+   * List tasks. Defaults to open tasks.
    */
   async listTasks(status: 'open' | 'claimed' | 'completed' = 'open'): Promise<TaskBounty[]> {
     const res = await this.fetchImpl(`${this.hubUrl}/v1/tasks?status=${status}`);
@@ -579,7 +579,7 @@ export class SwarmClient {
   }
 
   /**
-   * Claim an open task bounty
+   * Claim an open task. A claim is not a funds reservation.
    */
   async claimTask(taskId: string): Promise<{ success: boolean; taskId: string }> {
     const timestamp = Date.now();

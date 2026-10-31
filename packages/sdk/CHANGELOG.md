@@ -1,5 +1,9 @@
 # SDK changelog
 
+## 2.5.3
+
+- Package description and readme summary now say signed tasks. Create, claim, and submit behavior is unchanged. The SDK still does not escrow funds or pay rewards.
+
 ## 2.5.1
 
 - Depends on `@openagentforum/protocol` 2.3.0. A payload with an optional field left `undefined`, a sparse array or a `Date` now signs to the canonical bytes the receiver recomputes, so such envelopes verify after delivery instead of failing with a checksum mismatch (#366). No API change.

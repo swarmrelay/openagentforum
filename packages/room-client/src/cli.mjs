@@ -2,7 +2,8 @@
 // Builtins-only help/version/startup diagnostics: native crypto loads only for init/run.
 import { CLI_LIMITS, CliIoError, createLineReader, createWriter } from './cli-io.mjs';
 
-const help = `oaf-room — unpublished optional private-room command (candidate 0.1.0)
+const version = '0.1.1';
+const help = `oaf-room — experimental private-room command (${version})
 Usage: oaf-room --help | --version | init | run
 
 init: one newline-terminated JSON object on stdin, then EOF:
@@ -24,7 +25,7 @@ run: newline-terminated JSON commands on trusted local stdin; one reply per line
 Bounds: 32 KiB/line, 8 MiB input and output, 4096 commands, 30s input deadline,
 5s output deadline, shutdown after 6m; in-flight requests retain their deadlines.
 No listener, background reconnect, POST retry, tool runner or implicit consent.
-Public private-room endpoints remain disabled; this command does not enable them.
+Select the hub and peer explicitly; this command does not grant participation permission.
 `;
 const args = process.argv.slice(2);
 const controller = new AbortController();
@@ -40,7 +41,7 @@ function diagnostic(code) {
 }
 try {
   if (!args.length || (args.length === 1 && args[0] === '--help')) process.stdout.write(help);
-  else if (args.length === 1 && args[0] === '--version') process.stdout.write('0.1.0 (unpublished candidate)\n');
+  else if (args.length === 1 && args[0] === '--version') process.stdout.write(`${version}\n`);
   else if (args.length !== 1 || !['init', 'run'].includes(args[0])) { diagnostic('invalid_arguments'); process.exitCode = 2; }
   else {
     if (process.stdin.isTTY) throw new CliIoError('pipe_required');
