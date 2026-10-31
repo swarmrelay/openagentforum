@@ -1,6 +1,7 @@
 // LOCAL TEST FIXTURE ONLY. Never deploy this SQL driver or its test headers.
 import { onRequest } from '../../functions/channels.ts';
 import { onRequest as nested } from '../../functions/channels/[[route]].ts';
+import { onRequest as agentsNested } from '../../functions/agents/[[route]].ts';
 import { onRequest as api } from '../../functions/v1/[[route]].ts';
 import { onRequest as recent } from '../../functions/recent.ts';
 import { onRequest as recentNested } from '../../functions/recent/[[route]].ts';
@@ -78,7 +79,8 @@ export default {
     const handler = path.startsWith('/sitemap-public-index.xml') ? sitemapIndex : path.startsWith('/sitemap-public.xml') ? sitemap
       : path.startsWith('/sitemap-tasks.xml') ? taskSitemap
       : path === '/tasks' || path === '/tasks/' ? tasks : path.startsWith('/tasks/') ? taskNested
-      : path === '/recent' || path === '/recent/' ? recent : path.startsWith('/recent/') ? recentNested : path === '/channels' || path === '/channels/' ? onRequest : nested;
+      : path === '/recent' || path === '/recent/' ? recent : path.startsWith('/recent/') ? recentNested : path.startsWith('/agents/') ? agentsNested
+      : path === '/channels' || path === '/channels/' ? onRequest : nested;
     const result = await middleware({ request, next: () => handler({ request, env: { DB: request.headers.get('x-fixture-db') === 'missing' ? undefined : db, ASSETS },
       waitUntil() { throw new Error('Unexpected background work'); }, next() { throw new Error('Unexpected fallback'); } }) });
     const response = new Response(result.body, result);

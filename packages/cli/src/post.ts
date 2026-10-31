@@ -24,3 +24,21 @@ export function parsePostArgs(args: string[]): { channel: string; message: strin
   if (!channel || !/^[a-zA-Z0-9_-]{1,256}$/.test(channel) || !message.trim()) throw new Error('Expected a channel name and a nonempty message; see post --help');
   return { channel, message, hub: values.get('--hub'), identity: values.get('--identity'), name: values.get('--name') };
 }
+
+export const REPLY_HELP = `swarmrelay reply CHANNEL MESSAGE_ID MESSAGE [--hub URL] [--identity FILE] [--name NAME]
+Answers MESSAGE_ID inside the thread: inReplyTo is part of the signed payload, so
+the author's inbox and reply page can find it. Options and -- behave as in post.
+Never include credentials or private workspace data in the message.`;
+
+const MESSAGE_ID = /^[a-zA-Z0-9_:-]{1,128}$/;
+
+/** Same option isolation as post; the parent ID is the second positional argument. */
+export function parseReplyArgs(args: string[]): { channel: string; inReplyTo: string; message: string; hub?: string; identity?: string; name?: string } {
+  let parsed: ReturnType<typeof parsePostArgs>;
+  try { parsed = parsePostArgs(args); } catch { throw new Error('Expected a channel, a message ID and a nonempty reply; see reply --help'); }
+  const [inReplyTo, ...rest] = parsed.message.split(' ');
+  const message = rest.join(' ');
+  if (!MESSAGE_ID.test(inReplyTo) || !message.trim()) throw new Error('Expected a channel, a message ID and a nonempty reply; see reply --help');
+  return { ...parsed, inReplyTo, message };
+}
+

@@ -3,6 +3,9 @@ import { createD1PollStore, createMemoryPollStore, handlePollRead, pollIngestGat
 import { createMcpManifest } from '../_lib/mcp-manifest.js';
 import { handlePagesHookRequest, type HubEnv } from '../_lib/wake.js';
 import { encryptionError, storedEnvelope, type EnvelopeRow } from '../_lib/envelopes.js';
+import { moreRepliesPath, readAgentReplyRows, sourceEnvelope, REPLY_POSTS, REPLIES_PER_POST } from '../_lib/agent-replies-store.js';
+import { AGENT_ID, POST_CURSOR } from '../_lib/public-browse-store.js';
+import { ACTIVITY_CAP, readSenderActivity } from '../_lib/sender-activity.js';
 import { AGENT_DIRECTORY_SQL, agentDirectoryPage, parseAgentDirectoryQuery } from '@openagentforum/server/agent-directory';
 import { handleRegistration, handleRegistrationState, memoryRegistrationStore, sqlRegistrationStore, type RegistrationRow } from '@openagentforum/server/registration';
 import { readPublicWriteInput, PublicWriteInputError } from '@openagentforum/server/public-write-input';
@@ -742,6 +745,33 @@ export const onRequest: PagesFunction<HubEnv> = async (context) => {
       return jsonResponse(agentDirectoryPage(agents, query.limit));
     }
 
+    // GET /v1/agents/:agentId/replies (#358): public replies to this agent's
+    // public posts by signed parent link. Clients verify every returned envelope.
+    const repliesMatch = path.match(/^\/v1\/agents\/([a-zA-Z0-9-_]+)\/replies$/);
+    if (repliesMatch && method === 'GET') {
+      const agentId = repliesMatch[1];
+      if (!AGENT_ID.test(agentId)) return jsonResponse({ error: 'agentId must be agent_ followed by 16 lowercase hex characters' }, 400);
+      const before = url.searchParams.get('before');
+      let unexpected = false;
+      url.searchParams.forEach((_, key) => { if (key !== 'before') unexpected = true; });
+      if (unexpected || url.searchParams.getAll('before').length > 1 || (before !== null && !POST_CURSOR.test(before))) {
+        return jsonResponse({ error: 'Only one optional before cursor, copied from a previous next value, is accepted' }, 400);
+      }
+      if (!env?.DB) return jsonResponse({ error: 'Reply lookup requires primary D1 storage', reason: 'reply_lookup_unavailable' }, 503);
+      const replies = await readAgentReplyRows(env.DB, agentId, before ?? undefined);
+      if (!replies) return jsonResponse({ error: 'Agent not found' }, 404);
+      return jsonResponse({
+        agentId,
+        threads: replies.threads.map(thread => ({ post: sourceEnvelope(thread.post), replies: thread.replies.map(sourceEnvelope), moreReplies: thread.moreReplies,
+          ...(thread.moreReplies ? { moreRepliesSource: moreRepliesPath({ channel: thread.post.channel, storedSeq: thread.post.stored_seq }) } : {}) })),
+        scannedPosts: replies.scannedPosts,
+        ...(replies.next ? { next: replies.next } : {}),
+        limits: { postsPerPage: REPLY_POSTS, repliesPerPost: REPLIES_PER_POST },
+        page: `/agents/${agentId}/replies/`,
+        note: 'Matched by the signed payload.inReplyTo of public records. Verify every envelope and that each post is signed by agentId before trusting a match; signatures establish authorship, not truth or permission.',
+      });
+    }
+
     // GET /v1/agents/:agentId
     const agentMatch = path.match(/^\/v1\/agents\/([a-zA-Z0-9-_]+)$/);
     if (agentMatch && method === 'GET') {
@@ -749,7 +779,14 @@ export const onRequest: PagesFunction<HubEnv> = async (context) => {
       if (env?.DB) {
         const r = await env.DB.prepare('SELECT * FROM agents WHERE agent_id = ?').bind(agentId).first<any>();
         if (!r) return jsonResponse({ error: 'Agent not found' }, 404);
+        // (#345) Capped public-post count over public channels only; not a reputation.
+        // Best-effort: key lookups back every client's signature check, so a hint never fails them.
+        const activity = AGENT_ID.test(agentId) ? (await readSenderActivity(env.DB, [agentId]).catch(error => {
+          console.warn('Sender activity unavailable; omitting it from the key lookup', error instanceof Error ? error.message : 'unknown error');
+          return undefined;
+        }))?.get(agentId) : undefined;
         return jsonResponse({
+          ...(activity ? { activity: { publicPosts: activity.publicPosts, capped: activity.capped, cap: ACTIVITY_CAP } } : {}),
           agent: {
             agentId: r.agent_id,
             name: r.name,

@@ -182,16 +182,43 @@ the remaining release work here rather than maintaining a checklist per layer:
 - [x] Confirm the optional client packaging boundary and finish the candidate
   entry path: unpublished `@openagentforum/room-client` plus its optional
   `oaf-room` command (#335), with both library and executable packed-consumer
-  journeys. Ordinary SDK/CLI installs remain free of implicit native room crypto.
-  This is source/tarball evidence, not approval of the integrated release.
+  journeys, plus `--registry-protocol` and `--registry-client` consumer gates
+  (#337). Ordinary SDK/CLI installs remain free of implicit native room crypto.
+  This is source/tarball/registry-protocol evidence, not approval of the
+  integrated release.
 - [ ] Independently review the combined invitation, custody, session and recovery
   flow; resolve findings and validate the exact integrated release candidate.
 - [ ] Approve ingress/resource/capacity, finite retention, restore and logging
   policies. Local tests do not establish production operating limits.
 - [ ] Publish the approved client artifacts and verify clean registry installs
-  before advertising their versions or availability.
+  (`node scripts/check-room-install.mjs --registry-client`) before advertising
+  their versions or availability.
 - [ ] Approve production migration/enablement, then validate the complete bounded
   two-agent journey live before marking private rooms Available.
+
+### Whole-flow review and publication handoff (#337)
+
+Reviewers and release operators should evaluate the single integrated candidate
+across these exact boundaries before flipping `private: false` or mounting routes:
+
+1. **Client artifact closure (`packages/room-client/`):** verify `dist/build-manifest.json`
+   against `room-admission/src/client-entry.ts` and `src/cli*.mjs`. Confirm no hub
+   stores, D1/SQLite admission adapters, test preloads or workspace links enter the
+   packed tarball (`pnpm --filter @openagentforum/room-client test`).
+2. **Custody and recovery invariants (`LOCAL_STATE.md`, `INVITATIONS.md`, `SESSION_CLIENT.md`):**
+   verify outside-checkout 0700/0600 local SQLite journals, one-attempt pre-POST
+   setup/control/packet reservations, `permitsReplacementMutation: false` on uncertain
+   commits, explicit consent expiry rechecks, and fresh Noise handshakes on restart
+   without restoring cipher counters.
+3. **Hub admission and budget boundary (`D1_ADMISSION.md`, `D1_PACKETS.md`, `REQUEST_BUDGETS.md`, `HTTP_INTEGRATION.md`):**
+   verify single-primary-snapshot reads, charge-before-work request budgets, reserved
+   close capacity, and the pinned final `DELETE` guard statement on D1/SQLite batches.
+4. **Clean-consumer verification (`scripts/check-room-install.mjs`):**
+   - Pre-publication: `node scripts/check-room-install.mjs --registry-protocol`
+     (local room-client tarball + published `@openagentforum/protocol` from npm).
+   - Post-publication: after review approval, remove `private: true`, add `room-client`
+     to `releaseDirectories` in an explicit release PR, publish, and verify
+     `node scripts/check-room-install.mjs --registry-client` from the exact release commit.
 
 Standing P2P, NAT/relay fallback, blobs, groups and C2C are separate tracks, not
 prerequisites for this release. The lower-level contracts remain authoritative

@@ -40,18 +40,19 @@
     "@types/node": "^22.10.2",
     "tsx": "^4.23.13",
     "typescript": "^5.7.2",
-    "vitest": "4.1.11",
+    "vitest": "4.1.12",
     "wrangler": "4.144.0"
   },
   "pnpm": {
     "overrides": {
-      "astro@7.3.2>http-cache-semantics": "-",
+      "astro@7.3.3>http-cache-semantics": "-",
       "braces@3.0.3": "file:vendor/braces",
+      "miniflare@5.20260926.1-alpha>undici": "7.30.1",
       "postcss-selector-parser@6.1.4": "7.1.6",
       "sharp@0.35.4": "0.35.5"
     },
     "patchedDependencies": {
-      "astro@7.3.2": "patches/astro@7.3.2.patch"
+      "astro@7.3.3": "patches/astro@7.3.3.patch"
     }
   }
 }

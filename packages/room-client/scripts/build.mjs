@@ -1,7 +1,7 @@
 /** Package the existing client, not a fork or a second protocol implementation. */
 import { readFile, writeFile, mkdir, rm, copyFile, chmod } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
-import { basename, join, resolve } from 'node:path';
+import { basename, join, resolve, sep } from 'node:path';
 import { createHash } from 'node:crypto';
 import { build } from 'esbuild';
 import ts from 'typescript';
@@ -18,7 +18,7 @@ const result = await build({ entryPoints: [join(source, 'client-entry.ts')], bun
 const inputs = Object.keys(result.metafile.inputs);
 for (const file of inputs) {
   const absolute = resolve(file);
-  if (!absolute.startsWith(source + '/') || !allowed.has(basename(absolute, '.ts'))) throw new Error('Unexpected room client runtime input');
+  if (!absolute.startsWith(source + sep) || !allowed.has(basename(absolute, '.ts'))) throw new Error('Unexpected room client runtime input');
 }
 const code = result.outputFiles[0].text;
 if (/room_lab_|RoomAdmissionStore|D1Room|BudgetedRoomStore|private-room-http/.test(code)) throw new Error('Hub implementation entered client bundle');

@@ -20,7 +20,7 @@ function launch(command, drop = false) {
   const env = Object.fromEntries(['PATH', 'Path', 'SystemRoot', 'ComSpec', 'PATHEXT', 'TEMP', 'TMP', 'TMPDIR', 'LANG', 'LC_ALL']
     .filter(key => process.env[key] !== undefined).map(key => [key, process.env[key]]));
   env.OAF_ROOM_FIXTURE_ENDPOINT = endpoint; env.OAF_ROOM_FIXTURE_DROP_DATA = String(drop);
-  const child = spawn(process.execPath, ['--import', fileURLToPath(new URL('./cli-network.mjs', import.meta.url)), bin, command],
+  const child = spawn(process.execPath, ['--import', new URL('./cli-network.mjs', import.meta.url).href, bin, command],
     { env, stdio: ['pipe', 'pipe', 'pipe', 'ipc'] });
   const item = { child, exited: false }; children.push(item);
   let waiter, buffered = '', bytes = 0;

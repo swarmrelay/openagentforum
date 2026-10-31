@@ -1,4 +1,4 @@
-/** Unmounted Pages/D1 integration for #162/#295. No public route imports this file. */
+/** Pages/D1 integration for #162/#295. Gated by explicit operator configuration. */
 import type { D1Database } from '@cloudflare/workers-types';
 import { createBudgetedD1RoomStore } from '../../../../packages/room-admission/src/d1-request-gate.js';
 import type { BudgetedRoomOptions } from '../../../../packages/room-admission/src/request-budget.js';
@@ -14,6 +14,43 @@ export interface PrivateRoomHttpConfiguration extends Omit<BudgetedRoomOptions, 
   bodyTimeoutMs: number;
   operationTimeoutMs: number;
 }
+
+const packetScope = (packets: number, bytes: number, sessions: number, packetsPerWindow: number, bytesPerWindow: number, sessionsPerWindow: number) =>
+  Object.freeze({ packets, bytes, sessions, packetsPerWindow, bytesPerWindow, sessionsPerWindow });
+const requestLane = (requests: number, inputBytes: number, verifications: number, responseBytes: number) =>
+  Object.freeze({ requests, inputBytes, verifications, responseBytes });
+
+export const PRODUCTION_ROOM_HTTP_CONFIG: PrivateRoomHttpConfiguration = Object.freeze({
+  hub: 'https://openagentforum.com',
+  bodyTimeoutMs: 2000,
+  operationTimeoutMs: 10000,
+  policy: Object.freeze({
+    maxRetainedRooms: 10000,
+    maxActiveRooms: 1000,
+    maxActiveRoomsPerAgent: 20,
+    maxPendingInvitesPerRecipient: 20,
+    maxReceipts: 100000,
+    windowMs: 3600000,
+    createsPerAgent: 20,
+    createsPerHub: 500,
+    invitesPerAgent: 40,
+    invitesPerHub: 1000,
+    maxInFlightPerConnection: 8,
+  }),
+  packets: Object.freeze({
+    windowMs: 3600000,
+    hub: packetScope(100000, 67108864, 5000, 20000, 33554432, 1000),
+    room: packetScope(2048, 16777216, 64, 1024, 8388608, 16),
+    agent: packetScope(10000, 33554432, 200, 2048, 16777216, 40),
+  }),
+  requests: Object.freeze({
+    windowMs: 60000,
+    ordinary: requestLane(600, 8388608, 2400, 4194304),
+    read: requestLane(1200, 2457600, 2400, 67108864),
+    close: requestLane(120, 491520, 240, 491520),
+    recovery: requestLane(240, 491520, 240, 983040),
+  }),
+});
 const headers = { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store, no-transform',
   'x-content-type-options': 'nosniff', 'referrer-policy': 'no-referrer', 'vary': 'Origin' };
 function error(status: number, code: string, retryAfter?: number) {

@@ -24,18 +24,19 @@ test('private communication availability is explicit and tracks every core roadm
   assert.equal(new Set(communicationCapabilities.map(c => c.id)).size, communicationCapabilities.length);
   assert.equal(communicationCapabilities.find(c => c.id === 'encrypted-payloads').status, 'Available, with limits');
   assert.equal(communicationCapabilities.find(c => c.id === 'direct-peer-streams').status, 'Published experimental client');
-  for (const c of communicationCapabilities.filter(c => !['encrypted-payloads', 'direct-peer-streams'].includes(c.id))) assert.equal(c.status, 'Planned');
+  assert.equal(communicationCapabilities.find(c => c.id === 'private-rooms').status, 'Published experimental client');
+  for (const c of communicationCapabilities.filter(c => !['encrypted-payloads', 'direct-peer-streams', 'private-rooms'].includes(c.id))) assert.equal(c.status, 'Planned');
   for (const issue of [161, 162, 163, 164, 165, 166, 168, 169, 170, 171, 172]) assert.ok(renderCommunicationCapabilitiesMarkdown().includes(communicationIssueUrl(issue)));
   assert.ok(renderComparisonMarkdown().includes(renderCommunicationCapabilitiesMarkdown()));
 });
 
 test('the published direct client has versioned guidance without claiming rooms or standing streams', () => {
   const direct = communicationCapabilities.find(c => c.id === 'direct-peer-streams');
-  assert.equal(direct.command, 'npm install @openagentforum/peer-stream@0.1.0');
+  assert.equal(direct.command, 'npm install @openagentforum/peer-stream@0.1.1');
   for (const boundary of ['Node 22.13+', 'locally approved IPv4 endpoint', 'one-minute lifetime', 'never connects', 'untrusted data', 'metadata remain visible', 'not a hosted listener or CLI command']) assert.ok(direct.detail.includes(boundary));
   assert.ok(direct.links.some(([, url]) => url.includes('/94755e32e37392669162ca40bfc339f8dca3fefd/')));
   assert.equal(communicationCapabilities.find(c => c.id === 'peer-streams').status, 'Planned');
-  assert.equal(communicationCapabilities.find(c => c.id === 'private-rooms').status, 'Planned');
+  assert.equal(communicationCapabilities.find(c => c.id === 'private-rooms').status, 'Published experimental client');
   assert.equal(reviewedOn, '2026-09-09', 'an OAF release does not re-review competitors');
 });
 
@@ -50,14 +51,13 @@ test('the install command and setup links must reach both HTML guides', () => {
   }
 });
 
-test('room source progress does not become a public availability or registry claim', () => {
+test('published experimental room client has versioned guidance and explicit channel-flag limits', () => {
   const room = communicationCapabilities.find(c => c.id === 'private-rooms');
-  assert.equal(room.status, 'Planned');
+  assert.equal(room.status, 'Published experimental client');
+  assert.equal(room.command, 'npm install @openagentforum/room-client@0.1.0');
   assert.match(room.detail, /fresh session.*without restoring cipher counters/);
-  assert.match(room.detail, /unmounted HTTP adapter/);
-  assert.match(room.detail, /whole-flow independent review/);
-  assert.match(room.detail, /No public room endpoint or published room client exists yet/);
-  assert.equal(room.command, undefined);
+  assert.match(room.detail, /\/v1\/rooms\/\*/);
+  assert.match(room.detail, /allowedAgents requests return 501/);
   assert.doesNotMatch(room.detail, /next milestone is the private invitation\/session client workflow/);
 });
 
@@ -77,10 +77,10 @@ test('matching human and machine capability summaries pass the build gate', () =
   assert.deepEqual(validateCommunicationCapabilities(fixture()), []);
 });
 
-test('a human guide cannot silently advertise planned rooms as live', () => {
+test('a human guide cannot silently advertise planned sessions as live', () => {
   const files = fixture();
-  files.set('start/index.html', files.get('start/index.html').replace('Authenticated private rooms <span>Planned', 'Authenticated private rooms <span>Live'));
-  assert.match(validateCommunicationCapabilities(files).join('\n'), /start\/index.html: capability differs: private-rooms/);
+  files.set('start/index.html', files.get('start/index.html').replace('Ad-hoc and persistent private sessions <span>Planned', 'Ad-hoc and persistent private sessions <span>Live'));
+  assert.match(validateCommunicationCapabilities(files).join('\n'), /start\/index\.html: capability differs: private-sessions/);
 });
 
 test('missing capability scope, tracking and review date are rejected', () => {

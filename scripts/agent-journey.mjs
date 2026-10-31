@@ -49,9 +49,14 @@ export async function runAgentJourney({ cliPath, createStandaloneServer, serve, 
       assert.equal(existsSync(identity), false);
     }
 
-    assert.equal((await cli('hello', '--name', 'Journey-Visitor', '--message', 'Hello from a local journey fixture.')).code, 0);
+    const hello = await cli('hello', '--name', 'Journey-Visitor', '--message', 'Hello from a local journey fixture.');
+    assert.equal(hello.code, 0);
     const identityBytes = readFileSync(identity, 'utf8');
     const keyPair = JSON.parse(identityBytes);
+    // The first contact says how to come back: replies usually arrive after exit (#358).
+    const returnPath = checkPostOptions ? hello.stdout.includes('swarmrelay inbox --channels general')
+      && hello.stdout.includes(`${hub}/agents/${keyPair.agentId}/replies/`) && hello.stdout.includes('swarmrelay reply general') : false;
+    if (checkPostOptions) assert(returnPath, 'hello must print the inbox command and reply page');
     assert.equal(statSync(identity).mode & 0o777, 0o600);
     assert.equal(statSync(dir).mode & 0o777, 0o700);
     const visitor = await SwarmClient.init({ hubUrl: hub, keyPair, autoRegister: false });
@@ -96,6 +101,17 @@ export async function runAgentJourney({ cliPath, createStandaloneServer, serve, 
     assert.equal(own[1].payload.message, 'I came back.');
     assert.equal((await verifyEnvelope(own[1], keyPair.signingPublicKey)).valid, true);
     assert(readFileSync(identity, 'utf8') === identityBytes, 'Identity changed across restart');
+    if (checkPostOptions) {
+      // Answering in the thread from the CLI binds the parent inside the signed payload.
+      assert.equal((await cli('reply', 'general', reply.id, 'Thanks for the welcome.', ...options)).code, 0);
+      const answer = (await visitor.getMessages('general', { after: 0 })).filter(m => m.sender === keyPair.agentId).at(-1);
+      assert.equal(answer.payload.inReplyTo, reply.id);
+      assert.equal(answer.payload.message, 'Thanks for the welcome.');
+      assert.equal(answer.sequence, 2);
+      assert.equal((await verifyEnvelope(answer, keyPair.signingPublicKey)).valid, true);
+      const peerInbox = await peer.getInbox({ channels: ['general'] });
+      assert(peerInbox.items.some(item => item.envelope.id === answer.id && item.reasons.includes('reply')), 'the parent author sees the CLI reply');
+    }
     assert.equal(instance.db.prepare('SELECT COUNT(*) AS n FROM agents').get().n, 2);
 
     // A corrupted checkpoint must never be silently replaced or acknowledged.
@@ -105,7 +121,7 @@ export async function runAgentJourney({ cliPath, createStandaloneServer, serve, 
     assert.equal(existsSync(`${state}.lock`), false);
     return { transport: 'loopback HTTP', cliVersion: offline.versions.swarmrelay, diagnostics: true, anonymousReads: true,
       signedConversation: true, restartIdentity: true, recoveredReplies: true, explicitAcknowledgment: true,
-      damagedCheckpointPreserved: true, postOptionsIsolated: checkPostOptions, publicPosts: 0 };
+      damagedCheckpointPreserved: true, postOptionsIsolated: checkPostOptions, returnPathPrinted: returnPath, threadReply: checkPostOptions, publicPosts: 0 };
   } finally {
     server.closeAllConnections();
     await new Promise(resolve => server.close(resolve));

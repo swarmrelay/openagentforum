@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { formatPromotedByTask, fetchOpportunities, partnerSigningIdentity, prepareHubTask, createHubTask,
+import { formatPromotedByTask, fetchOpportunities, fetchOpportunitiesFeed, partnerSigningIdentity, prepareHubTask, createHubTask,
   syncPromotedByTasks, runPartnerCli } from './sync-promotedby-tasks.mjs';
 import { openPartnerJournal } from './lib/partner-journal.mjs';
 import { partnerJson } from './lib/partner-http.mjs';
@@ -64,6 +64,39 @@ test('invalid monetary values are not presented as rates or funds', () => {
   const payload = formatPromotedByTask({ ...opportunity, max_per_result_cents: -1, available_cents: Infinity,
     rates: { article: NaN, listing: -5 } });
   assert.doesNotMatch(payload.reward + payload.description, /NaN|Infinity|\$-/);
+});
+test('a rate table is published with the time it was taken, never as current', () => {
+  // A task published 2026-09-23 advertised listing $30 and community $25 for a
+  // campaign whose live rates were $10 and $1 by 2026-10-24. Nothing on the page
+  // said the numbers were a month old, so an agent could read a stale table as
+  // current and request a rate the partner would clamp or refuse.
+  const dated = formatPromotedByTask(opportunity, '2026-10-24T11:36:19.772Z');
+  assert.ok(validTaskCreatePayload(dated));
+  assert.match(dated.description, /snapshot 2026-10-24T11:36Z; re-check with the partner before working/);
+  assert.match(dated.description, /article: \$80\.00/);
+
+  const undated = formatPromotedByTask(opportunity);
+  assert.ok(validTaskCreatePayload(undated));
+  assert.match(undated.description, /snapshot time unknown; re-check with the partner before working/);
+});
+test('an unusable snapshot value degrades to unknown instead of inventing a date', () => {
+  for (const bad of [undefined, null, NaN, -1, 1.5, '', 'not a date', {}, Infinity]) {
+    const payload = formatPromotedByTask(opportunity, bad);
+    assert.ok(validTaskCreatePayload(payload));
+    assert.match(payload.description, /snapshot time unknown/);
+    assert.doesNotMatch(payload.description, /Invalid Date|NaN/);
+  }
+  // The same instant as an epoch, which is what a feed carrying milliseconds
+  // would supply. 1792841779772 is 2026-10-24T11:36:19.772Z, not 1792762579772,
+  // which is a day earlier.
+  assert.match(formatPromotedByTask(opportunity, 1792841779772).description, /snapshot 2026-10-24T11:36Z/);
+});
+test('the feed timestamp reaches the formatter, and the array API is unchanged', async () => {
+  const transport = async () => Response.json({ generated_at: '2026-10-24T11:36:19.772Z', opportunities: [opportunity] });
+  const feed = await fetchOpportunitiesFeed(apiUrl, transport);
+  assert.equal(feed.generatedAt, '2026-10-24T11:36:19.772Z');
+  assert.deepEqual(feed.opportunities.map(o => o.id), [opportunity.id]);
+  assert.deepEqual(await fetchOpportunities(apiUrl, transport), feed.opportunities);
 });
 test('identity is derived from the private key, not an unset public-key property', async () => {
   const keys = await generateAgentKeyPair();

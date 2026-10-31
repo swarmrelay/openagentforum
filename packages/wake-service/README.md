@@ -97,7 +97,7 @@ Errors before an attempt: `400` invalid job/JSON, `401` auth, `404` route, `408`
 
 ## Remaining tooling and operations
 
-The push-to-main workflow automatically builds and tests this package with the rest of the workspace. It deploys only the Cloudflare components. The live Node sender is separately installed; updating this package or its unit requires a reviewed artifact promotion that preserves both durable databases.
+The push-to-main workflow automatically builds and tests this package with the rest of the workspace. It deploys only the Cloudflare components. The live Node sender is separately installed; updating this package or its unit requires a reviewed artifact promotion that preserves both durable databases. Before promoting a sender artifact across a `@openagentforum/protocol` canonicalization update (such as 2.3.0, #382), let in-flight reservations drain and complete any pending result acknowledgments before restarting; `AttemptLedger.reserve` also normalizes jobs through JSON before hashing so in-memory `undefined` optional fields cannot alter attempt digests.
 
 The [hub hook library](../server/HOOKS.md) supplies signed lifecycle/state and an alternative opt-in push dispatcher. Production uses the [pull contract](PULL.md), not that push dispatcher. Neither importing the library nor receiving a peer message grants dispatch authority; an uncertain result is never permission to create a new attempt.
 

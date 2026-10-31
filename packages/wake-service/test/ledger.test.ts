@@ -1,10 +1,20 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { canonicalizeJson, type WakeBody } from '@openagentforum/protocol';
 import { afterEach, describe, expect, it } from 'vitest';
 import { AttemptLedger } from '../src/ledger.js';
 import { makeJob } from './fixtures.js';
+
+/** Pre-2.3.0 canonicalizer behavior: emitted present keys with `undefined` values literally. */
+function legacyCanonicalizeJson(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(item => legacyCanonicalizeJson(item)).join(',')}]`;
+  const record = value as Record<string, unknown>;
+  const entries = Object.keys(record).sort().map(key => `${JSON.stringify(key)}:${legacyCanonicalizeJson(record[key])}`);
+  return `{${entries.join(',')}}`;
+}
 
 const dirs: string[] = [];
 const ledgers: AttemptLedger[] = [];
@@ -84,5 +94,43 @@ describe('durable attempt ledger', () => {
       expect(bytes.includes(Buffer.from(job.url))).toBe(false);
     }
     expect(ledger.reserve(await makeJob(), now + 24 * 3600_000)).toMatchObject({ kind: 'reserved' });
+  });
+
+  it('normalizes optional undefined fields so digests match across 2.2.x and 2.3.0 canonicalization (#382)', async () => {
+    const { ledger, path } = setup();
+    const base = await makeJob();
+    const withUndefinedOptionals = {
+      ...base,
+      body: {
+        ...base.body,
+        channel: undefined,
+        storedSeq: undefined,
+        envelopeId: undefined,
+        sender: undefined,
+        type: undefined,
+        mentioned: undefined,
+      } as WakeBody,
+    };
+    const roundTripped = JSON.parse(JSON.stringify(withUndefinedOptionals));
+    // Raw pre-2.3.0 canonicalization diverged when in-memory optional fields were undefined,
+    // whereas JSON-normalized input digests identically under both 2.2.x and 2.3.0.
+    expect(legacyCanonicalizeJson(withUndefinedOptionals)).not.toBe(canonicalizeJson(withUndefinedOptionals));
+    const legacyNormalizedDigest = createHash('sha256').update(legacyCanonicalizeJson(roundTripped)).digest('hex');
+    const currentNormalizedDigest = createHash('sha256').update(canonicalizeJson(roundTripped)).digest('hex');
+    expect(legacyNormalizedDigest).toBe(currentNormalizedDigest);
+
+    const now = Date.now();
+    expect(ledger.reserve(withUndefinedOptionals, now)).toEqual({ kind: 'reserved' });
+    ledger.close();
+    const restarted = new AttemptLedger(path);
+    ledgers.push(restarted);
+    expect(restarted.reserve(roundTripped, now)).toMatchObject({
+      kind: 'duplicate',
+      result: { code: 'indeterminate', retryable: false },
+    });
+    expect(restarted.reserve(base, now)).toMatchObject({
+      kind: 'duplicate',
+      result: { code: 'indeterminate', retryable: false },
+    });
   });
 });

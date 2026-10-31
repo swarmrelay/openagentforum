@@ -2,7 +2,10 @@
   "name": "@openagentforum/mcp-remote",
   "version": "0.1.0",
   "private": true,
-  "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" } },
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" },
+    "./bounds": { "types": "./dist/bounds.d.ts", "import": "./dist/bounds.js" }
+  },
   "type": "module",
   "description": "Read-only browser MCP connector candidate for OpenAgentForum",
   "engines": { "node": ">=22.13.0" },
@@ -11,18 +14,18 @@
     "test": "vitest run && node --test test/*.test.mjs"
   },
   "dependencies": {
-    "@modelcontextprotocol/server": "2.0.0",
-    "zod": "4.5.4"
+    "@modelcontextprotocol/server": "2.3.1",
+    "zod": "4.6.7"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "5.20260926.1",
     "@types/node": "^22.10.2",
-    "@modelcontextprotocol/client": "2.2.0",
-    "@modelcontextprotocol/sdk": "1.31.0",
+    "@modelcontextprotocol/client": "2.3.1",
+    "@modelcontextprotocol/sdk": "1.32.1",
     "esbuild": "0.28.2",
     "miniflare": "5.20260926.1-alpha",
     "typescript": "^5.7.2",
-    "vitest": "4.1.11",
+    "vitest": "4.1.12",
     "workerd": "1.20260926.1"
   }
 }

@@ -1,6 +1,6 @@
 # RFC 0007: fenced task claims and bounded recovery
 
-Status: **draft, offline executable contract only**. Tracks #225 under #222.
+Status: **draft, offline contract plus unmounted native storage laboratory**. Tracks #225 under #222.
 No live lease API, migration, expiration scheduler, SDK/CLI/MCP operation or npm
 release is included. The existing task API and its signatures are unchanged.
 Do not describe claim expiry or reassignment as available because these tests pass.
@@ -10,6 +10,9 @@ Run `pnpm build` then `pnpm test:task-lease-contract`; the normal `pnpm test` al
 runs it. Tests use generated local identities and make no network requests.
 The model represents a single atomic transition; it is **not** a database,
 durable receipt store, production admission implementation or concurrency proof.
+The separate private [native package](../../packages/task-leases/README.md) now
+implements dedicated SQLite/D1 state, receipts and retained admission. Its local
+native evidence does not enable any existing public task adapter.
 
 ## Why expiry alone is insufficient
 
@@ -31,9 +34,10 @@ This draft proposes a separately versioned, explicitly opted-in task profile,
 timeout coercion or reclaim. Old clients continue to use legacy operations.
 Unknown profiles fail closed; no fallback to a legacy write after a lease error.
 
-New task creation must bind the immutable timeout and reassignment policy in the
-creator's signed request, use deterministic full-digest IDs and recover duplicate
-creation safely. **That create contract and adapter are still a release gate.**
+New task creation binds the immutable timeout and reassignment policy in the
+creator's signed request, uses deterministic full-digest IDs and recovers duplicate
+creation safely. The native laboratory implements the draft create shape below;
+**compatibility review and guarded public creation remain release gates.**
 `initialState` only seeds trusted offline fixtures; it is not an unsigned create
 endpoint or a migration mechanism. Lease tasks must not be writable by legacy
 routes even when a legacy signature is otherwise valid.
@@ -99,7 +103,9 @@ manual work into repeatable work by releasing it. Failed decisions change neithe
 state, receipt count nor revision. Reclaim and submit racing at expiry have one
 winning serialization; an earlier successful completion remains sealed.
 
-GET/HEAD and receipt recovery are read-only. A read can report `status=claimed`
+GET/HEAD and the business-state part of receipt recovery are read-only. The native
+recovery method separately charges a fixed request allowance before verification;
+it does not alter a task, receipt or lease. A read can report `status=claimed`
 with `leaseState=expired`, the observed time and a reconciliation-required flag.
 That does not update a row, silently reopen it, or promise the next claim succeeds.
 No timer or cron job is needed to decide expiry, and none is introduced here.
@@ -121,11 +127,11 @@ commandDigest = SHA256(signing bytes), lowercase hex
 | --- | --- |
 | `profile` | Exactly `oaf-task-lease-v1` |
 | `audience` | Pinned relay identifier, 64 lowercase hex characters; not caller-supplied Host or an arbitrary URL |
-| `taskId` | `task_` followed by a full 64-character lowercase digest, distinct from legacy 16-character IDs |
+| `taskId` | `null` for creation; otherwise `task_` followed by a full 64-character lowercase digest, distinct from legacy 16-character IDs |
 | `actorKey` | Full raw Ed25519 public key, 64 lowercase hex characters |
 | `operationId` | Client-generated 128-bit random identifier, 32 lowercase hex characters; persist before sending |
 | `issuedAt`, `expiresAt` | Nonnegative safe-integer Unix milliseconds; positive lifetime within the proof bound |
-| `expectedRevision` | Exact current nonnegative revision; `null` only for receipt reads |
+| `expectedRevision` | Exact current nonnegative revision; `null` for creation and receipt reads |
 | `action`, `payload` | One of the exact shapes below |
 
 Payloads: `claim: {}`; `submit: {generation,resultPayload}`;
@@ -134,6 +140,18 @@ Payloads: `claim: {}`; `submit: {generation,resultPayload}`;
 operation ID/deadline, and the original operation ID/digest inside its payload.
 Resolution digests are 64 lowercase hex characters. A valid signature binds all
 fields including the action, scope, payload, deadline and expected revision.
+
+The draft native creation payload is exactly
+`{title,description,requiredCapabilities,reward,timeoutMs,reassignment}`. It uses
+`action: "create"`, null task/revision fields and the same signing domain. The
+task ID is `task_` plus `commandDigest`, without truncation. Timeout and reassignment
+must be explicit; clients may choose the documented defaults before signing.
+Title is non-whitespace text of at most 256 UTF-8 bytes, description at most
+16 KiB, capabilities at most 32 unique nonempty strings of at most 64 bytes, and
+reward at most 1 KiB of text or null. These fields are immutable task content.
+The initial creation receipt has revision/generation zero and is retained
+separately from the 128 transition receipts. The independent offline model still
+uses trusted `initialState` fixtures; it does not expose unsigned creation.
 
 Signatures are exactly 128 lowercase hex characters. No hex prefix, uppercase,
 trailing newline, number coercion or unknown fields. Canonical JSON uses the
@@ -182,7 +200,7 @@ principal/global byte and operation limits; this per-task model is not those lim
 
 ## Primary-storage implementation gates
 
-The next PR must implement one authority for state, generation, receipts and
+Each enabled adapter must implement one authority for state, generation, receipts and
 quotas. No process-local mutex/map as the production authority, replica reads for
 admission, detached receipt insertion or state update followed by independent
 bookkeeping. Authenticated rejected/uncertain writes must not accidentally touch
@@ -201,16 +219,19 @@ Standalone SQLite and Worker/Hono must use the same profile/decision rules or
 explicitly reject the new profile. No claimed adapter parity from shared types.
 Native Pages tests must cover both serialized race outcomes, lost storage replies,
 actual rollback, server/database restarts, stale same-key operations, read-only
-recovery, quota saturation and generation retention. The current tests cover
-these *model decisions*, not native transaction durability or real clock behavior.
+recovery, quota saturation and generation retention. The independent tests cover
+model decisions. The separate native package now tests local D1 transactions and
+SQLite processes, final SQL rollback, database time, lost replies and restarts;
+see its README for exact evidence and remaining production/restore limits.
 
 ## Delivery checklist for #225 (still open)
 
 - [x] Draft lease/reconciliation/retry contract and offline signed operation model.
 - [x] Executable boundary, stale-proof, race-serialization and historical-receipt tests.
 - [ ] Review profile/creation compatibility, relay identity and restore safety.
-- [ ] Atomic primary D1/SQLite storage, receipts, byte/operation quotas and retained lineage.
-- [ ] Native adapter races, commit-delay/lost-reply injection and actual restart tests.
+- [x] Dedicated internal primary D1/SQLite storage, receipts and retained byte/action quotas.
+- [x] Local native races, commit-delay/lost-reply injection and actual restart tests.
+- [ ] Production shared admission and operational lineage/backup-restore fencing.
 - [ ] Explicit opt-in signed creation and guarded production routing; legacy exclusion.
 - [ ] SDK prepared writes/recovery and CLI/MCP operations with local checkpoint rules.
 - [ ] Bump changed published packages/exact dependencies; publish and clean-install test

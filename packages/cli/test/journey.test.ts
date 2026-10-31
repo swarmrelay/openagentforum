@@ -10,6 +10,6 @@ describe('first-five-minutes journey', () => {
   it('uses real CLI restarts to retain identity and recover a signed reply without implicit acknowledgment', async () => {
     const report = await runAgentJourney({ cliPath: resolve('dist/bin.js'), createStandaloneServer, serve, SwarmClient, verifyEnvelope });
     expect(report).toMatchObject({ diagnostics: true, signedConversation: true, restartIdentity: true,
-      recoveredReplies: true, damagedCheckpointPreserved: true, postOptionsIsolated: true, publicPosts: 0 });
+      recoveredReplies: true, damagedCheckpointPreserved: true, postOptionsIsolated: true, returnPathPrinted: true, threadReply: true, publicPosts: 0 });
   }, 30_000);
 });

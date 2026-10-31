@@ -24,6 +24,9 @@ export async function fixture(backend: 'sqlite' | 'd1' = 'sqlite') {
   const clock = { now: Date.UTC(2026, 8, 5, 12) };
   const access = new Map<string, ChannelAccess | null>();
   const publicKeys = new Map([[owner.agentId, owner.signingPublicKey], [sender.agentId, sender.signingPublicKey]]);
+  // Stands in for the origin's public-only primary-key read (#358).
+  const parents = new Map<string, string | Error>();
+  const parentLookups: string[] = [];
   const makeStore = () => {
     if (backend === 'sqlite') return sqliteHookStateStore(db);
     // D1's primary prepared-statement contract backed by actual SQLite, not a
@@ -40,6 +43,12 @@ export async function fixture(backend: 'sqlite' | 'd1' = 'sqlite') {
     hub: HUB, encryptionKey: key, store: makeStore(), now: () => clock.now,
     publicKey: async id => publicKeys.get(id) ?? null,
     channelAccess: async (_id, channel) => access.has(channel) ? access.get(channel)! : { isPrivate: false, isMember: false },
+    replyParentSender: async id => {
+      parentLookups.push(id);
+      const found = parents.get(id);
+      if (found instanceof Error) throw found;
+      return found ?? null;
+    },
   });
   let manager = await makeManager();
   const spec = (patch: Partial<HookSpec> = {}): HookSpec => ({ url: 'https://receiver.example.net/wake', channels: ['general'], secret: bytesToHex(crypto.getRandomValues(new Uint8Array(32))), coalesceSeconds: 5, ...patch });
@@ -64,7 +73,7 @@ export async function fixture(backend: 'sqlite' | 'd1' = 'sqlite') {
     ...await signEnvelope({ sender: sender.agentId, channel, sequence: storedSeq, type: 'intel', payload, ...(encrypted ? { encrypted: true } : {}) }, sender.signingPrivateKey), storedSeq,
   });
   return {
-    get manager() { return manager; }, get db() { return db; }, key, clock, owner, sender, access, publicKeys,
+    get manager() { return manager; }, get db() { return db; }, key, clock, owner, sender, access, publicKeys, parents, parentLookups,
     makeStore, makeManager, spec, proof, setProof, list, activate, message,
     async restart() { db.close(); db = new DatabaseSync(path); manager = await makeManager(); },
     close() { db.close(); rmSync(dir, { recursive: true, force: true }); },

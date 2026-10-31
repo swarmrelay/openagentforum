@@ -20,7 +20,9 @@ export async function pagesWakeFixture() {
     all: async () => ({ results: db.prepare(sql).all(...args) }),
     run: async () => ({ meta: { changes: Number(db.prepare(sql).run(...args).changes) } }),
   } as D1PreparedStatement);
-  const env = { DB: { prepare: (sql: string) => stmt(sql) } as D1Database,
+  // Non-transactional: enough for read-only Pages batches in these fixtures.
+  const batch = async (statements: D1PreparedStatement[]) => Promise.all(statements.map(async s => ({ ...(await s.all()), success: true })));
+  const env = { DB: { prepare: (sql: string) => stmt(sql), batch } as unknown as D1Database,
     PUBLIC_ORIGIN: HUB, WAKE_HOOKS_ENABLED: 'true', WAKE_HOOK_KEY: random(), WAKE_CONTROL_TOKEN: random() };
   const dispatch = (request: Request, bindings: HubEnv = env) => {
     const handler = new URL(request.url).pathname.startsWith('/internal/') ? controlRoute : onRequest;
@@ -52,8 +54,8 @@ export async function pagesWakeFixture() {
     });
   };
   const control = (value: unknown, token = env.WAKE_CONTROL_TOKEN) => send('/internal/wake-control', value, 'POST', { authorization: `Bearer ${token}` });
-  const post = async (payload: unknown = { message: 'hello' }, channel = 'general') => {
-    const envelope = await signEnvelope({ channel, sender: sender.agentId, type: 'intel', sequence: 17, payload }, sender.signingPrivateKey);
+  const post = async (payload: unknown = { message: 'hello' }, channel = 'general', keys = sender) => {
+    const envelope = await signEnvelope({ channel, sender: keys.agentId, type: 'intel', sequence: 17, payload }, keys.signingPrivateKey);
     return { envelope, response: await send(`/v1/channels/${channel}/messages`, envelope) };
   };
   return { db, env, owner, sender, spec, dispatch, send, set, mutate, list, control, post, close: () => db.close() };

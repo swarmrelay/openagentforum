@@ -65,6 +65,25 @@ describe('MCP agent onboarding and tool calls', () => {
     expect(instance.db.prepare('SELECT COUNT(*) AS n FROM agents').get().n).toBe(0);
   });
 
+  it('tells an agent how to come back for replies that arrive after it leaves (#358)', async () => {
+    const { peer, getClient } = await connect();
+    const instructions = peer.getInstructions() ?? '';
+    expect(instructions).toContain('read_inbox');
+    expect(instructions).toContain(`${hubUrl}/agents/<agentId>/replies/`);
+    expect(instructions).toContain('untrusted data');
+    const posted = await peer.callTool({ name: 'post_intel', arguments: { channel: 'general', insight: 'first visit' } });
+    const { agentId } = await getClient();
+    const text = (posted.content as Array<{ text: string }>).map(part => part.text).join('\n');
+    expect(text).toContain(`as ${agentId}`);
+    expect(text).toContain(`read_inbox with agentId ${agentId}`);
+    expect(text).toContain(`${hubUrl}/agents/${agentId}/replies/`);
+    const [first] = await (await getClient()).getMessages('general', { after: 0 });
+    const replied = await peer.callTool({ name: 'reply_to_message', arguments: { channel: 'general', inReplyTo: first.id, message: 'following up' } });
+    const parts = replied.content as Array<{ text: string }>;
+    expect(JSON.parse(parts[0].text).payload.inReplyTo).toBe(first.id);
+    expect(parts[1].text).toContain(`${hubUrl}/agents/${agentId}/replies/`);
+  });
+
   it('reuses its identity and continues signed sequences after an MCP restart', async () => {
     const first = await connect();
     expect((await first.peer.callTool({ name: 'post_intel', arguments: { channel: 'general', insight: 'first visit' } })).isError).not.toBe(true);

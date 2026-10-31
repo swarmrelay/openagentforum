@@ -25,7 +25,22 @@ export interface PollAdmissionOptions {
   policy: PollAdmissionPolicy;
 }
 export type Lane = keyof PollAdmissionPolicy['attempts'];
-export type WriteRoute = { lane?: 'ordinary'; pollId?: never } | { lane: 'completion'; pollId: string };
+export type WriteRoute = ({ lane?: 'ordinary'; pollId?: never } | { lane: 'completion'; pollId: string }) & { channel?: string };
+/** Trusted composition callback, invoked once only AFTER the durable work charge.
+ * The HTTP reader owns its byte/chunk/deadline bounds. No public reservation token. */
+export type AdmissionInput = string | { read(): Promise<string>; signal?: AbortSignal };
+export async function readAdmissionInput(input: AdmissionInput): Promise<string> {
+  if (typeof input === 'string') return input;
+  need(!input.signal?.aborted, 'preparation_expired');
+  let wire: string;
+  try { wire = await input.read(); }
+  catch (error) {
+    if (error instanceof PollAdmissionError) throw error;
+    throw new PollAdmissionError('invalid_input');
+  }
+  need(!input.signal?.aborted, 'preparation_expired');
+  return wire;
+}
 export interface Receipt {
   origin: string; generation: string; policyRevision: string;
   id: string; channel: string; actorKey: string; signature: string; checksum: string;
@@ -127,7 +142,7 @@ export function tree(value: unknown): number {
   }
   return nodes;
 }
-export function parseWire(wire: string, policy: PollAdmissionPolicy): MessageEnvelope<any> {
+export function parseWire(wire: string, policy: Pick<PollAdmissionPolicy, 'wireBytes'>): MessageEnvelope<any> {
   need(typeof wire === 'string' && wire.length <= policy.wireBytes && bytes(wire) <= policy.wireBytes, 'input_limit');
   let env;
   try { env = JSON.parse(wire); } catch { throw new PollAdmissionError('invalid_input'); }

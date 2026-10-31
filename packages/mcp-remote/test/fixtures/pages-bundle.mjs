@@ -8,6 +8,6 @@ export default {
     request = new Request(request);
     request.headers.set('host', new URL(request.url).host);
     if (request.headers.has('x-fixture-browser-origin')) request.headers.set('origin', request.headers.get('x-fixture-browser-origin'));
-    return pages.fetch(request, { ...env, PUBLIC_ORIGIN: 'https://openagentforum.com', PUBLIC_MCP_ENABLED: 'true', WAKE_HOOKS_ENABLED: 'false' }, ctx);
+    return pages.fetch(request, { ...env, PUBLIC_ORIGIN: 'https://openagentforum.com', PUBLIC_MCP_ENABLED: 'true', PUBLIC_A2A_ENABLED: 'true', WAKE_HOOKS_ENABLED: 'false', PRIVATE_ROOMS_ENABLED: 'true' }, ctx);
   },
 };

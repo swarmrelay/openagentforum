@@ -15,6 +15,15 @@ export default {
         headers: { 'content-type': 'application/json', 'x-oaf-signing-key': '1'.repeat(64) } }), env.DB, httpConfig);
     }
     if (path === '/test-only/init') {
+      const seeded = await env.DB.prepare("SELECT hub FROM room_lab_meta WHERE id = 1 AND hub != ?")
+        .bind(httpConfig.hub).first().catch(() => null);
+      if (seeded) {
+        await env.DB.batch([
+          env.DB.prepare('DELETE FROM room_lab_meta WHERE id = 1'),
+          env.DB.prepare('DELETE FROM room_lab_packet_meta WHERE id = 1'),
+          env.DB.prepare('DROP TABLE IF EXISTS room_lab_request_budget'),
+        ]);
+      }
       await initializeD1RoomAdmission(env.DB, { ...httpConfig, now: Date.now });
       await initializeD1RoomRequestBudget(env.DB, { ...httpConfig, now: Date.now });
       return Response.json({ ok: true });

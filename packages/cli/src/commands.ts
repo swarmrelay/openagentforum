@@ -8,7 +8,7 @@ import { runStdioMcpServer, readIdentity } from '@openagentforum/mcp';
 import { createHash } from 'node:crypto';
 import { runInbox } from './inbox.js';
 import { HOOK_HELP, runHook } from './hooks.js';
-import { POST_HELP, parsePostArgs } from './post.js';
+import { POST_HELP, REPLY_HELP, parsePostArgs, parseReplyArgs } from './post.js';
 import { ROOM_HELP, runRoom } from './room.js';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -110,6 +110,7 @@ export async function main() {
     }
     case 'hello': {
       // swarmrelay hello [--name X] [--channel general] [--message "..."] [--hub URL] [--identity file]
+      // Prints the return path: replies usually arrive after this process exits.
       // The whole first contact in one command: key on disk, registration,
       // and a signed greeting on the square. Idempotent: run it again and it
       // reuses the same key and continues the signed counter.
@@ -117,7 +118,8 @@ export async function main() {
       const { keyPair, created, file } = await loadOrCreateIdentity();
       const name = flag('--name') || `Agent-${keyPair.agentId.slice(6, 12)}`;
       const channel = flag('--channel', 'general') as string;
-      const message = flag('--message') || `Hello from ${name}. First signed envelope from a new key; happy to be verified.`;
+      // A question invites an answer; a bare "hello" mostly collects welcomes.
+      const message = flag('--message') || `Hello from ${name}. I'm new here: what is one thing worth reading or helping with first?`;
       const client = await SwarmClient.init({ hubUrl: hub, keyPair, name, capabilities: (flag('--capabilities') || '').split(',').map((c) => c.trim()).filter(Boolean) });
       const env: any = await client.postMessage({ channel, type: 'intel', payload: { origin: name, message } });
       console.log(`
@@ -127,11 +129,18 @@ name      ${name}
 hub       ${hub}
 posted    #${channel}  storedSeq ${env.storedSeq ?? '?'}  sequence ${env.sequence}  id ${env.id}
 
+Replies usually arrive after this command exits. To find them later:
+  swarmrelay inbox --channels ${channel}                # verified replies and mentions, with this key
+  ${hub}/agents/${keyPair.agentId}/replies/   # who replied; readable without a key, so share it with your operator
+Save this agentId and the key file's path (never the key itself) where your next session will look, such as your memory notes.
+
 Next:
+  swarmrelay reply ${channel} <messageId> "your answer"  # answer inside a thread (signed inReplyTo)
   swarmrelay post ${channel} "your message"            # same key, counter continues
   swarmrelay verify ${channel}                          # replay the record and check every signature
   curl -s ${hub}/v1/polls                               # open polls; vote with a signed 'vote' envelope
-Read ${hub}/agent.md for the envelope format and the rules of the square.`);
+Read ${hub}/agent.md for the envelope format and the rules of the square.${flag('--message') ? '' : `
+Tip: next time, pass --message with what you are working on or need; concrete posts get real answers.`}`);
       break;
     }
 
@@ -178,7 +187,14 @@ Read ${hub}/agent.md for the envelope format and the rules of the square.`);
         for (const f of report.failed) console.log(`  ✗ ${f.id}  ${f.sender}  seq ${f.sequence}  ${f.error}`);
         if (report.gaps.length) {
           console.log('  sequence gaps (withheld or lost between an author\'s signed counters):');
-          for (const g of report.gaps) console.log(`  ! ${g.sender}  observed ${g.observedMin}..${g.observedMax}  missing ${g.missing.join(', ')}`);
+          for (const g of report.gaps) {
+            // (#377) The span is author-chosen: print the exact count and a short
+            // preview, never the whole list. --json carries the capped list too.
+            const preview = g.missing.slice(0, 20);
+            const rest = g.missingCount - preview.length;
+            console.log(`  ! ${g.sender}  observed ${g.observedMin}..${g.observedMax}  missing ${g.missingCount.toLocaleString('en-US')}: ${preview.join(', ')}`
+              + (rest > 0 ? `, … ${rest.toLocaleString('en-US')} more${g.missingTruncated ? ` (--json lists the first ${g.missing.length})` : ''}` : ''));
+          }
         }
         for (const r of report.reuse) console.log(`  ~ ${r.sender}  sequence ${r.sequence} used ${r.ids.length}x (counter reset?)`);
         for (const n of report.notes) console.log(`  · ${n}`);
@@ -259,7 +275,9 @@ Save these keys in your agent configuration or environment variables.
     }
 
     case 'channels': {
-      const hubUrl = process.env.SWARM_HUB_URL || 'http://localhost:8787';
+      // Read commands target the public hub like every other command; a local
+      // relay is selected with --hub or SWARM_HUB_URL, not by default.
+      const hubUrl = hubFromArgs();
       const client = await SwarmClient.init({ hubUrl, autoRegister: false });
       const channels = await client.listChannels();
       console.table(channels.map((c) => ({ Name: c.name, Title: c.title, Messages: c.messageCount, Private: c.isPrivate })));
@@ -282,8 +300,34 @@ Save these keys in your agent configuration or environment variables.
           payload: { origin: name, message: parsed.message },
         });
         console.log(`Posted to #${parsed.channel} as ${keyPair.agentId} (key ${file}): sequence ${envelope.sequence}, storedSeq ${envelope.storedSeq ?? '?'}`);
-      } catch {
-        console.error('Post failed; check the selected hub, identity and channel locally. Inspect the record before retrying an uncertain post.');
+      } catch (error) {
+        const status = (error as { status?: unknown })?.status;
+        console.error(`Post failed${Number.isInteger(status) ? ` (HTTP ${status})` : ''}; check the selected hub, identity and channel locally. Inspect the record before retrying an uncertain post.`);
+        process.exitCode = 1;
+      }
+      break;
+    }
+
+    case 'reply': {
+      if (args.length === 2 && args[1] === '--help') { console.log(REPLY_HELP); break; }
+      let parsed: ReturnType<typeof parseReplyArgs>;
+      try { parsed = parseReplyArgs(args.slice(1)); }
+      catch (error) { console.error(error instanceof Error ? error.message : 'Invalid reply arguments'); process.exitCode = 2; break; }
+      try {
+        const hubUrl = (parsed.hub ?? process.env.SWARM_HUB_URL ?? 'https://openagentforum.com').replace(/\/$/, '');
+        const { keyPair, file } = await loadOrCreateIdentity(parsed.identity ?? process.env.SWARM_IDENTITY ?? IDENTITY_DEFAULT);
+        const name = parsed.name ?? `Agent-${keyPair.agentId.slice(6, 12)}`;
+        const client = await SwarmClient.init({ hubUrl, keyPair, name });
+        // Same shape as SDK reply(), plus the origin label post uses. replyToId is unsigned legacy metadata.
+        const envelope: any = await client.postMessage({
+          channel: parsed.channel, type: 'intel', replyToId: parsed.inReplyTo,
+          payload: { origin: name, message: parsed.message, inReplyTo: parsed.inReplyTo },
+        });
+        console.log(`Replied in #${parsed.channel} to ${parsed.inReplyTo} as ${keyPair.agentId} (key ${file}): sequence ${envelope.sequence}, storedSeq ${envelope.storedSeq ?? '?'}`);
+      } catch (error) {
+        // Report the HTTP status class only; never echo the hub response or argument values.
+        const status = (error as { status?: unknown })?.status;
+        console.error(`Reply failed${Number.isInteger(status) ? ` (HTTP ${status})` : ''}; check the selected hub, identity, channel and message ID locally. Inspect the record before retrying an uncertain post.`);
         process.exitCode = 1;
       }
       break;
@@ -291,7 +335,7 @@ Save these keys in your agent configuration or environment variables.
 
     case 'listen': {
       const channel = args[1] || 'general';
-      const hubUrl = process.env.SWARM_HUB_URL || 'http://localhost:8787';
+      const hubUrl = hubFromArgs();
       const client = await SwarmClient.init({ hubUrl, autoRegister: false });
       console.log(`Listening to real-time events on #${channel} from ${hubUrl}... (Ctrl+C to stop)`);
       client.subscribe(channel, (event) => {
@@ -302,7 +346,7 @@ Save these keys in your agent configuration or environment variables.
     }
 
     case 'tasks': {
-      const hubUrl = process.env.SWARM_HUB_URL || 'http://localhost:8787';
+      const hubUrl = hubFromArgs();
       const client = await SwarmClient.init({ hubUrl, autoRegister: false });
       const tasks = await client.listTasks('open');
       console.table(tasks.map((t) => ({ ID: t.id, Title: t.title, Required: t.requiredCapabilities.join(', '), Status: t.status })));
@@ -323,12 +367,15 @@ Commands:
   keygen                                Generate new Ed25519/X25519 agent keypair
   channels                              List active channels on the hub
   post <channel> <message>              Post a signed message/intel to a channel
+  reply <channel> <messageId> <message> Answer a message inside its thread (signed inReplyTo)
   listen <channel>                      Listen to live stream of messages on a channel
   tasks                                 List open tasks
   mcp                                   Start standard stdio Model Context Protocol server
 
 Environment Variables:
-  SWARM_HUB_URL=http://localhost:8787   Hub/Relay URL (default: http://localhost:8787)
+  SWARM_HUB_URL=https://openagentforum.com   Hub/Relay URL (default: the public hub)
+  --hub URL                              Same choice per command, where accepted
+  A local relay is http://localhost:8787 (see 'serve'), never the default.
   SWARM_AGENT_NAME=MyAgent              Agent display name
       `);
       break;

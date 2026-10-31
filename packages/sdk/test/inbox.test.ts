@@ -102,4 +102,82 @@ describe('returning agent inbox', () => {
       '/v1/channels/a/messages', '/v1/channels/b/messages', '/v1/channels/c/messages',
     ]);
   });
+
+  describe('replies to posts older than the first recent window (#358)', () => {
+    async function history(lookupReply: (url: URL, data: { me: any; own: any; early: any; late: any; peer: any }) => Response | undefined = () => undefined) {
+      const me = await generateAgentKeyPair();
+      const peer = await generateAgentKeyPair();
+      const messages: Array<MessageEnvelope & { storedSeq: number }> = [];
+      const append = async (who: typeof me, payload: Record<string, unknown>) => {
+        const env = await signEnvelope({ channel: 'general', sender: who.agentId, type: 'intel', sequence: messages.length, payload }, who.signingPrivateKey);
+        messages.push({ ...env, storedSeq: messages.length + 1 });
+        return messages.at(-1)!;
+      };
+      const own = await append(me, { message: 'an old question' });
+      const early = await append(peer, { message: 'an answer while I was away', inReplyTo: own.id });
+      for (let n = 0; n < 57; n++) await append(peer, { message: `filler ${n}` });
+      const late = await append(peer, { message: 'a later answer', inReplyTo: own.id });
+      const fetcher = vi.fn(async (input: RequestInfo | URL) => {
+        const url = new URL(String(input));
+        if (url.pathname === '/v1/channels') return Response.json({ channels: [{ name: 'general', isPrivate: false }] });
+        if (url.pathname.endsWith('/replies')) return lookupReply(url, { me, own, early, late, peer })
+          ?? Response.json({ agentId: me.agentId, threads: [{ post: own, replies: [early, late], moreReplies: false }], scannedPosts: 1 });
+        if (url.pathname.startsWith('/v1/agents/')) return Response.json({ agent: { publicKey: url.pathname.endsWith(me.agentId) ? me.signingPublicKey : peer.signingPublicKey } });
+        const after = url.searchParams.get('after');
+        const limit = Number(url.searchParams.get('limit'));
+        return Response.json({ messages: after === null ? messages.slice(-limit) : messages.filter(m => m.storedSeq > Number(after)).slice(0, limit) });
+      });
+      const client = await SwarmClient.init({ hubUrl: 'https://relay.test', keyPair: me, autoRegister: false, fetch: fetcher });
+      return { client, fetcher, own, early, late, me, peer, messages };
+    }
+    const lookups = (fetcher: ReturnType<typeof vi.fn>) => fetcher.mock.calls.filter(([url]) => String(url).includes('/replies')).length;
+
+    it('reports verified older replies once and recognizes later window replies to the same post', async () => {
+      const { client, fetcher, own, early, late } = await history();
+      const page = await client.getInbox();
+      expect(page.checkpoint.channels.general.historyStartsAt).toBe(11);
+      expect(page.items.map(item => item.envelope.id)).toEqual([early.id, late.id]);
+      expect(page.items.every(item => item.reasons[0] === 'reply')).toBe(true);
+      expect(page.checkpoint.channels.general.authoredIds).toContain(own.id);
+      expect(page.replyLookup).toEqual({ status: 'used', olderReplies: 1, rejected: 0, truncated: false });
+      const again = await client.getInbox({ checkpoint: page.checkpoint });
+      expect(again.items).toEqual([]);
+      expect(again.replyLookup).toBeUndefined();
+      expect(lookups(fetcher)).toBe(1);
+    });
+
+    it('rejects forged, misattributed and mismatched lookup records without failing the window', async () => {
+      const { client, late } = await history((_url, { me, own, early, peer }) => Response.json({ agentId: me.agentId, threads: [
+        { post: own, replies: [{ ...early, payload: { ...early.payload, message: 'forged' } }, { ...early, payload: { message: 'x', inReplyTo: 'other' } }], moreReplies: true },
+        { post: { ...own, sender: peer.agentId }, replies: [early] },
+      ] }));
+      const page = await client.getInbox();
+      expect(page.items.map(item => item.envelope.id)).toEqual([late.id]);
+      expect(page.replyLookup).toEqual({ status: 'used', olderReplies: 0, rejected: 3, truncated: true });
+    });
+
+    it('reports a reply once even when the hub misreports its unsigned storedSeq', async () => {
+      const { client, late } = await history((_url, { me, own }) => Response.json({ agentId: me.agentId,
+        threads: [{ post: own, replies: [{ ...late, storedSeq: 2 }], moreReplies: false }] }));
+      const page = await client.getInbox();
+      expect(page.items.map(item => item.envelope.id)).toEqual([late.id]);
+      expect(page.replyLookup?.olderReplies).toBe(1);
+    });
+
+    it('falls back to the recent window when the hub does not serve the lookup', async () => {
+      const { client } = await history(() => new Response('not found', { status: 404 }));
+      const page = await client.getInbox();
+      // The pre-#358 behavior: the older post is outside the window, so even the
+      // in-window reply to it cannot be recognized.
+      expect(page.items.map(item => item.envelope.id)).toEqual([]);
+      expect(page.replyLookup).toEqual({ status: 'unavailable', olderReplies: 0, rejected: 0, truncated: false });
+      expect(page.checkpoint.channels.general.authoredIds).toEqual([]);
+    });
+
+    it('never consults the lookup when the first window already starts at the beginning', async () => {
+      const { client, fetcher } = await fixture();
+      await client.getInbox();
+      expect(fetcher.mock.calls.some(([url]) => String(url).includes('/replies'))).toBe(false);
+    });
+  });
 });

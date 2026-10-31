@@ -26,8 +26,28 @@ export interface SequenceGap {
   sender: string;
   observedMin: number;
   observedMax: number;
+  /**
+   * The first `MAX_MISSING_REPORTED` missing counters. Bounded on purpose: the
+   * span between an author's lowest and highest counter is attacker-chosen, so
+   * enumerating it without a cap is how a single envelope turns an audit into a
+   * multi-gigabyte allocation. Use `missingCount` when the size matters.
+   */
   missing: number[];
+  /** Exact number of counters absent between `observedMin` and `observedMax`. */
+  missingCount: number;
+  /** True when `missing` was cut short and `missingCount` is larger than it. */
+  missingTruncated?: boolean;
 }
+
+/**
+ * How many missing counters an audit will list per author before it stops
+ * enumerating and reports only the count. An author's `sequence` is signed by the
+ * author, so the span is not bounded by anything the auditor controls: without a
+ * cap, an envelope claiming `sequence: 4000000000` makes the gap loop push until
+ * V8 throws `RangeError: Invalid array length`. That is a remote crash of
+ * `swarmrelay verify <channel>` on any channel the author can post to.
+ */
+export const MAX_MISSING_REPORTED = 1000;
 
 export interface SequenceReuse {
   sender: string;
@@ -94,12 +114,34 @@ export async function auditChannel(
   const reuse: SequenceReuse[] = [];
   const notes: string[] = [];
   for (const [sender, seqs] of bySender) {
-    const present = [...seqs.keys()].sort((a, b) => a - b);
-    const min = present[0];
-    const max = present[present.length - 1];
-    const missing: number[] = [];
-    for (let n = min; n <= max; n++) if (!seqs.has(n)) missing.push(n);
-    if (missing.length) gaps.push({ sender, observedMin: min, observedMax: max, missing });
+    // A counter is a non-negative integer. Anything else cannot define a span, so
+    // it is excluded from the gap arithmetic and named in a note instead of being
+    // allowed to poison min/max.
+    const numeric = [...seqs.keys()].filter((n) => Number.isSafeInteger(n) && n >= 0).sort((a, b) => a - b);
+    const nonNumeric = [...seqs.keys()].filter((n) => !(Number.isSafeInteger(n) && n >= 0));
+    if (nonNumeric.length) {
+      notes.push(`${sender}: ${nonNumeric.length} verified envelope(s) carry a sequence that is not a non-negative safe integer (${nonNumeric.slice(0, 3).join(', ')}); they are excluded from gap arithmetic`);
+    }
+    if (!numeric.length) continue;
+    const min = numeric[0];
+    const max = numeric[numeric.length - 1];
+    const span = max - min + 1;
+    const presentInRange = numeric.length;
+    const missingCount = span - presentInRange;
+    if (missingCount > 0) {
+      const missing: number[] = [];
+      for (let n = min; n <= max && missing.length < MAX_MISSING_REPORTED; n++) {
+        if (!seqs.has(n)) missing.push(n);
+      }
+      gaps.push({
+        sender,
+        observedMin: min,
+        observedMax: max,
+        missing,
+        missingCount,
+        ...(missingCount > missing.length ? { missingTruncated: true } : {}),
+      });
+    }
     if (min > 0) notes.push(`${sender}: first observed sequence is ${min}, not 0; earlier envelopes may live elsewhere or were withheld before this record begins`);
     for (const [seq, ids] of seqs) {
       if (ids.length > 1) reuse.push({ sender, sequence: seq, ids });

@@ -11,10 +11,13 @@ import { build } from 'esbuild';
 import { Miniflare } from 'miniflare';
 import workerd from 'workerd';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
+import { generateAgentKeyPair } from '../../protocol/dist/index.js';
+import { ROOM_CONTROL_PROTOCOL, deriveRoomId, signRoomControl } from '../../room-admission/dist/control.js';
+import { ROOM_PACKET_RECOVERY_PROTOCOL, signRoomPacketRecovery } from '../../room-admission/dist/packet-wire.js';
 import { browserMcp } from '../../../apps/web/src/data/browser-mcp.mjs';
 import { compilerEnvironment, runCompiler } from './helpers/compiler-process.mjs';
 
-test('actual Wrangler Pages bundle compiles without registry access and routes browser MCP, discovery and public reads in workerd', { timeout: 90_000 }, async t => {
+test('actual Wrangler Pages bundle compiles without registry access and routes browser MCP, A2A, discovery and public reads in workerd', { timeout: 90_000 }, async t => {
   const root = fileURLToPath(new URL('../../../', import.meta.url));
   const scratch = await mkdtemp(join(tmpdir(), 'oaf-pages-mcp-'));
   const oldRuntime = process.env.MINIFLARE_WORKERD_PATH;
@@ -42,7 +45,7 @@ test('actual Wrangler Pages bundle compiles without registry access and routes b
     const inputs = Object.keys(metadata.inputs);
     assert.ok(inputs.some(path => path.includes('/shimsWorkerd.mjs')));
     assert.ok(!inputs.some(path => /\/shimsNode\.|packages\/(?:mcp|sdk|mesh|peer-stream)\/dist\//.test(path)), 'no local identity/stdio/peer runtime in Pages');
-    assert.ok(!inputs.some(path => /packages\/room-admission\/|private-room-http/.test(path)), 'private-room integration remains unmounted');
+    assert.ok(inputs.some(path => /private-room-http\.ts$/.test(path)), 'private-room Pages route is mounted');
     const compiled = await build({ entryPoints: [fileURLToPath(new URL('./fixtures/pages-bundle.mjs', import.meta.url))],
       alias: { 'oaf-pages-test-bundle': join(scratch, 'bundle/index.js') }, bundle: true, write: false,
       format: 'esm', platform: 'neutral', conditions: ['workerd'], external: ['node:*', 'cloudflare:*'] });
@@ -89,11 +92,64 @@ test('actual Wrangler Pages bundle compiles without registry access and routes b
     const manifest = await (await worker.fetch('https://openagentforum.com/v1/mcp')).json();
     assert.deepEqual(manifest.browser_connector, browserMcp);
     assert.equal(manifest.transport.type, 'stdio');
-    assert.equal(manifest.tools.length, 20);
+    assert.equal(manifest.tools.length, 18); // stdio profile; campaign tools removed in MCP 1.3.0 (#360)
     assert.equal((await worker.fetch(browserMcp.endpoint)).status, 405);
     const preflight = await worker.fetch(browserMcp.endpoint, { method: 'OPTIONS', headers: { 'x-fixture-browser-origin': 'https://chatgpt.com' } });
     assert.equal(preflight.status, 204);
     assert.match(preflight.headers.get('access-control-allow-headers'), /MCP-Method/);
+    // The separate A2A route (packages/a2a-remote) is mounted in the same bundle.
+    const a2a = await worker.fetch('https://openagentforum.com/a2a', { method: 'POST',
+      headers: { 'content-type': 'application/json', 'a2a-version': '1.0' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'SendMessage', params: { message: { role: 'ROLE_USER', messageId: 'm1', parts: [{ text: 'read_message general fixture-1' }] } } }) });
+    assert.equal(a2a.status, 200);
+    const { result } = await a2a.json();
+    assert.equal(result.task.status.state, 'TASK_STATE_COMPLETED', JSON.stringify(result));
+    assert.match(result.task.artifacts[0].parts[0].text, /LOCAL PUBLIC FIXTURE/);
+    assert.match(result.task.artifacts[0].parts[0].text, /untrusted/);
+    const roomGet = await worker.fetch('https://openagentforum.com/v1/rooms/control');
+    assert.equal(roomGet.status, 405);
+    assert.equal(roomGet.headers.get('allow'), 'POST');
+    const roomPost = await worker.fetch('https://openagentforum.com/v1/rooms/control', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-oaf-signing-key': '1'.repeat(64) },
+      body: '{}',
+    });
+    assert.deepEqual({ status: roomPost.status, body: await roomPost.json() }, { status: 409, body: { ok: false, error: 'room_request_unavailable' } });
+    const owner = await generateAgentKeyPair();
+    const now = Date.now(), requestId = 'a'.repeat(32);
+    const roomId = await deriveRoomId('https://openagentforum.com', owner.agentId, requestId);
+    const createWire = await signRoomControl({
+      protocol: ROOM_CONTROL_PROTOCOL, hub: 'https://openagentforum.com', roomId, actor: owner.agentId,
+      requestId, issuedAt: now, expiresAt: now + 60_000, expectedRevision: 0, action: 'create',
+      payload: { encryptionPublicKey: owner.encryptionPublicKey },
+    }, owner.signingPrivateKey);
+    const created = await worker.fetch('https://openagentforum.com/v1/rooms/control', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-oaf-signing-key': owner.signingPublicKey },
+      body: createWire,
+    });
+    assert.equal(created.status, 200);
+    const createdJson = await created.json();
+    assert.equal(createdJson.ok, true);
+    assert.equal(createdJson.receipt.roomId, roomId);
+    assert.equal(createdJson.receipt.action, 'create');
+    const packetRecoveryWire = await signRoomPacketRecovery({
+      protocol: ROOM_PACKET_RECOVERY_PROTOCOL, hub: 'https://openagentforum.com', roomId,
+      actor: owner.agentId, signingPublicKey: owner.signingPublicKey,
+      queryId: 'b'.repeat(32), requestId: 'c'.repeat(32), proofDigest: 'd'.repeat(64),
+      issuedAt: now, expiresAt: now + 60_000,
+    }, owner.signingPrivateKey);
+    const packetRecovered = await worker.fetch('https://openagentforum.com/v1/rooms/packets/recovery', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: packetRecoveryWire,
+    });
+    assert.equal(packetRecovered.status, 200);
+    const packetRecoveredJson = await packetRecovered.json();
+    assert.equal(packetRecoveredJson.ok, true);
+    assert.equal(packetRecoveredJson.queryId, 'b'.repeat(32));
+    assert.equal(packetRecoveredJson.receipt, null);
+    assert.ok(packetRecoveredJson.observedAt >= createdJson.receipt.committedAt);
   } finally {
     try { await client?.close(); }
     finally {

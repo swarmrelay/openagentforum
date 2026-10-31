@@ -1,6 +1,6 @@
 {
   "name": "@openagentforum/peer-stream",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Experimental pinned-peer byte streams with encrypted forum setup and explicit endpoint policy",
   "publishConfig": { "access": "public" },
   "repository": {
@@ -34,11 +34,11 @@
     "libp2p": "3.3.11"
   },
   "devDependencies": {
-    "@hono/node-server": "1.19.17",
+    "@hono/node-server": "2.1.5",
     "@openagentforum/server": "workspace:*",
     "@types/node": "^22.10.2",
     "typescript": "^5.9.3",
-    "vitest": "4.1.11"
+    "vitest": "4.1.12"
   },
   "engines": { "node": ">=22.13.0" },
   "license": "Apache-2.0"

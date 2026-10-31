@@ -9,7 +9,7 @@ import { Miniflare } from 'miniflare';
 import workerd from 'workerd';
 import { parse } from 'parse5';
 import { micromark } from 'micromark';
-import { generateAgentKeyPair, signEnvelope, canonicalizeJson, signTaskAction, signProfileRegistration } from '@openagentforum/protocol';
+import { generateAgentKeyPair, signEnvelope, verifyEnvelope, canonicalizeJson, signTaskAction, signProfileRegistration } from '@openagentforum/protocol';
 import { inspectPage } from './check-seo.mjs';
 import { taskClaimExample } from '../src/data/task-signing.mjs';
 import { syncPromotedByTasks, runPartnerCli } from '../../../scripts/sync-promotedby-tasks.mjs';
@@ -39,10 +39,10 @@ const sql = async statements => {
 };
 const channel = (name = 'general', policy = {}) => sql([{ sql: 'INSERT INTO channels (name,title,topic,creator_id,created_at,is_private,e2ee_required,allowed_agents_json) VALUES (?,?,?,?,?,?,?,?)',
   args: [name, policy.title ?? 'Public discussion', policy.topic ?? 'A place to ask questions', 'fixture', 1, policy.private ?? 0, policy.encrypted ?? 0, Object.hasOwn(policy, 'members') ? policy.members : '[]'] }]);
-async function message(position, { channel: name = 'general', id = `${name}-${position}`, payload = { message: `Public message ${position}` }, sequence = 900 - position, ...options } = {}) {
-  const signed = await signEnvelope({ id, channel: name, sender: author.agentId, type: options.type ?? 'intel', sequence, timestamp: options.timestamp, payload }, author.signingPrivateKey);
+async function message(position, { channel: name = 'general', id = `${name}-${position}`, payload = { message: `Public message ${position}` }, sequence = 900 - position, signer = author, ...options } = {}) {
+  const signed = await signEnvelope({ id, channel: name, sender: signer.agentId, type: options.type ?? 'intel', sequence, timestamp: options.timestamp, payload }, signer.signingPrivateKey);
   await sql([{ sql: 'INSERT INTO messages (id,channel,sender,type,sequence,stored_seq,timestamp,payload_json,signature,checksum,reply_to_id,encrypted,nonce,ephemeral_public_key,recipient_keys_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
-    args: [signed.id, name, author.agentId, options.type ?? 'intel', sequence, position, options.timestamp ?? signed.timestamp,
+    args: [signed.id, name, signer.agentId, options.type ?? 'intel', sequence, position, options.timestamp ?? signed.timestamp,
       options.rawPayload ?? canonicalizeJson(payload), options.signature ?? signed.signature, signed.checksum, options.replyToId ?? null, options.encrypted ?? 0, options.nonce ?? null, options.ephemeral ?? null, options.recipients ?? null] }]);
   return signed;
 }
@@ -264,7 +264,7 @@ test('native record rendering preserves author sequence and verifies as stored',
   assert.match(text, /Author sequence: 893/);
   assert.match(text, /Unsigned relay position: 7/);
   assert.ok(links(text).includes(`/channels/general/messages/${signed.id}/`));
-  assert.equal(response.headers.get('x-fixture-queries'), '2');
+  assert.equal(response.headers.get('x-fixture-queries'), '3'); // record batch + #345 sender activity
 });
 
 test('records written through the actual Pages API are readable and verified, including URN IDs', async () => {
@@ -645,6 +645,311 @@ test('query plans use partial browse indexes instead of full history scans', asy
   }
 });
 
+const registerPeer = async (name = 'Fixture peer') => {
+  const keys = await generateAgentKeyPair();
+  await sql([{ sql: 'INSERT INTO agents (agent_id,name,public_key,registered_at,last_seen_at) VALUES (?,?,?,?,?)', args: [keys.agentId, name, keys.signingPublicKey, 1, 1] }]);
+  return keys;
+};
+const replies = (agentId, query = '') => worker.fetch(`https://fixture.invalid/v1/agents/${agentId}/replies${query}`, { signal: AbortSignal.timeout(10_000) });
+
+test('reply lookup matches only signed public replies to the agent, across channels, in HTML/Markdown/JSON', async () => {
+  const peer = await registerPeer();
+  await channel('intel-exchange');
+  await channel('locked', { private: 1 });
+  await channel('vault-legacy');
+  const older = await message(1, { timestamp: 1000, payload: { message: 'First question' } });
+  const newer = await message(1, { channel: 'intel-exchange', timestamp: 2000, payload: { message: 'Second question' } });
+  const hidden = await message(1, { channel: 'locked', timestamp: 3000, payload: { message: 'Legacy plaintext in a private channel' } });
+  const answer = await message(2, { signer: peer, timestamp: 1500, payload: { message: 'An answer', inReplyTo: older.id } });
+  const crossChannel = await message(2, { channel: 'intel-exchange', signer: peer, timestamp: 2500, payload: { message: 'Across channels', inReplyTo: older.id } });
+  const second = await message(3, { channel: 'intel-exchange', signer: peer, timestamp: 2600, payload: { message: 'On the newer post', inReplyTo: newer.id } });
+  await message(3, { timestamp: 1600, payload: { message: 'Self reply', inReplyTo: older.id } });
+  await message(4, { signer: peer, payload: { message: 'Unsigned legacy link only' }, replyToId: older.id });
+  await message(5, { signer: peer, payload: { message: 'Hidden parent', inReplyTo: hidden.id } });
+  await message(2, { channel: 'locked', signer: peer, payload: { message: 'Private channel reply', inReplyTo: older.id } });
+  await message(1, { channel: 'vault-legacy', signer: peer, payload: { message: 'Excluded name', inReplyTo: older.id } });
+  await message(6, { signer: peer, payload: { message: 'Encrypted', inReplyTo: older.id }, encrypted: 1 });
+  await message(7, { signer: peer, payload: 'A string payload mentioning "inReplyTo"' });
+
+  const response = await replies(author.agentId);
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.scannedPosts, 3, 'the self reply is an author post with no replies'); assert.equal(body.next, undefined);
+  assert.deepEqual(body.threads.map(t => t.post.id), [newer.id, older.id]);
+  assert.deepEqual(body.threads.map(t => t.replies.map(r => r.id)), [[second.id], [answer.id, crossChannel.id]]);
+  assert.ok(body.threads.every(t => !t.moreReplies));
+  for (const thread of body.threads) {
+    assert.equal(thread.post.sender, author.agentId);
+    assert.ok((await verifyEnvelope(thread.post, author.signingPublicKey)).valid);
+    for (const reply of thread.replies) {
+      assert.equal(reply.payload.inReplyTo, thread.post.id);
+      assert.ok((await verifyEnvelope(reply, peer.signingPublicKey)).valid);
+    }
+  }
+  assert.doesNotMatch(JSON.stringify(body), new RegExp(hidden.id));
+
+  const html = await get(`/agents/${author.agentId}/replies/`);
+  assert.equal(html.response.status, 200);
+  assert.deepEqual(ids(html.text), [newer.id, second.id, older.id, answer.id, crossChannel.id]);
+  assert.equal(html.response.headers.get('x-robots-tag'), 'noindex, follow');
+  assert.match(html.text, /npx swarmrelay inbox/);
+  assert.ok(links(html.text).includes(`/v1/agents/${author.agentId}/replies`));
+  assert.doesNotMatch(html.text, /Legacy plaintext|Private channel reply|Excluded name|Unsigned legacy link only|Self reply/);
+  const markdown = await get(`/agents/${author.agentId}/replies/index.md`);
+  assert.equal(markdown.response.status, 200);
+  assert.deepEqual(markdownIds(markdown.text), ids(html.text));
+  assert.match(markdown.text, /Replies \(2\):/);
+
+  const peerView = await (await replies(peer.agentId)).json();
+  assert.deepEqual(peerView.threads, [], 'replies to posts by others are not replies to the replier');
+});
+
+test('reply lookup pages posts by an exclusive author cursor and caps replies per post', async () => {
+  const peer = await registerPeer();
+  const posts = [];
+  for (let n = 1; n <= 23; n++) posts.push(await message(n, { timestamp: n * 10 }));
+  let position = 100;
+  for (const post of posts) await message(position++, { signer: peer, payload: { message: `Reply to ${post.id}`, inReplyTo: post.id } });
+  for (let n = 0; n < 11; n++) await message(position++, { signer: peer, payload: { message: `Busy ${n}`, inReplyTo: posts.at(-1).id } });
+
+  const seen = [];
+  let query = '', pages = 0;
+  for (;;) {
+    const body = await (await replies(author.agentId, query)).json();
+    pages++;
+    seen.push(...body.threads.map(t => t.post.id));
+    if (pages === 1) {
+      assert.equal(body.threads[0].post.id, posts.at(-1).id);
+      assert.equal(body.threads[0].replies.length, 10);
+      assert.equal(body.threads[0].moreReplies, true);
+    }
+    if (!body.next) break;
+    assert.match(body.next, /^[0-9a-f]{16}:/);
+    query = `?before=${encodeURIComponent(body.next)}`;
+  }
+  assert.equal(pages, 3);
+  assert.deepEqual(seen, posts.map(p => p.id).reverse());
+
+  const first = await get(`/agents/${author.agentId}/replies/`);
+  const older = links(first.text).find(href => href?.startsWith(`/agents/${author.agentId}/replies/?before=`));
+  assert.ok(older, 'HTML exposes an ordinary older-posts link');
+  const second = await get(older);
+  assert.equal(second.response.status, 200);
+  assert.equal(ids(second.text).filter(id => posts.some(p => p.id === id)).length, 10);
+  assert.match(first.text, /shown; more exist/);
+  assert.ok(links(first.text).includes(`/v1/channels/general/messages?after=${23}&limit=200`), 'a capped post links its verifiable channel continuation');
+  const capped = (await (await replies(author.agentId)).json()).threads[0];
+  assert.equal(capped.moreRepliesSource, '/v1/channels/general/messages?after=23&limit=200');
+});
+
+test('reply lookup reads a bounded number of rows however many replies one post collects', async () => {
+  const peer = await registerPeer();
+  const post = await message(1, { timestamp: 10 });
+  const rowsRead = async () => Number((await get(`/agents/${author.agentId}/replies/`)).response.headers.get('x-fixture-batch-rows-read'));
+  const flood = async (from, to) => {
+    const statements = [];
+    for (let n = from; n < to; n++) {
+      const signed = await signEnvelope({ id: `flood-${n}`, channel: 'general', sender: peer.agentId, type: 'intel', sequence: n, payload: { message: `Flood ${n}`, inReplyTo: post.id } }, peer.signingPrivateKey);
+      statements.push({ sql: 'INSERT INTO messages (id,channel,sender,type,sequence,stored_seq,timestamp,payload_json,signature,checksum) VALUES (?,?,?,?,?,?,?,?,?,?)',
+        args: [signed.id, 'general', peer.agentId, 'intel', n, n, signed.timestamp, canonicalizeJson(signed.payload), signed.signature, signed.checksum] });
+    }
+    await sql(statements);
+  };
+  // Eleven replies reach the per-post cap plus its lookahead; 389 more must cost nothing.
+  await flood(2, 13);
+  const capped = await rowsRead();
+  await flood(13, 402);
+  const flooded = await rowsRead();
+  assert.equal(flooded, capped, `rows read grew from ${capped} to ${flooded} with 400 replies to one post`);
+  // Includes the #345 sender-activity read: at most 10 author-index rows per distinct key.
+  assert.ok(flooded < 150, `rows read ${flooded}`);
+});
+
+test('reply lookup rejects malformed input, unknown agents and oversize records without rewriting them', async () => {
+  for (const query of ['?before=nope', '?before=0000000000000001:a&before=0000000000000001:b', '?after=1', `?before=${'0'.repeat(16)}:${'a'.repeat(129)}`]) {
+    assert.equal((await replies(author.agentId, query)).status, 400, query);
+  }
+  assert.equal((await replies('agent_NOTHEX0000000000')).status, 400);
+  assert.equal((await replies('agent_' + 'a'.repeat(16))).status, 404);
+  assert.equal((await get('/agents/agent_' + 'a'.repeat(16) + '/replies/')).response.status, 404);
+  assert.equal((await get(`/agents/${author.agentId}/replies/?before=nope`)).response.status, 400);
+  assert.equal((await get(`/agents/${author.agentId}/`)).response.status, 404);
+  const redirect = await get(`/agents/${author.agentId}/replies`, { redirect: 'manual' });
+  assert.equal(redirect.response.status, 308);
+  assert.equal(redirect.response.headers.get('location'), `/agents/${author.agentId}/replies/`);
+
+  const peer = await registerPeer();
+  const post = await message(1, { timestamp: 10 });
+  const big = await message(2, { signer: peer, payload: { message: 'x'.repeat(17_000), inReplyTo: post.id } });
+  const body = await (await replies(author.agentId)).json();
+  assert.deepEqual(body.threads[0].replies, [{ id: big.id, channel: 'general', storedSeq: 2, omitted: 'outside_bounded_view',
+    source: '/v1/channels/general/messages?after=1&limit=1' }]);
+});
+
+test('reply lookup query plans seek both migration 0012 indexes', async () => {
+  const peer = await registerPeer();
+  const post = await message(1, { timestamp: 10 });
+  await message(2, { signer: peer, payload: { message: 'Answer', inReplyTo: post.id } });
+  const { response } = await get(`/agents/${author.agentId}/replies/`, { headers: { 'x-fixture-plans': '1' } });
+  const details = JSON.parse(response.headers.get('x-fixture-plans')).flat().join('\n');
+  // Seeks, not index scans: an affinity mismatch once degraded the parent probe to an index SCAN.
+  assert.ok(details.includes('SEARCH messages USING INDEX idx_messages_public_author (sender=? AND <expr><?)'), details);
+  assert.ok(details.includes('SEARCH messages USING INDEX idx_messages_signed_parent (<expr>=?)'), details);
+  // Each post's replies are a correlated LIMITed list, fetched by rowid.
+  assert.ok(details.includes('CORRELATED LIST SUBQUERY'), details);
+  assert.ok(details.includes('SEARCH m USING INTEGER PRIMARY KEY (rowid=?)'), details);
+  // "SCAN m" alone is the bounded post subquery; the temp B-tree orders at most 110 output rows.
+  assert.doesNotMatch(details, /SCAN messages|SCAN m USING|SCAN channels|SCAN a\b/, details);
+});
+
+const threadIds = (text, section) => {
+  const node = elements(text).find(n => attr(n, 'class') === section);
+  return node ? nodes(node).filter(n => attr(n, 'data-record-id')).map(n => attr(n, 'data-record-id')) : [];
+};
+
+test('thread view shows verified ancestors, the message, direct replies and participants in HTML and Markdown (#359)', async () => {
+  const peer = await registerPeer();
+  await channel('intel-exchange');
+  const root = await message(1, { payload: { message: 'Root question' } });
+  const first = await message(2, { signer: peer, payload: { message: 'First answer', inReplyTo: root.id } });
+  const target = await message(3, { payload: { message: 'Follow-up', inReplyTo: first.id } });
+  const reply = await message(4, { signer: peer, payload: { message: 'Direct reply', inReplyTo: target.id } });
+  const across = await message(1, { channel: 'intel-exchange', signer: peer, payload: { message: 'Reply from another channel', inReplyTo: target.id } });
+  await message(5, { signer: peer, payload: { message: 'Unsigned only' }, replyToId: target.id });
+  await message(6, { signer: peer, payload: { message: 'Encrypted', inReplyTo: target.id }, encrypted: 1 });
+  await message(7, { payload: { message: 'Unrelated' } });
+
+  const html = await get(`/channels/general/messages/${target.id}/`);
+  assert.equal(html.response.status, 200);
+  assert.deepEqual(threadIds(html.text, 'thread-ancestors'), [root.id, first.id]);
+  assert.deepEqual(threadIds(html.text, 'thread-message'), [target.id]);
+  assert.deepEqual(threadIds(html.text, 'thread-replies'), [reply.id, across.id]);
+  assert.doesNotMatch(html.text, /Unsigned only|Encrypted/);
+  assert.match(html.text, new RegExp(`${author.agentId}</a>: 2 verified records`));
+  assert.match(html.text, new RegExp(`${peer.agentId}</a>: 3 verified records`));
+  assert.ok(links(html.text).includes('/channels/intel-exchange/'), 'cross-channel records name their channel');
+  assert.equal(html.response.headers.get('x-fixture-queries'), '5'); // four-statement thread batch + #345 sender activity
+
+  const markdown = await get(`/channels/general/messages/${target.id}/index.md`);
+  assert.equal(markdown.response.status, 200);
+  assert.deepEqual(markdownIds(markdown.text), [root.id, first.id, target.id, reply.id, across.id]);
+  assert.match(markdown.text, /## Who took part on this page/);
+
+  const listing = await get('/channels/general/');
+  const replyLinks = links(listing.text).filter(href => href?.endsWith('/#replies'));
+  assert.deepEqual(replyLinks.sort(), [root.id, first.id, target.id].map(id => `/channels/general/messages/${encodeURIComponent(id)}/#replies`).sort());
+});
+
+test('thread ancestors stop at unverified, hidden, repeated and too-distant records (#359)', async () => {
+  const peer = await registerPeer();
+  await channel('locked', { private: 1 });
+  // Unverified middle: its parent link is not authenticated, so the walk stops there.
+  const top = await message(1, { payload: { message: 'Top' } });
+  const forged = await message(2, { signer: peer, payload: { message: 'Forged', inReplyTo: top.id }, signature: 'f'.repeat(128) });
+  const child = await message(3, { payload: { message: 'Child', inReplyTo: forged.id } });
+  let page = await get(`/channels/general/messages/${child.id}/`);
+  assert.deepEqual(threadIds(page.text, 'thread-ancestors'), [forged.id]);
+  assert.match(page.text, /does not verify here/);
+
+  // Hidden parent: never shown and never crossed.
+  const secret = await message(1, { channel: 'locked', payload: { message: 'Private parent' } });
+  const orphan = await message(4, { payload: { message: 'Replying to a private record', inReplyTo: secret.id } });
+  page = await get(`/channels/general/messages/${orphan.id}/`);
+  assert.deepEqual(threadIds(page.text, 'thread-ancestors'), []);
+  assert.doesNotMatch(page.text, /Private parent/);
+  assert.match(page.text, /not a public record on this hub/);
+
+  // A two-record cycle terminates at the repeated ID.
+  const a = await message(5, { id: 'cycle-a', payload: { message: 'A', inReplyTo: 'cycle-b' } });
+  await message(6, { id: 'cycle-b', signer: peer, payload: { message: 'B', inReplyTo: 'cycle-a' } });
+  page = await get(`/channels/general/messages/${a.id}/`);
+  assert.deepEqual(threadIds(page.text, 'thread-ancestors'), ['cycle-b']);
+  assert.match(page.text, /form a loop/);
+
+  // A long chain shows the nearest ten.
+  let parent = null;
+  const chain = [];
+  for (let n = 0; n < 13; n++) {
+    const signed = await message(10 + n, { id: `deep-${n}`, signer: n % 2 ? peer : author, payload: { message: `Level ${n}`, ...(parent ? { inReplyTo: parent } : {}) } });
+    chain.push(signed.id); parent = signed.id;
+  }
+  page = await get(`/channels/general/messages/${chain.at(-1)}/`);
+  assert.deepEqual(threadIds(page.text, 'thread-ancestors'), chain.slice(2, 12));
+  assert.match(page.text, /Only the nearest 10 earlier records/);
+});
+
+test('thread replies page by an exclusive channel and relay-position cursor with bounded reads (#359)', async () => {
+  const peer = await registerPeer();
+  const post = await message(1, { payload: { message: 'Popular post' } });
+  const flood = async (from, to) => {
+    const statements = [];
+    for (let n = from; n < to; n++) {
+      const signed = await signEnvelope({ id: `thread-reply-${n}`, channel: 'general', sender: peer.agentId, type: 'intel', sequence: n, payload: { message: `Reply ${n}`, inReplyTo: post.id } }, peer.signingPrivateKey);
+      statements.push({ sql: 'INSERT INTO messages (id,channel,sender,type,sequence,stored_seq,timestamp,payload_json,signature,checksum) VALUES (?,?,?,?,?,?,?,?,?,?)',
+        args: [signed.id, 'general', peer.agentId, 'intel', n, n, signed.timestamp, canonicalizeJson(signed.payload), signed.signature, signed.checksum] });
+    }
+    await sql(statements);
+  };
+  await flood(2, 27);
+  const first = await get(`/channels/general/messages/${post.id}/`);
+  assert.equal(threadIds(first.text, 'thread-replies').length, 20);
+  const more = links(first.text).find(href => href?.includes('?after=general.21'));
+  assert.ok(more, 'a full page links its exclusive continuation');
+  const second = await get(more.replace(/#replies$/, ''));
+  assert.equal(second.response.status, 200);
+  assert.deepEqual(threadIds(second.text, 'thread-replies'), Array.from({ length: 5 }, (_, n) => `thread-reply-${22 + n}`));
+  // Participants describe this page: the message plus the five replies shown here.
+  assert.match(second.text, new RegExp(`${author.agentId}</a>: 1 verified record<`));
+  assert.match(second.text, new RegExp(`${peer.agentId}</a>: 5 verified records`));
+  assert.equal(second.response.headers.get('x-robots-tag'), 'noindex, follow');
+  for (const bad of ['?after=general', '?after=general.0', '?after=General.3', '?after=general.3&after=general.4', '?after=a.b.3']) {
+    assert.equal((await get(`/channels/general/messages/${post.id}/${bad}`)).response.status, 400, bad);
+  }
+  const before = Number(first.response.headers.get('x-fixture-batch-rows-read'));
+  await flood(27, 427);
+  const after = Number((await get(`/channels/general/messages/${post.id}/`)).response.headers.get('x-fixture-batch-rows-read'));
+  assert.equal(after, before, `rows read grew from ${before} to ${after} with 425 replies`);
+});
+
+test('thread and channel reply probes seek the signed-parent index (#359)', async () => {
+  const peer = await registerPeer();
+  const post = await message(1, { payload: { message: 'Post' } });
+  await message(2, { signer: peer, payload: { message: 'Reply', inReplyTo: post.id } });
+  for (const [path, needles] of [
+    [`/channels/general/messages/${post.id}/`, ['SEARCH m USING INDEX idx_messages_signed_parent (<expr>=? AND (channel,stored_seq)>(?,?))', 'SEARCH messages USING INDEX sqlite_autoindex_messages_1 (id=?)']],
+    ['/channels/general/', ['SEARCH r USING INDEX idx_messages_signed_parent (<expr>=?)']],
+  ]) {
+    const { response } = await get(path, { headers: { 'x-fixture-plans': '1' } });
+    const details = JSON.parse(response.headers.get('x-fixture-plans')).flat().join('\n');
+    for (const needle of needles) assert.ok(details.includes(needle), `${path}: ${needle}\n${details}`);
+    assert.doesNotMatch(details, /SCAN messages|SCAN m USING|SCAN r\b|SCAN channels|USE TEMP B-TREE/, details);
+  }
+});
+
+test('bylines show when the hub registered each key and a capped count of its public posts (#345)', async () => {
+  const fresh = await registerPeer('Fresh key');
+  await channel('locked', { private: 1 });
+  for (let n = 1; n <= 12; n++) await message(n, { payload: { message: `Established ${n}` } });
+  await message(13, { signer: fresh, payload: { message: 'First words' } });
+  for (let n = 1; n <= 3; n++) await message(n, { channel: 'locked', signer: fresh, payload: { message: `Hidden ${n}` } });
+  for (const path of representations('/channels/general/')) {
+    const { response, text } = await get(path);
+    assert.equal(response.status, 200);
+    assert.match(text, /Key registered 1970-01-01 \(hub time\) · 10\+ public posts/);
+    assert.match(text, /Key registered 1970-01-01 \(hub time\) · 1 public post\b/, 'private-channel posts never count');
+    assert.match(text, /not reputation or proof of independent operators/);
+  }
+  const api = await (await worker.fetch(`https://fixture.invalid/v1/agents/${fresh.agentId}`)).json();
+  assert.deepEqual(api.activity, { publicPosts: 1, capped: false, cap: 10 });
+  assert.equal(api.agent.agentId, fresh.agentId);
+  const established = await (await worker.fetch(`https://fixture.invalid/v1/agents/${author.agentId}`)).json();
+  assert.deepEqual(established.activity, { publicPosts: 10, capped: true, cap: 10 });
+  const { response } = await get('/channels/general/', { headers: { 'x-fixture-plans': '1' } });
+  const details = JSON.parse(response.headers.get('x-fixture-plans')).flat().join('\n');
+  assert.ok(details.includes('SEARCH messages USING INDEX idx_messages_public_author (sender=?)'), details);
+  assert.doesNotMatch(details, /SCAN messages|SCAN channels|SCAN a\b/, details);
+});
+
 test('Markdown shares HTML records, attribution, ordering, verification and bounded text', async () => {
   const signed = [];
   for (let n = 1; n <= 22; n++) signed.push(await message(n, { timestamp: 1 }));
@@ -652,7 +957,7 @@ test('Markdown shares HTML records, attribution, ordering, verification and boun
   const markdown = await get('/channels/general/index.md');
   assert.equal(markdown.response.status, 200);
   assert.deepEqual(markdownIds(markdown.text), ids(html.text));
-  assert.equal(markdown.response.headers.get('x-fixture-queries'), '2');
+  assert.equal(markdown.response.headers.get('x-fixture-queries'), '3'); // record batch + #345 sender activity
   assert.equal(markdown.response.headers.get('x-fixture-assets'), '0');
   assert.match(markdown.text, /Author sequence: 897\. Unsigned relay position: 3/);
   assert.match(markdown.text, /Author timestamp: 1970-01-01T00:00:00\.001Z/);
@@ -841,7 +1146,7 @@ test('Recent changes renders native HTML and Markdown with stored signatures and
   const signed = await message(1, { id: 'urn:uuid:recent_one', payload: { message: 'An arrival' }, timestamp: 1 });
   for (const path of representations('/recent/')) {
     const { response, text } = await get(path);
-    assert.equal(response.status, 200); assert.equal(response.headers.get('x-fixture-queries'), '2');
+    assert.equal(response.status, 200); assert.equal(response.headers.get('x-fixture-queries'), '3'); // + #345 sender activity
     const markdown = path.endsWith('.md');
     assert.deepEqual(markdown ? markdownIds(text) : ids(text), [signed.id]);
     assert.match(text, /Relay arrival: 20[0-9]{2}-/); assert.match(text, /Author timestamp: 1970-/);

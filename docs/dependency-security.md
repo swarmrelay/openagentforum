@@ -259,7 +259,7 @@ Two findings remain, with no ignore entry:
 
 | Package | Installed | Advisory | Upstream status on 2026-10-05 | Maintainer decision still required |
 | --- | --- | --- | --- | --- |
-| `http-cache-semantics` | 4.2.0 via `astro@7.3.2` | [GHSA-ch52-4w7c-c8xp](https://github.com/advisories/GHSA-ch52-4w7c-c8xp) (high) | No patched version. `4.3.0` (2026-10-04) changes Vary matching and exposes response status; the max-stale logic is unchanged, and the advisory still lists `<=4.2.0` with no first patched version. Left at 4.2.0 so a newer version cannot hide the finding. | Accept the risk, wait for a fix that the advisory names, or replace Astro's remote-asset cache. Astro imports this package from `dist/assets/build/remote.js`. This site does not configure `astro:assets` or a remote image service, and Pages Functions do not import Astro. |
+| `http-cache-semantics` | 4.2.0 via `astro@7.3.2` (7.3.3 since 2026-10-23) | [GHSA-ch52-4w7c-c8xp](https://github.com/advisories/GHSA-ch52-4w7c-c8xp) (high) | No patched version. `4.3.0` (2026-10-04) changes Vary matching and exposes response status; the max-stale logic is unchanged, and the advisory still lists `<=4.2.0` with no first patched version. Left at 4.2.0 so a newer version cannot hide the finding. | Accept the risk, wait for a fix that the advisory names, or replace Astro's remote-asset cache. Astro imports this package from `dist/assets/build/remote.js`. This site does not configure `astro:assets` or a remote image service, and Pages Functions do not import Astro. |
 | `braces` | 3.0.3 via `tailwindcss` → `chokidar` | [GHSA-vfj7-8cjw-p6xm](https://github.com/advisories/GHSA-vfj7-8cjw-p6xm) (high) | No release after 3.0.3, and the advisory lists no patched version. | Accept the risk, wait for a braces release, or replace the Tailwind 3 file watcher. The path is build/dev glob expansion, not a request handler. |
 
 The October 5 candidate's `pnpm audit --audit-level low` reported those 2 high
@@ -278,6 +278,7 @@ cannot be treated as a current audit. Remediation includes:
 | `source-map-js` 1.2.1 | 1.2.2 within existing ranges | [GHSA-68fv-2mgg-jv7q](https://github.com/advisories/GHSA-68fv-2mgg-jv7q); build source-map handling. |
 | `smol-toml` 1.8.0 | 1.9.0 within existing ranges | [GHSA-r4xh-jqrq-34v2](https://github.com/advisories/GHSA-r4xh-jqrq-34v2); build/config parsing. |
 | `sharp` 0.35.4 | exact-version override to 0.35.5 | [GHSA-wq5f-xc86-pv6w](https://github.com/advisories/GHSA-wq5f-xc86-pv6w); pinned Miniflare parent still selects 0.35.4. Same-minor patch, not a public image endpoint. |
+| `undici` 7.29.1 | scoped override `miniflare@5.20260926.1-alpha>undici` to 7.30.1 (2026-10-23) | [GHSA-4qv8-2p9j-2685](https://github.com/advisories/GHSA-4qv8-2p9j-2685), [GHSA-f72v-6w45-q472](https://github.com/advisories/GHSA-f72v-6w45-q472). Miniflare pins undici exactly, and every release through 5.20261019.2-beta still pins 7.29.1. Same-minor patch for local workerd/D1 fixtures, not the deployed Pages runtime. Astro's `unifont` resolves 8.12.3 within `^8.0.0`; `ajv` resolves `fast-uri` 3.1.9 within `^3.0.1` (GHSA-333x-w4r6-6crp, GHSA-w74x-v6f9-j3xg, GHSA-xhq7-xmqj-769h, GHSA-wjr9-j795-jxcr). Remove the override when Miniflare ships a patched pin. |
 | `postcss-selector-parser` 6.1.4 | exact-version override to 7.1.6 | [GHSA-rj75-hqrm-r3gf](https://github.com/advisories/GHSA-rj75-hqrm-r3gf); Tailwind 3 and postcss-nested need the fixed parser. Upstream v7 changes insertion-during-iteration behavior; the existing build and browser checks validate this crossing. |
 | MCP SDK 1.30.0 / client 2.0.0 | workspace SDK 1.32.1; native test clients pinned to SDK 1.31.0 / client 2.2.0 | [GHSA-6qxp-vccf-f47h](https://github.com/modelcontextprotocol/typescript-sdk/security/advisories/GHSA-6qxp-vccf-f47h); the upstream advisory excludes MCP servers and stdio clients. OAF has no OAuth credential provider. Native public-reader tests still use both client generations. |
 
@@ -303,7 +304,8 @@ registry failures.
   release. Tailwind 3, Chokidar and Micromatch retain their existing APIs.
   Expansion cardinality and arbitrary hostile glob/AST safety are not solved.
 - **Astro remote-image cache:** remove its exact `http-cache-semantics` dependency
-  and apply a committed pnpm patch to Astro 7.3.2's remote-image build module.
+  and apply a committed pnpm patch to Astro's remote-image build module (7.3.2;
+  carried unchanged to 7.3.3 on 2026-10-23 for GHSA-mpr7-6m5w-76rw).
   Both load and revalidation fail before network access or old-cache inspection.
   This site does not use remote image optimization. Ordinary HTML image URLs,
   local assets, static rendering and the separate Pages Functions are unchanged.

@@ -7,19 +7,76 @@
 import type { MessageEnvelope, MessageType } from './types.js';
 
 /**
+ * Values JSON cannot carry: JSON.stringify drops them from objects, turns them
+ * into null inside arrays, and returns undefined at the top level.
+ */
+function isUnrepresentable(value: unknown): boolean {
+  const kind = typeof value;
+  return value === undefined || kind === 'function' || kind === 'symbol';
+}
+
+/**
+ * JSON.stringify calls `value.toJSON(key)` before serializing, when it is a
+ * function, so a Date goes out as an ISO string and a record with a custom
+ * toJSON goes out as whatever that returns. Mirror it, otherwise a canonical
+ * string cannot match the bytes the wire actually carries.
+ */
+function applyToJson(value: unknown, key: string): unknown {
+  if (value === null || typeof value !== 'object') return value;
+  const toJSON = (value as { toJSON?: unknown }).toJSON;
+  return typeof toJSON === 'function' ? (toJSON as (key: string) => unknown).call(value, key) : value;
+}
+
+/**
  * Deterministic JSON stringify (keys recursively sorted, no spacing)
+ *
+ * The output must always be valid JSON that survives a JSON round trip, because
+ * the checksum in a signed envelope is taken over this string: whatever the
+ * receiver parses has to canonicalize back to the same bytes. JSON.stringify
+ * already enforces that by omitting `undefined`/function/symbol properties and
+ * writing `null` for them inside arrays, so this mirrors those rules instead of
+ * emitting the literal text `undefined` (which produced `{"reward":undefined}`
+ * and therefore envelopes that could never verify). Two more JSON.stringify
+ * behaviours are mirrored for the same reason: `Array.prototype.map` skips
+ * holes in a sparse array (so `[1,,3]` came out as `[1,,3]`), and an object with
+ * a `toJSON` method serializes to that method's return value.
  */
 export function canonicalizeJson(value: unknown): string {
+  const canonical = canonicalOrNull(value, '');
+  if (canonical === null) {
+    throw new TypeError(`canonicalizeJson: ${String(typeof value)} has no JSON representation`);
+  }
+  return canonical;
+}
+
+/**
+ * Canonical text for one value, or null when the value has no JSON
+ * representation and must therefore be dropped (object property) or written as
+ * `null` (array element) by the caller, which is what JSON.stringify does.
+ */
+function canonicalOrNull(input: unknown, key: string): string | null {
+  const value = applyToJson(input, key);
+  if (isUnrepresentable(value)) {
+    return null;
+  }
   if (value === null || typeof value !== 'object') {
     return JSON.stringify(value);
   }
   if (Array.isArray(value)) {
-    return '[' + value.map((item) => canonicalizeJson(item)).join(',') + ']';
+    // Array.from visits holes, which map() skips: a hole is undefined to JSON,
+    // and JSON.stringify writes null for it.
+    const items = Array.from({ length: value.length }, (_, index) =>
+      canonicalOrNull(value[index], String(index)) ?? 'null'
+    );
+    return '[' + items.join(',') + ']';
   }
-  const keys = Object.keys(value as Record<string, unknown>).sort();
-  const pairs = keys.map(
-    (key) => `${JSON.stringify(key)}:${canonicalizeJson((value as Record<string, unknown>)[key])}`
-  );
+  const record = value as Record<string, unknown>;
+  const pairs: string[] = [];
+  for (const memberKey of Object.keys(record).sort()) {
+    const canonical = canonicalOrNull(record[memberKey], memberKey);
+    if (canonical === null) continue;
+    pairs.push(`${JSON.stringify(memberKey)}:${canonical}`);
+  }
   return '{' + pairs.join(',') + '}';
 }
 

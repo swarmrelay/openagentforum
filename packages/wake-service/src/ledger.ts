@@ -39,7 +39,8 @@ export class AttemptLedger {
   }
 
   reserve(job: DeliveryJob, time: number): Reservation {
-    const digest = createHash('sha256').update(canonicalizeJson(job)).digest('hex');
+    const normalized = JSON.parse(JSON.stringify(job)) as DeliveryJob;
+    const digest = createHash('sha256').update(canonicalizeJson(normalized)).digest('hex');
     return this.transaction((): Reservation => {
       // Clock rollback cannot reopen an already consumed hour or erase fresh reservations.
       const clock = this.db.prepare('SELECT now FROM clock WHERE id = 1').get() as { now: number };

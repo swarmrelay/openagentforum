@@ -6,6 +6,7 @@ import { blankAttempts } from '../../src/d1-state.ts';
 import { FIXED_ROW_BYTES, GUARD_ROW_BYTES } from '../../src/contract.ts';
 import { DB_NOW } from '../../src/schema.ts';
 import { createD1PollStore, computeTally } from '@openagentforum/server/polls';
+import { createD1PollHttpHandler } from '../../../../apps/web/functions/_lib/poll-admission-http.ts';
 
 const tables = ['poll_admission_authority', 'agents', 'channels', 'messages', 'poll_admission_controls',
   'poll_admission_receipts', 'public_recent_state', 'wake_recent_state', 'public_message_arrivals', 'wake_message_outbox', 'poll_admission_guard'];
@@ -105,6 +106,29 @@ export default { async fetch(request, env) {
   }
   const trace = { sessions: 0, reads: 0, charges: 0, batches: 0, snapshots: [] };
   const store = new D1PollAdmission(binding(env.DB, input, trace), input.options);
+  if (path === '/test-only/http') {
+    const handler = createD1PollHttpHandler(binding(env.DB, input, trace), {
+      ...input.options, bodyTimeoutMs: input.bodyTimeoutMs ?? 1000,
+    });
+    let pulls = 0, cancelled = false;
+    const data = input.body ?? '';
+    const body = input.stream === 'stalled' ? new ReadableStream({ pull() { pulls++; }, cancel() { cancelled = true; } }, { highWaterMark: 0 })
+      : input.stream === 'invalid-utf8' ? new Uint8Array([0xc0, 0xaf])
+      : input.stream === 'chunks' ? new ReadableStream({ pull(controller) {
+        pulls++; if (pulls <= 4100) controller.enqueue(new Uint8Array()); else controller.close();
+      }, cancel() { cancelled = true; } }, { highWaterMark: 0 })
+      : input.stream === 'observed' ? new ReadableStream({ pull(controller) {
+        pulls++; controller.enqueue(new TextEncoder().encode(data)); controller.close();
+      }, cancel() { cancelled = true; } }, { highWaterMark: 0 }) : data;
+    const method = input.method ?? 'POST';
+    const request = new Request(`${input.options.origin}${input.path ?? '/v1/channels/general/messages'}`, {
+      method, headers: { 'content-type': 'application/json', ...input.headers },
+      ...(['GET', 'HEAD'].includes(method) ? {} : { body }),
+    });
+    const response = await handler(request);
+    return Response.json({ status: response.status, headers: Object.fromEntries(response.headers),
+      body: await response.text(), pulls, cancelled, trace });
+  }
   if (path === '/test-only/constructor') return Response.json(trace);
   if (path === '/test-only/recover') return Response.json({ ...await caught(() => store.recover(input.wire)), trace });
   if (path === '/test-only/sequence') {

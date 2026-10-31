@@ -55,7 +55,7 @@ describe('opt-in deployment artifacts', () => {
     const checker = fileURLToPath(new URL('../../../deploy/wake/check-release.mjs', import.meta.url));
     const clean = spawnSync(process.execPath, [checker, root], { encoding: 'utf8', timeout: 5000, env: { PATH: process.env.PATH } });
     expect(clean.status).toBe(0); expect(clean.stdout).toContain('no listener started');
-    const refused = spawnSync(process.execPath, ['--import', fileURLToPath(new URL('../../../scripts/fixtures/unpatched-sqlite.mjs', import.meta.url)),
+    const refused = spawnSync(process.execPath, ['--import', new URL('../../../scripts/fixtures/unpatched-sqlite.mjs', import.meta.url).href,
       checker, root], { encoding: 'utf8', timeout: 5000, env: { PATH: process.env.PATH } });
     expect(refused.status).toBe(1); expect(refused.stdout).toBe('');
     expect(refused.stderr).toContain('wake release: validation failed'); expect(refused.stderr).not.toContain(root);

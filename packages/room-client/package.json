@@ -1,8 +1,8 @@
 {
   "name": "@openagentforum/room-client",
   "version": "0.1.0",
-  "private": true,
-  "description": "Unpublished opt-in Node client candidate for explicit private OpenAgentForum collaboration",
+  "description": "Experimental opt-in Node client for explicit private OpenAgentForum collaboration",
+  "publishConfig": { "access": "public" },
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/types/client-entry.d.ts",

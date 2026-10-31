@@ -27,9 +27,70 @@ export interface InboxPage {
   /** Keep paging with checkpoint; no claim of completeness against a dishonest relay. */
   hasMore: boolean;
   scanned: number;
+  /**
+   * Present when a first visit had history before its recent window and the hub's
+   * reply lookup (#358) was consulted for replies to older posts. `unavailable`
+   * means the hub does not serve it; the window results are unchanged either way.
+   */
+  replyLookup?: { status: 'used' | 'unavailable'; olderReplies: number; rejected: number; truncated: boolean };
 }
 
 const MAX_AUTHORED = 50_000;
+/** Lookup pages per first visit: the agent's 30 most recent public posts with replies. */
+const LOOKUP_PAGES = 3;
+type StoredEnvelope = MessageEnvelope & { storedSeq: number };
+interface ReplyLookup { threads: Array<{ post: StoredEnvelope; replies: StoredEnvelope[] }>; rejected: number; truncated: boolean }
+
+const envelopeShape = (value: any): value is StoredEnvelope => Boolean(value) && typeof value === 'object' && typeof value.id === 'string' && value.id.length > 0
+  && value.id.length <= 256 && typeof value.channel === 'string' && typeof value.sender === 'string' && Number.isSafeInteger(value.storedSeq) && value.storedSeq > 0;
+
+/**
+ * Replies to this agent's older public posts, from the hub's signed-parent index.
+ * Optional and read-only: a failed first page means "unavailable"; a later failure
+ * keeps the verified earlier pages and marks the result truncated.
+ * Every post must verify as this agent's, and every reply as its sender's, with the
+ * signed payload.inReplyTo naming that post. Anything else is counted as rejected.
+ */
+async function readReplyLookup(hubUrl: string, agentId: string, fetcher: typeof fetch, senderKey: (id: string) => Promise<string>): Promise<ReplyLookup | null> {
+  const lookup: ReplyLookup = { threads: [], rejected: 0, truncated: false };
+  const verifies = async (envelope: StoredEnvelope, key: string) => {
+    try { return (await verifyEnvelope(envelope, key)).valid; } catch { return false; }
+  };
+  let ownKey: string;
+  try { ownKey = await senderKey(agentId); } catch { return null; }
+  let before: string | undefined;
+  for (let page = 0; page < LOOKUP_PAGES; page++) {
+    let body: any;
+    try {
+      const response = await fetcher(`${hubUrl}/v1/agents/${agentId}/replies${before ? `?before=${encodeURIComponent(before)}` : ''}`);
+      body = response.ok ? await response.json() : null;
+    } catch { body = null; }
+    if (!body || body.agentId !== agentId || !Array.isArray(body.threads)) {
+      if (page === 0) return null;
+      lookup.truncated = true;
+      return lookup;
+    }
+    for (const thread of body.threads) {
+      const post = thread?.post;
+      if (!envelopeShape(post) || post.sender !== agentId || !Array.isArray(thread.replies) || !(await verifies(post, ownKey))) { lookup.rejected++; continue; }
+      const replies: StoredEnvelope[] = [];
+      for (const reply of thread.replies) {
+        const payload = reply?.payload;
+        let key: string | undefined;
+        try { key = envelopeShape(reply) && reply.sender !== agentId ? await senderKey(reply.sender) : undefined; } catch { key = undefined; }
+        if (!key || reply.encrypted || reply.type === 'e2ee_blob' || !payload || typeof payload !== 'object' || payload.inReplyTo !== post.id
+          || !(await verifies(reply, key))) { lookup.rejected++; continue; }
+        replies.push(reply);
+      }
+      if (thread.moreReplies === true) lookup.truncated = true;
+      lookup.threads.push({ post, replies });
+    }
+    if (typeof body.next !== 'string') return lookup;
+    before = body.next;
+  }
+  lookup.truncated = true;
+  return lookup;
+}
 
 export function validateInboxCheckpoint(value: unknown, hubUrl: string, agentId: string): asserts value is InboxCheckpoint {
   const c = value as InboxCheckpoint | undefined;
@@ -74,7 +135,23 @@ export async function readInbox(hubUrl: string, agentId: string, fetcher: typeof
   const pending = options.checkpoint?.pendingChannels;
   const channels = pending?.length ? [...new Set(pending)].filter(name => selected.includes(name)) : selected;
   const keys = new Map<string, string>();
+  const senderKey = async (sender: string) => {
+    let key = keys.get(sender);
+    if (!key) {
+      const response = await fetcher(`${hubUrl}/v1/agents/${encodeURIComponent(sender)}`);
+      if (!response.ok) throw new Error(`Inbox sender lookup failed: HTTP ${response.status}`);
+      const body = await response.json() as { agent?: { publicKey?: string } };
+      key = body.agent?.publicKey;
+      if (!key) throw new Error('Inbox sender has no registered public key');
+      keys.set(sender, key);
+    }
+    return key;
+  };
   const mention = new RegExp(`(^|[^a-zA-Z0-9_])${agentId}([^a-zA-Z0-9_]|$)`);
+  // Fetched at most once per call, and only when a first visit has older history.
+  let lookup: Promise<ReplyLookup | null> | undefined;
+  // storedSeq is unsigned hub metadata: never report a lookup reply again from the window.
+  const reported = new Set<string>();
   let pages = 0;
   for (const [index, channel] of channels.entries()) {
     let recent = !states.has(channel) && !options.fromBeginning;
@@ -93,6 +170,26 @@ export async function readInbox(hubUrl: string, agentId: string, fetcher: typeof
         // A declared recent-history boundary, not a claim that earlier messages were read.
         state.after = first - 1;
         state.historyStartsAt = first;
+        if (first > 1) {
+          // Seed this channel once, when its state is created: older posts join the
+          // authored index so window replies to them match, and verified replies that
+          // predate the window are reported. Later windows find newer ones.
+          const found = await (lookup ??= readReplyLookup(hubUrl, agentId, fetcher, senderKey));
+          const summary = result.replyLookup ??= { status: found ? 'used' : 'unavailable', olderReplies: 0, rejected: found?.rejected ?? 0, truncated: found?.truncated ?? false };
+          for (const thread of found?.threads ?? []) {
+            if (thread.post.channel === channel && !authored.has(thread.post.id)) {
+              if (authored.size >= MAX_AUTHORED) throw new Error(`Inbox authored-message index reached ${MAX_AUTHORED}; use a dedicated archival index`);
+              authored.add(thread.post.id);
+              state.authoredIds.push(thread.post.id);
+            }
+            for (const reply of thread.replies) {
+              if (reply.channel !== channel || reply.storedSeq >= first || reported.has(reply.id)) continue;
+              reported.add(reply.id);
+              result.items.push({ reasons: mention.test(JSON.stringify(reply.payload)) ? ['reply', 'mention'] : ['reply'], envelope: reply });
+              summary.olderReplies++;
+            }
+          }
+        }
       }
       recent = false;
       states.set(channel, state);
@@ -100,17 +197,8 @@ export async function readInbox(hubUrl: string, agentId: string, fetcher: typeof
       for (const envelope of body.messages) {
         if (!envelope || envelope.channel !== channel || typeof envelope.id !== 'string' || !envelope.id || envelope.id.length > 256 || typeof envelope.sender !== 'string' || !Number.isSafeInteger(envelope.storedSeq)
           || envelope.storedSeq !== state.after + 1) throw new Error(`Inbox record gap or invalid envelope in ${channel}; checkpoint not acknowledged`);
-        let key = keys.get(envelope.sender);
-        if (!key) {
-          const response = await fetcher(`${hubUrl}/v1/agents/${encodeURIComponent(envelope.sender)}`);
-          if (!response.ok) throw new Error(`Inbox sender lookup failed: HTTP ${response.status}`);
-          const body = await response.json() as { agent?: { publicKey?: string } };
-          key = body.agent?.publicKey;
-          if (!key) throw new Error('Inbox sender has no registered public key');
-          keys.set(envelope.sender, key);
-        }
         // The shared verifier checks payload, signature AND key fingerprint == sender.
-        const verified = await verifyEnvelope(envelope, key);
+        const verified = await verifyEnvelope(envelope, await senderKey(envelope.sender));
         if (!verified.valid) throw new Error(`Inbox envelope does not verify as stored: ${verified.error}`);
         if (envelope.sender === agentId) {
           if (!authored.has(envelope.id)) {
@@ -125,7 +213,7 @@ export async function readInbox(hubUrl: string, agentId: string, fetcher: typeof
           // Top-level replyToId is unsigned in v1. Only signed payload links count.
           if (typeof parent === 'string' && authored.has(parent)) reasons.push('reply');
           if (mention.test(JSON.stringify(payload))) reasons.push('mention');
-          if (reasons.length) result.items.push({ reasons, envelope });
+          if (reasons.length && !reported.has(envelope.id)) result.items.push({ reasons, envelope });
         }
         state.after = envelope.storedSeq;
         result.scanned++;

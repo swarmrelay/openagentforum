@@ -73,13 +73,24 @@ export async function merkleProof(leafIndex: number, leafHashes: Uint8Array[]): 
   return { leafIndex, leafCount: leafHashes.length, path: path.map(bytesToHex) };
 }
 
-/** Recompute the root from a leaf hash and its audit path (RFC 6962 section 2.1.1 inverse). */
+/** A tree of 2^64 leaves is already beyond any leaf count JavaScript can index. */
+const MAX_PATH_LENGTH = 64;
+/** Sibling hashes are SHA-256 digests: 32 bytes, optionally 0x-prefixed, either case. */
+const SIBLING_HEX = /^(?:0x)?[0-9a-fA-F]{64}$/;
+const isIndex = (value: unknown): value is number => Number.isSafeInteger(value) && (value as number) >= 0;
+
+/** Recompute the root from a leaf hash and its audit path (RFC 6962 section 2.1.1 inverse).
+ * The proof is untrusted peer input, so every field is checked before any work is done:
+ * `hexToBytes` is lenient about length and digits and would silently hash a bad sibling. */
 export async function verifyMerkleProof(leafHash: Uint8Array, proof: MerkleProof, rootHex: string): Promise<boolean> {
-  let idx = proof.leafIndex;
-  let size = proof.leafCount;
+  const idx = proof.leafIndex;
+  const size = proof.leafCount;
   let hash = leafHash;
-  if (size === 0 || idx >= size) return false;
-  const path = proof.path.map(hexToBytes);
+  if (!isIndex(idx) || !isIndex(size) || size === 0 || idx >= size) return false;
+  if (!Array.isArray(proof.path) || proof.path.length > MAX_PATH_LENGTH) return false;
+  for (const sibling of proof.path) {
+    if (typeof sibling !== 'string' || !SIBLING_HEX.test(sibling)) return false;
+  }
   // walk the same recursion as merkleAuditPath, deciding left/right by subtree geometry
   const steps: Array<'left' | 'right'> = [];
   const walk = (m: number, n: number) => {
@@ -88,7 +99,9 @@ export async function verifyMerkleProof(leafHash: Uint8Array, proof: MerkleProof
     if (m < k) { walk(m, k); steps.push('right'); } else { walk(m - k, n - k); steps.push('left'); }
   };
   walk(idx, size);
-  if (steps.length !== path.length) return false;
+  // Geometry is known before any sibling is decoded, so a wrong-length path costs nothing.
+  if (steps.length !== proof.path.length) return false;
+  const path = proof.path.map(hexToBytes);
   for (let i = 0; i < path.length; i++) {
     hash = steps[i] === 'right' ? await nodeHash(hash, path[i]) : await nodeHash(path[i], hash);
   }

@@ -48,6 +48,10 @@ jobs:
         timeout-minutes: 6
         run: node scripts/check-peer-install.mjs
 
+      - name: Verify packed room client with published protocol
+        timeout-minutes: 6
+        run: node scripts/check-room-install.mjs --registry-protocol
+
       # OIDC trusted publishing needs a recent npm CLI
       - name: Update npm for trusted publishing
         run: npm install -g npm@latest && npm --version
@@ -62,6 +66,10 @@ jobs:
       - name: Verify published peer client from npm without local package fallback
         timeout-minutes: 6
         run: node scripts/check-peer-install.mjs --registry-client
+
+      - name: Verify published room client from npm without local package fallback
+        timeout-minutes: 6
+        run: node scripts/check-room-install.mjs --registry-client
 
   # Isolated from npm publication and from Pages deploy. A registry outage
   # leaves this job in a warning state and does not fail the packages already

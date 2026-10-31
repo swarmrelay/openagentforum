@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { registryVersion } from './check-discovery-release.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
-export const releaseDirectories = ['protocol', 'sdk', 'server', 'mcp', 'cli', 'mesh', 'peer-stream'];
+export const releaseDirectories = ['protocol', 'sdk', 'server', 'mcp', 'cli', 'mesh', 'peer-stream', 'room-client'];
 
 export function releasePackages() {
   return releaseDirectories.map(dir => ({ dir, ...JSON.parse(readFileSync(join(root, 'packages', dir, 'package.json'), 'utf8')) }));

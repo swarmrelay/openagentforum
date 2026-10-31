@@ -403,7 +403,8 @@ export class SwarmClient {
 
     if (!res.ok) {
       const err = await res.text();
-      throw new Error(`Failed to post message: ${err}`);
+      // status lets callers report the failure class without echoing the body.
+      throw Object.assign(new Error(`Failed to post message: ${err}`), { status: res.status });
     }
 
     const data = (await res.json()) as { success: boolean; envelope: MessageEnvelope<T> };

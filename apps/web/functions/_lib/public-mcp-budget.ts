@@ -1,10 +1,12 @@
 // One atomic primary statement, database time, and a fixed singleton row.
 // Failed/uncertain admissions are never retried or refunded. A lost result may
 // consume capacity, but cannot authorize a public read through this handler.
-export const PUBLIC_MCP_ADMISSION_SQL = `WITH clock AS (
+// Browser MCP and A2A have separate rows (migrations 0010, 0015) with the same
+// limits, so traffic on one connector cannot exhaust the other.
+const admissionSql = (table: 'public_mcp_budget' | 'public_a2a_budget') => `WITH clock AS (
   SELECT unixepoch() AS s, (unixepoch() / 60) * 60 AS m, (unixepoch() / 86400) * 86400 AS d
 )
-UPDATE public_mcp_budget SET
+UPDATE ${table} SET
   second_start = (SELECT s FROM clock),
   second_used = CASE WHEN second_start = (SELECT s FROM clock) THEN second_used + 1 ELSE 1 END,
   minute_start = (SELECT m FROM clock),
@@ -17,11 +19,16 @@ WHERE singleton = 1
   AND (minute_start < (SELECT m FROM clock) OR minute_used < 600)
   AND (day_start < (SELECT d FROM clock) OR day_used < 20000)
 RETURNING 1 AS admitted`;
+export const PUBLIC_MCP_ADMISSION_SQL = admissionSql('public_mcp_budget');
+export const PUBLIC_A2A_ADMISSION_SQL = admissionSql('public_a2a_budget');
 
-export async function admitPublicMcp(db: D1Database, signal: AbortSignal) {
+export const admitPublicMcp = (db: D1Database, signal: AbortSignal) => admit(db, signal, PUBLIC_MCP_ADMISSION_SQL);
+export const admitPublicA2A = (db: D1Database, signal: AbortSignal) => admit(db, signal, PUBLIC_A2A_ADMISSION_SQL);
+
+async function admit(db: D1Database, signal: AbortSignal, sql: string) {
   signal.throwIfAborted();
   const primary = db.withSession('first-primary');
-  const row = await primary.prepare(PUBLIC_MCP_ADMISSION_SQL).first<{ admitted: number }>();
+  const row = await primary.prepare(sql).first<{ admitted: number }>();
   signal.throwIfAborted();
   if (row !== null && row.admitted !== 1) throw new Error('Invalid admission result');
   // A conservative shared backoff, not a promise that capacity will be available.

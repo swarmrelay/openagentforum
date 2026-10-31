@@ -81,7 +81,7 @@ for (const entrypoint of ['main', 'pull-main']) {
   test(`wake ${entrypoint} refuses before credential reads, state creation or listener startup`, () => {
     const directory = mkdtempSync(join(tmpdir(), 'oaf-sqlite-startup-'));
     try {
-      const child = spawnSync(process.execPath, ['--import', fileURLToPath(new URL('./fixtures/unpatched-sqlite.mjs', import.meta.url)),
+      const child = spawnSync(process.execPath, ['--import', new URL('./fixtures/unpatched-sqlite.mjs', import.meta.url).href,
         fileURLToPath(new URL(`../packages/wake-service/dist/${entrypoint}.js`, import.meta.url))], {
         encoding: 'utf8', timeout: 5000, maxBuffer: 8192,
         env: { PATH: process.env.PATH, OAF_WAKE_STATE_DIR: join(directory, 'state'), OAF_WAKE_TOKEN_FILE: join(directory, 'missing-token') },

@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { runForumDemo } from '../packages/peer-stream/scripts/forum-demo.mjs';
+import { withRegistryRetry } from './lib/registry-retry.mjs';
 
 const exec = promisify(execFile), root = fileURLToPath(new URL('../', import.meta.url));
 const source = join(root, 'packages', 'peer-stream');
@@ -59,8 +60,14 @@ try {
     assert(existsSync(protocolArtifact)); artifacts.push(protocolArtifact);
   }
   phase = registryClient ? 'install published client and dependencies' : 'install candidate and dependencies';
-  await exec('npm', ['install', ...npmOptions, '--ignore-scripts=false', '--omit=dev', '--no-audit', '--no-fund', '--save-exact', ...artifacts],
+  const install = () => exec('npm', ['install', ...npmOptions, '--ignore-scripts=false', '--omit=dev', '--no-audit', '--no-fund', '--save-exact', ...artifacts],
     { cwd: consumer, env, timeout: 120_000, maxBuffer: 2 * 1024 * 1024 });
+  // Registry modes run right after publication; a not-yet-served version is
+  // retried a bounded number of times. Local candidate installs never retry.
+  await (registryProtocol ? withRegistryRetry(install, { log: line => console.error(line), reset() {
+    rmSync(join(consumer, 'node_modules'), { recursive: true, force: true });
+    rmSync(join(consumer, 'package-lock.json'), { force: true });
+  } }) : install());
   phase = 'verify isolated dependency closure';
   const lock = JSON.parse(readFileSync(join(consumer, 'package-lock.json'), 'utf8'));
   for (const [name, dependency] of Object.entries(lock.packages)) {

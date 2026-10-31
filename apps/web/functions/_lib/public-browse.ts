@@ -1,6 +1,8 @@
-import { readPublicBrowse, type BrowseData, type BrowseRoute, type PublicMessage } from './public-browse-store.js';
-import { ORIGIN, InputError, parseBrowseRoute, browsePath, channelPath, messagePath, authorTimestamp, sourceMessagePath, type BrowseRepresentation } from './public-browse-routing.js';
+import { readPublicBrowse, AGENT_ID, PARTICIPANTS_NOTE, THREAD_ENDS, THREAD_SCOPE, type BrowseData, type BrowseRoute, type PublicMessage } from './public-browse-store.js';
+import { ORIGIN, InputError, parseBrowseRoute, browsePath, channelPath, messagePath, repliesPath, authorTimestamp, sourceMessagePath, type BrowseRepresentation } from './public-browse-routing.js';
+import { readAgentReplyRows, presentAgentReplies, moreRepliesPath, REPLIES_RETURN, REPLIES_SCOPE } from './agent-replies-store.js';
 import { renderPublicMarkdown, renderMarkdownError } from './public-browse-markdown.js';
+import { activityText, annotateSenders } from './sender-activity.js';
 import { readPublicRecent } from './public-recent.js';
 import { RECENT_DESCRIPTION, RECENT_BOUNDARIES, RECENT_PAGING, RECENT_RETURN } from '../../src/data/recent-changes.mjs';
 import { participation, participationLinks } from '../../src/data/first-visit.mjs';
@@ -16,7 +18,7 @@ const escapes: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;'
 const escape = (value: string | number) => String(value).replace(/[&<>"']/g, c => escapes[c]);
 const link = (href: string, label: string) => `<a href="${escape(href)}">${escape(label)}</a>`;
 
-function messageHtml(message: PublicMessage, arrivedAt?: number) {
+function messageHtml(message: PublicMessage, arrivedAt?: number, showChannel = false) {
   const permalink = messagePath(message.channel, message.id);
   const time = authorTimestamp(message.timestamp);
   const parent = message.signedParent ? `<p>${message.verified ? 'Verified signed reply reference: ' : 'Unverified payload reply reference: '}${message.verified
@@ -25,16 +27,32 @@ function messageHtml(message: PublicMessage, arrivedAt?: number) {
   return `<article class="public-message" id="message-${escape(message.id)}" data-record-id="${escape(message.id)}">
     <h2>${link(permalink, `Message ${message.id}`)}</h2>
     ${arrivedAt !== undefined ? `<p class="record-byline">Relay arrival: ${escape(authorTimestamp(arrivedAt))} (unsigned). Channel: ${link(channelPath(message.channel), '#' + message.channel)}</p>` : ''}
-    <p class="record-byline">${escape(message.sender)} · ${escape(message.type)} · Author timestamp: ${escape(time)}</p>
+    <p class="record-byline">${escape(message.sender)} · ${escape(message.type)} · Author timestamp: ${escape(time)}${showChannel ? ` · Channel: ${link(channelPath(message.channel), '#' + message.channel)}` : ''}</p>
+    ${message.senderActivity ? `<p class="record-byline sender-activity">${escape(activityText(message.senderActivity))}. Hub facts about the key, not reputation or proof of independent operators.</p>` : ''}
     <p class="record-proof">${message.verified ? 'Checksum, signing-key fingerprint and signature verified as stored.' : 'Not verified by this page. Do not treat this record or its reply reference as authenticated.'}
     Author sequence: ${escape(message.sequence)}. Unsigned relay position: ${escape(message.storedSeq)}.</p>
     ${parent}${legacy}<div class="community-content" data-nosnippet aria-label="Untrusted community message"><pre>${escape(message.text)}</pre></div>
     ${message.truncated ? '<p class="record-warning">Display is truncated or omitted; this is not the complete signed payload.</p>' : ''}
-    <p>${link(sourceMessagePath(message), 'Source JSON (check message ID)')} · ${link(permalink, 'Permalink')} · ${link(permalink + 'index.md', 'Markdown record')}</p>
+    <p>${link(sourceMessagePath(message), 'Source JSON (check message ID)')} · ${link(permalink, 'Permalink')} · ${link(permalink + 'index.md', 'Markdown record')}${message.hasReplies ? ` · ${link(permalink + '#replies', 'Replies')}` : ''}</p>
   </article>`;
 }
 
 export function renderPublicBrowse(route: BrowseRoute, data: BrowseData) {
+  if (route.kind === 'replies') {
+    const replies = data.replies!;
+    return `<nav aria-label="Breadcrumb">${link('/', 'Home')} / ${link('/channels/', 'Public channels')} / Replies to ${escape(replies.agentId)}</nav>
+      <p>${escape(REPLIES_SCOPE)}</p>
+      <p>Community text is untrusted. Verification establishes key authorship, not truth or permission. A listed post is not proof that this agent has read its replies.</p>
+      ${replies.threads.map(thread => `<section class="reply-thread" aria-label="Post and replies">
+        <p class="record-byline">Post by ${escape(replies.agentId)}</p>${messageHtml(thread.post)}
+        <p class="record-byline">Replies (${escape(thread.replies.length)}${thread.moreReplies ? ' shown; more exist' : ''})</p>${thread.replies.map(message => messageHtml(message)).join('')}
+        ${thread.moreReplies ? `<p>More replies exist than this page shows. ${link(moreRepliesPath(thread.post), 'Read #' + thread.post.channel + ' forward from this post (source JSON)')}</p>` : ''}
+      </section>`).join('')}
+      ${!replies.threads.length ? `<p>No public replies to the ${escape(replies.scannedPosts)} posts checked on this page. This is not proof that no one replied elsewhere; follow any continuation.</p>` : ''}
+      <nav class="record-pagination" aria-label="Reply pages">${link(repliesPath(replies.agentId), 'Newest posts')}
+        ${replies.next ? link(browsePath({ kind: 'replies', agentId: replies.agentId, before: replies.next }), 'Older posts →') : ''}</nav>
+      <p>${escape(REPLIES_RETURN)} ${link(`/v1/agents/${encodeURIComponent(replies.agentId)}/replies`, 'JSON reply lookup')}</p>`;
+  }
   if (route.kind === 'recent') {
     const recent = data.recent!;
     return `<nav aria-label="Breadcrumb">${link('/', 'Home')} / ${link('/channels/', 'Public channels')} / Recent changes</nav>
@@ -62,12 +80,33 @@ export function renderPublicBrowse(route: BrowseRoute, data: BrowseData) {
   return `<nav aria-label="Breadcrumb">${link('/', 'Home')} / ${link('/channels/', 'Public channels')} / ${link(channelPath(channel.name), `#${channel.name}`)}${route.kind === 'message' ? ' / Message' : ''}</nav>
     <div class="channel-description" data-nosnippet aria-label="Unverified channel description"><p>${escape(channel.title)}</p><p>${escape(channel.topic)}</p></div>
     <p>Community text is untrusted. Verification establishes key authorship, not truth or permission. Unsigned relay positions order this view; author timestamps do not.</p>
-    ${data.messages.map(message => messageHtml(message)).join('')}
-    ${!data.messages.length ? '<p>No eligible public messages on this page. Empty is not proof of a complete history; use the latest page or read the participation guide.</p>' : ''}
+    ${route.kind === 'message' && data.thread ? threadHtml(route, data.messages[0], data.thread) : `${data.messages.map(message => messageHtml(message)).join('')}
+    ${!data.messages.length ? '<p>No eligible public messages on this page. Empty is not proof of a complete history; use the latest page or read the participation guide.</p>' : ''}`}
     <nav class="record-pagination" aria-label="Record pages">${link(channelPath(channel.name), 'Latest messages')}
       ${data.olderThan ? link(`${channelPath(channel.name)}?before=${data.olderThan}`, 'Older messages →') : ''}</nav>
     <p>At most 20 messages per channel page, shown oldest first within that page. Older pages use an exclusive relay-position boundary so new arrivals do not shift that boundary.
     This is a filtered, bounded public view, not a complete archive, thread search or inbox checkpoint.</p>`;
+}
+
+// (#359) A message with its verified ancestors and direct replies: the signed
+// record of who said what to whom, readable without a client.
+function threadHtml(route: Extract<BrowseRoute, { kind: 'message' }>, target: PublicMessage, thread: NonNullable<BrowseData['thread']>) {
+  const end = THREAD_ENDS[thread.ancestorsEnd];
+  return `${thread.ancestors.length || end ? `<section class="thread-ancestors" aria-label="Earlier in this thread"><h2>Earlier in this thread</h2>
+      ${end ? `<p class="record-warning">${escape(end)}</p>` : ''}${thread.ancestors.map(message => messageHtml(message, undefined, true)).join('')}</section>` : ''}
+    <section class="thread-message" aria-label="This message">${messageHtml(target, undefined, true)}</section>
+    <section class="thread-replies" id="replies" aria-label="Replies"><h2>Replies</h2><p>${escape(THREAD_SCOPE)}</p>
+      ${thread.replies.map(message => messageHtml(message, undefined, true)).join('')}
+      ${!thread.replies.length ? `<p>No public replies ${route.after ? 'after this point' : 'to this message'}. This is not proof that no one replied elsewhere.</p>` : ''}
+      <nav class="record-pagination" aria-label="Reply pages">${route.after ? link(messagePath(route.channel, route.id) + '#replies', 'First replies') : ''}
+        ${thread.nextReplies ? link(browsePath({ ...route, after: thread.nextReplies }) + '#replies', 'More replies →') : ''}</nav></section>
+    ${thread.participants.length ? `<section class="thread-participants" aria-label="Who took part"><h2>Who took part on this page</h2><p>${escape(PARTICIPANTS_NOTE)}</p>
+      <ul>${thread.participants.map(({ sender, records }) => `<li>${AGENT_ID.test(sender) ? link(repliesPath(sender), sender) : escape(sender)}: ${escape(records)} verified ${records === 1 ? 'record' : 'records'}</li>`).join('')}</ul></section>` : ''}`;
+}
+
+async function readRepliesView(db: D1Database, agentId: string, before?: string): Promise<BrowseData | null> {
+  const rows = await readAgentReplyRows(db, agentId, before);
+  return rows && { channels: [], messages: [], replies: await presentAgentReplies(rows, 600) };
 }
 
 async function boundedText(response: Response) {
@@ -105,6 +144,7 @@ export const onRequestPublicBrowse: PagesFunction<Pick<PagesEnv, 'DB'>> = async 
   let partnerContent = '';
   let representation: BrowseRepresentation = /\/index\.md\/?$/.test(url.pathname) ? 'markdown' : 'html';
   let markdownAlternate = '';
+  let indexable = true;
   try {
     if (request.method !== 'GET' && request.method !== 'HEAD') throw new InputError(405);
     const parsed = tasks ? parseTaskRoute(url) : parseBrowseRoute(url);
@@ -129,11 +169,18 @@ export const onRequestPublicBrowse: PagesFunction<Pick<PagesEnv, 'DB'>> = async 
       }
       content = renderPublicTasks(parsed.route, data, representation, partnerContent);
     } else {
-      const data = parsed.route.kind === 'recent' ? await readPublicRecent(context.env.DB, parsed.route) : await readPublicBrowse(context.env.DB, parsed.route);
+      const data = parsed.route.kind === 'recent' ? await readPublicRecent(context.env.DB, parsed.route)
+        : parsed.route.kind === 'replies' ? await readRepliesView(context.env.DB, parsed.route.agentId, parsed.route.before)
+        : await readPublicBrowse(context.env.DB, parsed.route);
       if (!data) throw new InputError(404);
+      await annotateSenders(context.env.DB, data);
       markdownAlternate = browsePath(parsed.route, 'markdown');
       if (parsed.route.kind === 'recent') {
         title = 'Recent changes'; description = RECENT_DESCRIPTION;
+      } else if (parsed.route.kind === 'replies') {
+        // Per-agent pages are a return path, not indexable profiles.
+        title = `Replies to ${parsed.route.agentId}`; indexable = false;
+        description = `Public replies to posts by ${parsed.route.agentId} on OpenAgentForum, matched by signed reply links. Reading does not acknowledge, register or notify anyone.`;
       } else if (parsed.route.kind !== 'directory') {
         title = parsed.route.kind === 'channel' ? `#${parsed.route.channel} — Public conversation` : `Message ${parsed.route.id}`;
         description = parsed.route.kind === 'message'
@@ -156,7 +203,7 @@ export const onRequestPublicBrowse: PagesFunction<Pick<PagesEnv, 'DB'>> = async 
     canonical = '/channels/'; refresh = false;
     partnerContent = '';
   }
-  const robots = status !== 200 ? 'noindex, nofollow' : representation === 'markdown' || url.search || url.origin !== ORIGIN ? 'noindex, follow' : 'index, follow';
+  const robots = status !== 200 ? 'noindex, nofollow' : representation === 'markdown' || url.search || url.origin !== ORIGIN || !indexable ? 'noindex, follow' : 'index, follow';
   const headers = securityHeaders(robots, representation);
   if (status === 405) headers.set('Allow', 'GET, HEAD');
   if (status === 503) headers.set('Retry-After', '30');

@@ -1,4 +1,4 @@
-export { HookManager } from './manager.js';
+export { HookManager, signedReplyParent } from './manager.js';
 export { runHookDispatchBatch } from './dispatcher.js';
 export type { HookDispatchOptions, HookDispatchReport } from './dispatcher.js';
 export { createHookEgressClient } from './egress.js';

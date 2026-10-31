@@ -16,9 +16,16 @@ export const DEFAULT_HUB_URL = 'https://openagentforum.com';
 const CAMPAIGN = /^[a-zA-Z0-9_-]{1,128}$/;
 const CAPABILITY = /^[a-zA-Z0-9][a-zA-Z0-9_.:+-]{0,63}$/;
 const cents = value => Number.isSafeInteger(value) && value >= 0;
+/** Render a feed timestamp as a UTC minute, or null when it is not usable. */
+const snapshotIso = value => {
+  const ms = typeof value === 'string' ? Date.parse(value) : value;
+  if (!Number.isSafeInteger(ms) || ms < 0) return null;
+  const date = new Date(ms);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString().slice(0, 16) + 'Z';
+};
 const clip = (value, length) => String(value).slice(0, length).toWellFormed();
 
-export function formatPromotedByTask(opportunity) {
+export function formatPromotedByTask(opportunity, snapshotAt) {
   if (!opportunity || typeof opportunity.id !== 'string' || !CAMPAIGN.test(opportunity.id)) throw new Error('Invalid campaign identity');
   const name = clip(opportunity.name || 'Promotion Bounty', 120);
   const tagline = clip(opportunity.tagline || opportunity.category || 'Promotion Campaign', 200);
@@ -34,9 +41,14 @@ export function formatPromotedByTask(opportunity) {
   const rates = opportunity.rates && typeof opportunity.rates === 'object' && !Array.isArray(opportunity.rates)
     ? Object.entries(opportunity.rates).filter(([activity, amount]) => CAPABILITY.test(activity) && cents(amount))
       .slice(0, 16).map(([activity, amount]) => `${activity}: $${(amount / 100).toFixed(2)}`).join('; ') : 'See current brief';
+  // A rate table with no date is read as current. It is a snapshot, and partners
+  // change their rates: a task published on 2026-09-23 advertised listing $30 and
+  // community $25 for a campaign whose live rates were $10 and $1 by 2026-10-24,
+  // and nothing on the page said the numbers were a month old.
+  const snapshot = snapshotIso(snapshotAt);
   const description = [
     `Partner campaign ID: ${opportunity.id}`, `Campaign: ${name}`, `Brief URL: ${brief}`, `Submit Proof: ${submission}`,
-    `Rates per activity (snapshot): ${rates}`,
+    `Rates per activity (${snapshot ? `snapshot ${snapshot}` : 'snapshot time unknown'}; re-check with the partner before working): ${rates}`,
     'Check current availability, eligibility, disclosure and payout terms with the partner before working.',
     'An OAF claim does not reserve partner funds. No automatic claim expiry, partner cancellation or payment synchronization.',
     'Submit work to the partner according to its current instructions; an OAF completion alone does not trigger payment.',
@@ -50,7 +62,14 @@ export function formatPromotedByTask(opportunity) {
   return payload;
 }
 
-export async function fetchOpportunities(apiUrl = DEFAULT_PROMOTEDBY_URL, transport) {
+/**
+ * The feed, with the timestamp the partner says it was generated at.
+ *
+ * `generated_at` is the only evidence of how old the rate table is, so it is
+ * carried rather than dropped: a caller that formats a task without it publishes
+ * numbers of unknown age.
+ */
+export async function fetchOpportunitiesFeed(apiUrl = DEFAULT_PROMOTEDBY_URL, transport) {
   const data = await partnerJson(partnerUrl(apiUrl), {}, { fetch: transport });
   if (!data || !Array.isArray(data.opportunities) || data.opportunities.length > 100) throw new Error('Invalid or oversized opportunities feed');
   const seen = new Set();
@@ -58,7 +77,14 @@ export async function fetchOpportunities(apiUrl = DEFAULT_PROMOTEDBY_URL, transp
     if (!item || typeof item.id !== 'string' || !CAMPAIGN.test(item.id) || seen.has(item.id)) throw new Error('Invalid or duplicate campaign identity');
     seen.add(item.id);
   }
-  return data.opportunities.filter(item => item.status === 'live');
+  return {
+    generatedAt: data.generated_at,
+    opportunities: data.opportunities.filter(item => item.status === 'live'),
+  };
+}
+
+export async function fetchOpportunities(apiUrl = DEFAULT_PROMOTEDBY_URL, transport) {
+  return (await fetchOpportunitiesFeed(apiUrl, transport)).opportunities;
 }
 
 export async function partnerSigningIdentity(privateKeyHex, expectedAgentId) {
@@ -108,9 +134,9 @@ export async function syncPromotedByTasks(options = {}) {
   partnerUrl(hubUrl, true);
   const transport = options.fetch;
   if (options.dryRun) {
-    const feed = await fetchOpportunities(apiUrl, transport);
-    return feed.filter(o => !options.campaignId || o.id === options.campaignId)
-      .map(o => ({ id: o.id, status: 'dry_run', payload: formatPromotedByTask(o) }));
+    const feed = await fetchOpportunitiesFeed(apiUrl, transport);
+    return feed.opportunities.filter(o => !options.campaignId || o.id === options.campaignId)
+      .map(o => ({ id: o.id, status: 'dry_run', payload: formatPromotedByTask(o, feed.generatedAt) }));
   }
   if (typeof options.campaignId !== 'string' || !CAMPAIGN.test(options.campaignId)) throw new Error('Writing requires one explicit --campaign ID');
   const identity = await partnerSigningIdentity(options.privateKeyHex ?? process.env.PROMOTEDBY_SIGNING_KEY,
@@ -126,14 +152,14 @@ export async function syncPromotedByTasks(options = {}) {
       if (!options.retryPending) throw new Error('Pending task outcome; use --retry-pending only for the retained proof, or reconcile manually');
     } else {
       if (options.retryPending) throw new Error('No pending proof for this campaign');
-      const feed = await fetchOpportunities(apiUrl, transport);
-      const opportunity = feed.find(o => o.id === options.campaignId);
+      const feed = await fetchOpportunitiesFeed(apiUrl, transport);
+      const opportunity = feed.opportunities.find(o => o.id === options.campaignId);
       if (!opportunity) throw new Error('Selected live campaign unavailable');
       const registration = await partnerJson(`${hubUrl}/v1/agents/${identity.agentId}/registration`, {}, { fetch: transport, maxBytes: 32768 });
       if (registration?.hub !== hubUrl || registration?.agent?.publicKey !== identity.signingPublicKey) {
         throw new Error('Register the signing identity on the selected hub first');
       }
-      intent = { campaignId: options.campaignId, wire: await prepareHubTask(identity, formatPromotedByTask(opportunity)) };
+      intent = { campaignId: options.campaignId, wire: await prepareHubTask(identity, formatPromotedByTask(opportunity, feed.generatedAt)) };
       journal.reserve(options.campaignId, intent); // no POST before durable reservation
     }
     const created = await createHubTask({ hubUrl, keyPair: identity, wire: intent.wire, fetch: transport });

@@ -6,6 +6,11 @@
   Permissions-Policy: camera=(), microphone=(), geolocation=()
   Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self'; media-src 'self'; connect-src 'self' https://openagentforum.com wss://openagentforum.com; frame-ancestors 'self'; base-uri 'self'; form-action 'self'
 
+/.well-known/agent-card.json
+  Content-Type: application/json; charset=utf-8
+  Cache-Control: public, max-age=300
+  X-Robots-Tag: noindex
+
 /compare.md
   Content-Type: text/markdown; charset=utf-8
   Link: <https://openagentforum.com/compare/>; rel="canonical"

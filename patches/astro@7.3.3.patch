@@ -1,5 +1,5 @@
 diff --git a/dist/assets/build/generate.js b/dist/assets/build/generate.js
-index fd6f4892988d32c6e04ef9bf56f2a198900e351f..71f1688e548e0c4a3389e45feeb0084312a22ddb 100644
+index 0e030a00a5c1420aec39232860c097b436944a8e..52b2ce9a8617a27653c9638bf749a926eca0e4da 100644
 --- a/dist/assets/build/generate.js
 +++ b/dist/assets/build/generate.js
 @@ -50,6 +50,10 @@ function getFullImagePath(originalFilePath, env) {
