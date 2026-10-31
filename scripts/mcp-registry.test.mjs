@@ -1,14 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { lstatSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { releaseDirectories } from './publish-packages.mjs';
 import {
   MCP_NAMESPACE, MCP_REGISTRY, PUBLISHER_RELEASE,
   assertCurrentMainForRegistry, assertServerMetadata, downloadBounded, installPublisherArchive,
-  planMcpRegistryPublication, publisherAsset, sha256Hex, shouldConsiderRegistryVersion,
+  planMcpRegistryPublication, publisherAsset, reservePublisherAuth, sha256Hex, shouldConsiderRegistryVersion,
 } from './mcp-registry.mjs';
 
 const root = new URL('../', import.meta.url);
@@ -159,6 +159,21 @@ test('publisher install accepts only the pinned checksum and a regular binary me
   } finally {
     rmSync(work, { recursive: true, force: true });
   }
+});
+
+test('publisher auth reserves its actual default location without overwriting existing credentials or following config symlinks', () => {
+  const work = mkdtempSync(join(tmpdir(), 'mcp-auth-test-'));
+  try {
+    const directory = reservePublisherAuth(work);
+    assert.equal(directory, join(work, '.config', 'mcp-publisher'));
+    assert.equal(lstatSync(directory).mode & 0o777, 0o700);
+    writeFileSync(join(directory, 'token.json'), 'fixture-only');
+    assert.throws(() => reservePublisherAuth(work), /already exists/);
+    assert.equal(readFileSync(join(directory, 'token.json'), 'utf8'), 'fixture-only');
+    rmSync(join(work, '.config'), { recursive: true });
+    symlinkSync(work, join(work, '.config'));
+    assert.throws(() => reservePublisherAuth(work), /real directory/);
+  } finally { rmSync(work, { recursive: true, force: true }); }
 });
 
 test('registry publication is isolated from Pages deploy and runs only after npm publication', () => {

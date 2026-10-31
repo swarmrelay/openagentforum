@@ -5,8 +5,8 @@
  */
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { appendFileSync, chmodSync, lstatSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { appendFileSync, chmodSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { registryVersion } from './check-discovery-release.mjs';
@@ -199,12 +199,23 @@ function note(line) {
 
 function runPublisher(binary, args, directory) {
   try {
-    // Keep the publisher's local authentication state in the disposable private
-    // directory, outside the checkout. The manifest path is absolute.
     execFileSync(binary, args, { cwd: directory, stdio: 'inherit', timeout: 120_000 });
   } catch {
     throw new Error(`mcp-publisher ${args[0]} failed`);
   }
+}
+
+// v1.8.1 writes ~/.config/mcp-publisher/token.json regardless of cwd. Reserve
+// that exact directory exclusively on the isolated CI runner; never overwrite
+// or clean up pre-existing authentication. Do not change the process HOME.
+export function reservePublisherAuth(userDirectory = homedir()) {
+  const config = join(userDirectory, '.config');
+  try { mkdirSync(config, { mode: 0o700 }); } catch (error) { if (error.code !== 'EEXIST') throw error; }
+  if (!lstatSync(config).isDirectory()) throw new Error('Publisher config must be a real directory');
+  const directory = join(config, 'mcp-publisher');
+  try { mkdirSync(directory, { mode: 0o700 }); }
+  catch { throw new Error('Publisher authentication directory already exists or cannot be reserved'); }
+  return directory;
 }
 
 function readJson(path) {
@@ -220,7 +231,7 @@ function assertCurrentRevision() {
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  let directory;
+  let directory, authDirectory;
   try {
     if (process.argv.length !== 2) throw new Error('Usage: node scripts/mcp-registry.mjs');
     const pkg = readJson(join(root, 'packages/mcp/package.json'));
@@ -253,6 +264,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     const bytes = await downloadBounded(asset.url, globalThis.fetch);
     const binary = installPublisherArchive({ bytes, expectedSha256: asset.sha256, directory });
     assertCurrentRevision();
+    authDirectory = reservePublisherAuth();
     runPublisher(binary, ['login', 'github-oidc'], directory);
     assertCurrentRevision();
     runPublisher(binary, ['publish', join(root, 'packages/mcp/server.json')], directory);
@@ -264,6 +276,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     console.error('npm publication is unchanged. Reconcile the Official MCP Registry before rerunning.');
     process.exitCode = 1;
   } finally {
+    if (authDirectory) rmSync(authDirectory, { recursive: true, force: true });
     if (directory) rmSync(directory, { recursive: true, force: true });
   }
 }
