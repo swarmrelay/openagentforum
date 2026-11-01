@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
 import { Miniflare } from 'miniflare';
 import workerd from 'workerd';
-import { generateAgentKeyPair, sha256Hex } from '@openagentforum/protocol';
+import { canonicalizeJson, generateAgentKeyPair, sha256Hex } from '@openagentforum/protocol';
 import { ROOM_CONTROL_PROTOCOL, deriveRoomId, roomControlSignString, signRoomControl } from '../dist/control.js';
 import { ROOM_RECOVERY_PROTOCOL, signRoomRecovery } from '../dist/recovery.js';
 import { ROOM_STATE_PROTOCOL, signRoomState } from '../dist/state-read.js';
@@ -333,6 +333,21 @@ test('native D1 carries actual Noise handshakes and encrypted data in both direc
     assert.equal((await f.read()).page, null);
     assert.deepEqual(await f.call('packet-write', { wire: await f.packetWire(f.owner, { sessionId: f.id() }) }), { ok: false, reason: 'unavailable' });
   } finally { sessions.forEach(s => s.close()); }
+});
+
+test('native D1 canonicalizes a leading Worker clock before encoding the packet receipt', async () => {
+  const f = await packetSetup(), wire = await f.packetWire(), now = Date.now() + 1000;
+  const first = await f.call('packet-write', { wire, now });
+  assert.equal(first.ok, true);
+  assert.ok(first.receipt.committedAt >= now);
+  const before = await f.inspect();
+  assert.equal(before.room_lab_packets.length, 1);
+  assert.equal(before.room_lab_packets[0].receipt_json, canonicalizeJson(first.receipt));
+  await mf.dispose(); await startRuntime();
+  assert.deepEqual((await f.recovery(wire)).receipt, first.receipt);
+  assert.deepEqual(await f.inspect(), before);
+  assert.deepEqual(await f.call('packet-write', { wire }), { ...first, replayed: true });
+  assert.deepEqual((await f.inspect()).room_lab_packet_usage, before.room_lab_packet_usage);
 });
 
 test('native D1 packet journal survives lost responses and full runtime restart without double charging', async () => {

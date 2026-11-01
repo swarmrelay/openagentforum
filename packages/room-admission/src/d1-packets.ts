@@ -52,6 +52,18 @@ WHEN OLD.mode IN ('apply', 'replay') BEGIN
 END`;
 const fail = (reason: RoomPacketFailure['reason']): RoomPacketFailure => ({ ok: false, reason });
 
+/** Compatibility for retained hub receipts only; signed wires and client parsers stay exact. */
+function storedPacketReceipt(raw: unknown, query: Parameters<typeof packetReceipt>[1]) {
+  if (typeof raw !== 'string' || raw.length > ROOM_PACKET_STORAGE_LIMITS.receiptBytes
+      || packetByteLength(raw) > ROOM_PACKET_STORAGE_LIMITS.receiptBytes) throw new Error('Invalid packet receipt');
+  // Before the timing CAST, a bound Worker clock could win max() as SQLite REAL.
+  // json_set then wrote an integral timestamp with exactly a .0 suffix. Accept
+  // only that spelling; the existing validator still checks every field, safe
+  // integer, binding, canonical order and byte limit. Never rewrite stored rows
+  // or their original byte charges, and never normalize a signed request.
+  return packetReceipt(raw.replace(/("committedAt":)(0|[1-9][0-9]*)\.0(?=[,}])/, '$1$2'), query);
+}
+
 /** Explicit lab initialization only. Constructor/import does no I/O; never call on a live binding. */
 export async function initializeD1RoomPackets(db: D1Database, options: Options): Promise<void> {
   const policy = canonicalizeJson(packetPolicySnapshot(options.packets));
@@ -161,7 +173,7 @@ export class D1RoomPacketStorage {
           OR coalesce(w.packets, 0) + 1 > ${arg(limits.packetsPerWindow)} OR coalesce(w.bytes, 0) + c.bytes > ${arg(limits.bytesPerWindow)}
           OR coalesce(w.sessions, 0) + c.new_session > ${arg(limits.sessionsPerWindow)}) THEN 'unavailable'`;
       }).join('\n');
-      const stage = `WITH timing AS (SELECT ${META}, max(${DB_NOW}, m.clock, ${arg(now)}) AS at_ms ${FROM_META} WHERE m.id = 1),
+      const stage = `WITH timing AS (SELECT ${META}, CAST(max(${DB_NOW}, m.clock, ${arg(now)}) AS INTEGER) AS at_ms ${FROM_META} WHERE m.id = 1),
         positioned AS (SELECT *, coalesce((SELECT stored_seq FROM room_lab_packets WHERE room_id = ${room} ORDER BY stored_seq DESC LIMIT 1), 0) + 1 AS seq FROM timing),
         encoded AS (SELECT *, json_set(${arg(canonicalizeJson(receipt))}, '$.committedAt', at_ms, '$.storedSeq', seq) AS receipt,
           CAST(at_ms / ${arg(p.windowMs)} AS INTEGER) AS bucket, ${arg(proposal?.newSession ? 1 : 0)} AS new_session FROM positioned),
@@ -231,7 +243,7 @@ export class D1RoomPacketStorage {
       if (rows.length !== 1 || !rows[0] || typeof rows[0] !== 'object') throw new Error('Missing packet result');
       const row = rows[0] as Record<string, unknown>;
       if (row.mode === 'apply' || row.mode === 'replay') {
-        const acknowledged = packetReceipt(row.receipt_json, { ...r, proofDigest: proof.proofDigest });
+        const acknowledged = storedPacketReceipt(row.receipt_json, { ...r, proofDigest: proof.proofDigest });
         if (!acknowledged || typeof row.at_ms !== 'number' || acknowledged.revision !== r.expectedRevision
             || acknowledged.sessionId !== r.sessionId || acknowledged.packetIndex !== r.packetIndex) throw new Error('Invalid packet acknowledgment');
         const final = await this.#meta();
@@ -314,7 +326,7 @@ export class D1RoomPacketStorage {
       if (snapshot.clock < floor) throw new Error('Clock regression');
       const observedAt = this.#time(Math.max(before, snapshot.clock)), stale = proof.freshness(observedAt);
       if (stale) return fail(stale);
-      const receipt = snapshot.receipt_json === null ? null : packetReceipt(snapshot.receipt_json, q);
+      const receipt = snapshot.receipt_json === null ? null : storedPacketReceipt(snapshot.receipt_json, q);
       const expired = proof.freshness(this.#time(observedAt));
       return expired ? fail(expired) : { ok: true as const, queryId: q.queryId, observedAt, receipt };
     });

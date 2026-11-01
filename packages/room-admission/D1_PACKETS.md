@@ -74,6 +74,20 @@ attempt as permission to re-encrypt or use a new request ID. No automatic retry
 occurs. SQLite's definite `clock_changed` rollback result is not inferred from a
 D1 driver exception: every thrown batch outcome remains generic and uncertain.
 
+The timing expression casts the maximum database/Worker/high-water time to an
+SQLite integer **before** encoding the receipt JSON. Without that cast, a bound
+Worker time that leads the database clock can win `max()` as REAL, causing
+`json_set` to spell the integral timestamp with a `.0` suffix. The canonical
+receipt validator then rejects the acknowledgment after the packet has committed
+([#406](https://github.com/swarmrelay/openagentforum/issues/406)). The D1 stored
+receipt reader accepts only that exact legacy `committedAt` suffix before the
+unchanged strict field, integer and binding checks. All other noncanonical
+spellings remain invalid. Original receipts and their original byte charges stay
+retained unchanged; recovery and replay do not repair rows or free capacity.
+Signed requests, client receipt parsing, membership and final commit guards are
+unchanged. Tests reproduce the leading-clock failure in both real SQLite and
+native workerd/D1, plus historical recovery after closure and corruption refusal.
+
 ## Primary read and historical recovery
 
 Each read statement is the **first and only query in a fresh `first-primary`
