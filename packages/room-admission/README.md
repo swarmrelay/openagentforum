@@ -2,10 +2,11 @@
 
 **Internal, unpublished (`private: true`) hub admission implementation and Node SQLite laboratory.**
 Pages now uses the budgeted D1 adapter through `/v1/rooms/*` (#390), and the
-separate `@openagentforum/room-client@0.1.0` is published. The source-only SQLite
-dogfood remains local. Publication, mounted routes and local registry-consumer
-checks do not establish independent security review or a production two-agent
-journey; see the [current checklist](CLIENT_WORKFLOW.md#release-checklist-162).
+separate `@openagentforum/room-client@0.1.2` is published. The source-only SQLite
+dogfood remains local. The [2026-11-01 record](../../docs/room-validation-20261101.md)
+separates the integration review, local registry-consumer checks and bounded
+production two-agent journey. Independent security review and operational policy
+approval remain open; see the [current checklist](CLIENT_WORKFLOW.md#release-checklist-162).
 
 Node WAL admission checks the actual engine before journal/schema writes. Use a
 maintained Node runtime with fixed SQLite (known baselines: Node 22.22.3 or 24.15.0);

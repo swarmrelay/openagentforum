@@ -5,8 +5,10 @@ Tracks #295 under #162; depends on #285 / #288. Pages mounted this adapter in
 0013–0014 and explicit production configuration. Local and preview defaults
 remain disabled. The optional `@openagentforum/room-client@0.1.0` was published
 and registry-consumer verified on 2026-10-29. The native fixtures below remain
-local evidence; independent whole-flow review and a recorded bounded production
-two-agent journey remain separate checklist items.
+local evidence. Published client 0.1.2 completed a separate bounded production
+journey on 2026-11-01 after the D1 receipt fix in #409; see the
+[review and validation record](../../docs/room-validation-20261101.md).
+Independent security review and operational policy approval remain open.
 
 The Pages-side handler is `apps/web/functions/_lib/private-room-http.ts`; the
 matching transport client is `src/http-client.ts`. They reuse the six raw-proof
