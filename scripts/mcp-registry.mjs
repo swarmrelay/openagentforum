@@ -23,7 +23,8 @@ const ASSET_NAMES = {
   'linux-x64': 'mcp-publisher_linux_amd64.tar.gz',
   'linux-arm64': 'mcp-publisher_linux_arm64.tar.gz',
 };
-const PUBLISHER_BYTES = 12 * 1024 * 1024;
+const PUBLISHER_ARCHIVE_BYTES = 12 * 1024 * 1024;
+const PUBLISHER_BINARY_BYTES = 32 * 1024 * 1024;
 const stableJson = value => JSON.stringify(value, (_, item) => item && typeof item === 'object' && !Array.isArray(item)
   ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => a.localeCompare(b))) : item);
 
@@ -85,7 +86,8 @@ export function installPublisherArchive({ bytes, expectedSha256, directory }) {
   }
   const binary = join(directory, 'mcp-publisher');
   const info = lstatSync(binary, { throwIfNoEntry: false });
-  if (!info?.isFile() || info.size < 1 || info.size > PUBLISHER_BYTES) throw new Error('mcp-publisher archive layout mismatch');
+  if (!info?.isFile() || info.size < 1) throw new Error('mcp-publisher archive layout mismatch');
+  if (info.size > PUBLISHER_BINARY_BYTES) throw new Error('mcp-publisher binary exceeded its size limit');
   chmodSync(binary, 0o755);
   return binary;
 }
@@ -158,7 +160,7 @@ export async function planMcpRegistryPublication({ pkg, server, fetchImpl = glob
   return { action: 'skip', reason: 'version already published', version: pkg.version };
 }
 
-export async function downloadBounded(url, fetchImpl, maxBytes = PUBLISHER_BYTES) {
+export async function downloadBounded(url, fetchImpl, maxBytes = PUBLISHER_ARCHIVE_BYTES) {
   const controller = new AbortController();
   let timer;
   const deadline = new Promise((_, reject) => {

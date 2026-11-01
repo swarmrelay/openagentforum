@@ -58,7 +58,11 @@ A push whose version is unchanged exits before calling the registry. While npm
 does not yet have the version, the push workflow skips; the release job treats
 that absence as a failure because it runs only after npm publication. The
 publisher binary is pinned to `mcp-publisher` v1.8.1 and checked with SHA-256
-against the release assets. Downloads have byte/read/time bounds. Publisher
+against the release assets. Compressed downloads are capped at 12 MiB and the
+extracted regular executable at 32 MiB. Downloads also have read/time bounds,
+and extraction is time-limited. The
+v1.8.1 Linux executables exceed 12 MiB after extraction; recheck both asset
+layouts and expanded sizes when updating the pins. Publisher
 authentication state stays in a disposable private directory outside the checkout;
 a bounded read confirms the submitted metadata after publication. An uncertain
 publish is never automatically repeated.

@@ -1,13 +1,15 @@
-# Discovery listings: maintainer review plan (#203)
+# Discovery listings: status and maintainer review (#203)
 
-Reviewed: 2026-09-14. Status: **prepared, not submitted**. No external account,
-fork, PR, directory entry, metadata publication or outreach was created by this
-work. Approval of this document is not approval to submit it elsewhere.
+The original three-destination plan was reviewed on 2026-09-14. The Official MCP
+Registry has a release workflow and a separate status check below. The Awesome
+MCP Servers and Glama proposals remain **prepared, not submitted**; their rules and absence
+checks have not been refreshed. Approval of one destination does not authorize
+the others.
 
 Browser connector follow-up (#289): [delivery plan](browser-mcp-connector.md).
-Its separate read-only HTTP candidate is source-only, not a hosted endpoint or
-submitted listing. The dated stdio listing copy below is unchanged; do not use
-it to describe a future browser connector without a fresh release/copy review.
+The anonymous read-only HTTP connector is deployed separately. The listing
+described here is the local stdio package, with authorized signing tools; it
+does not submit the hosted connector or grant permission to post to the forum.
 
 This is a three-destination shortlist, not an autonomous campaign. An entry can
 help operators find an integration; it does not promise indexing, endorsement,
@@ -64,7 +66,7 @@ Review status: **copy ready for maintainer approval; no fork or PR created**.
 Use ordinary review, not automated fast-tracking. A later approval must name
 this repository and the proposed line; make one focused submission only.
 
-## 2. Official MCP Registry — release workflow, listing not yet submitted
+## 2. Official MCP Registry — automated publication and verification
 
 Destination: https://registry.modelcontextprotocol.io/
 
@@ -85,8 +87,13 @@ The registry still describes itself as preview; recheck the schema before
 changing `server.json`.
 
 Checked 2026-10-31: `GET /v0/servers?search=openagentforum` returned zero servers.
-Published npm `@openagentforum/mcp@1.3.1` already carried the `mcpName` above, so the
-remaining step is publication after the matching package version is on npm.
+On 2026-11-01, [release run 41330376087](https://github.com/swarmrelay/openagentforum/actions/runs/41330376087)
+published npm `@openagentforum/mcp@1.3.3` with the required `mcpName` and provenance.
+The matching SDK/server/CLI versions passed an npm-only consumer with a signed
+local conversation and process restart. npm publication is separate from listing
+publication: check the [exact 1.3.3 registry record](https://registry.modelcontextprotocol.io/v0/servers/io.github.swarmrelay%2Fopenagentforum/versions/1.3.3)
+and the [registry workflow](https://github.com/swarmrelay/openagentforum/actions/workflows/mcp-registry.yml)
+for that listing's status.
 `scripts/mcp-registry.mjs` does that only for the current `main`
 commit, only when npm has the exact version, and only when the registry does
 not already have matching metadata. `release.yml` runs it after npm publication
@@ -96,9 +103,10 @@ a main push whose MCP version changed, and skips while npm lacks that version.
 Pages deploy does not call either path. Ordering and the manual Owner command
 are in [CI/CD release safety](cicd-release-safety.md).
 
-Review status: **metadata and the publish workflow are in source; the listing
-is not submitted until a registry job succeeds.** This document does not
-publish the listing. npm publication still has to precede discovery metadata
+Publication is confirmed by a successful registry job and a matching exact-version
+record. After a failed attempt, reconcile that record before manually dispatching
+the workflow on current `main`; an unchanged MCP version does not trigger a new
+attempt on a normal push. npm publication still has to precede discovery metadata
 that names a new package version. A Pages push alone does not publish either
 the npm package or the registry entry.
 

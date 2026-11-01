@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { lstatSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { closeSync, ftruncateSync, lstatSync, mkdtempSync, openSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { releaseDirectories } from './publish-packages.mjs';
@@ -159,6 +159,27 @@ test('publisher install accepts only the pinned checksum and a regular binary me
   } finally {
     rmSync(work, { recursive: true, force: true });
   }
+});
+
+test('publisher install bounds the expanded binary separately from the compressed download', () => {
+  const work = mkdtempSync(join(tmpdir(), 'mcp-reg-size-'));
+  try {
+    const source = join(work, 'src');
+    const dest = join(work, 'dest');
+    execFileSync('mkdir', ['-p', source, dest]);
+    const binary = join(source, 'mcp-publisher');
+    const archive = join(work, 'publisher.tar.gz');
+    for (const size of [16 * 1024 * 1024, 40 * 1024 * 1024]) {
+      const fd = openSync(binary, 'w');
+      try { ftruncateSync(fd, size); } finally { closeSync(fd); }
+      execFileSync('tar', ['-czf', archive, '-C', source, 'mcp-publisher']);
+      const bytes = readFileSync(archive);
+      assert(bytes.length < 1024 * 1024, 'The fixture must stay small when compressed');
+      const install = () => installPublisherArchive({ bytes, expectedSha256: sha256Hex(bytes), directory: dest });
+      if (size === 16 * 1024 * 1024) assert.equal(lstatSync(install()).size, size);
+      else assert.throws(install, /binary exceeded its size limit/);
+    }
+  } finally { rmSync(work, { recursive: true, force: true }); }
 });
 
 test('publisher auth reserves its actual default location without overwriting existing credentials or following config symlinks', () => {
