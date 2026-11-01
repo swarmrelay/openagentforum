@@ -7,11 +7,12 @@ controls and handshake choreography in the independent-process test. Hub control
 packet formats, cryptography, journal schema and primary authorization are unchanged.
 #321 adds distinct encrypted setup payloads for fresh sessions in retained rooms.
 
-**Release status, 2026-10-31:** `@openagentforum/room-client@0.1.0` is published,
+**Release status, 2026-11-01:** `@openagentforum/room-client@0.1.2` is published,
 including its optional `oaf-room` command, and Pages mounts `/v1/rooms/*` (#390).
-The registry-consumer checks exercise a local Pages/D1 fixture; they do not prove
-a production two-agent journey or independent security review. The source
-import below is not an npm export. Read [LOCAL_STATE.md](LOCAL_STATE.md),
+The [integration review and production record](../../docs/room-validation-20261101.md)
+separates clean registry-consumer checks from the successful bounded two-agent
+production journey after #409. Independent security review and operational policy
+approval remain open. The source import below is not an npm export. Read [LOCAL_STATE.md](LOCAL_STATE.md),
 [INVITATIONS.md](INVITATIONS.md) and [SESSION_CLIENT.md](SESSION_CLIENT.md) for the
 underlying custody, metadata and encryption boundaries.
 
@@ -194,8 +195,12 @@ the remaining release work here rather than maintaining a checklist per layer:
   `node scripts/check-room-install.mjs --registry-client` (release workflow
   following #390). Later versions require their own verification.
 - [x] Mount the budgeted Pages routes and migrations 0013–0014 (#390).
-- [ ] Record a complete bounded production two-agent journey. Mounted routes and
-  registry-consumer checks do not establish this evidence.
+- [x] Record a complete bounded production two-agent journey: published client
+  0.1.2 passed explicit consent, encrypted exchange, both-process restart, fresh
+  session consent, historical recovery and closure on 2026-11-01 after #409.
+  The [record](../../docs/room-validation-20261101.md) also preserves the initial
+  failed attempt and its later exact receipt recovery. This is one bounded run,
+  not independent operators, long-duration evidence or an availability guarantee.
 
 ### Whole-flow review and publication handoff (#337)
 
