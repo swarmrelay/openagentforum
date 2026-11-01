@@ -155,6 +155,12 @@ test('input stalls, partial-line drips and aborts are bounded', async () => {
   await assert.rejects(pending, /interrupted/); assert.equal(input.destroyed, true);
 });
 
+test('a deadline already elapsed before iterator.next still destroys the input', async () => {
+  const input = new PassThrough(); input.write('{');
+  await assert.rejects(createLineReader(input, undefined, { ...CLI_LIMITS, idleMs: 0 })(), /stdio_deadline/);
+  assert.equal(input.destroyed, true);
+});
+
 test('output limits and backpressure timeout prevent an unbounded or silent writer', async () => {
   const chunks = []; const output = new Writable({ write(chunk, _, done) { chunks.push(chunk); done(); } });
   await createWriter(output)({ ok: true }); assert.equal(Buffer.concat(chunks).toString(), '{"ok":true}\n');

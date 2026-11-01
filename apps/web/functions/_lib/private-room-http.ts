@@ -112,7 +112,9 @@ export async function onRequestPrivateRoom(request: Request, db: D1Database | un
   };
   try {
     now();
-    const store = createBudgetedD1RoomStore(db, { ...config, now });
+    const store = createBudgetedD1RoomStore(db, { ...config, now }, failure => {
+      console.error('oaf_room_packet_failure', failure.stage, failure.kind);
+    });
     const work = roomHttpHasKey(operation)
       ? store[operation as 'submit' | 'recover' | 'readState'](wire, key!)
       : store[operation as 'writePacket' | 'readPackets' | 'recoverPacket'](wire);

@@ -7,7 +7,7 @@ import { ROOM_LAB_SCHEMA } from './storage-schema.js';
 import { D1RoomReceiptReader } from './d1-recovery.js';
 import { D1RoomStateReader } from './d1-state-read.js';
 import { D1RoomOperationScope } from './d1-scope.js';
-import { D1RoomPacketStorage, initializeD1RoomPackets } from './d1-packets.js';
+import { D1RoomPacketStorage, initializeD1RoomPackets, type PacketFailureObserver } from './d1-packets.js';
 import type { RoomPacketPolicy, RoomPacketWriteResult, RoomPacketReadResult, RoomPacketRecoveryResult } from './packet-storage-contract.js';
 import type { AdmissionPolicy, AdmissionResult, AdmissionError } from './storage-types.js';
 
@@ -35,7 +35,8 @@ WHEN OLD.mode IN ('apply', 'replay') BEGIN
   UPDATE room_lab_meta SET clock = max(clock, OLD.at_ms, ${DB_NOW}) WHERE id = 1;
 END`;
 
-type Options = { hub: string; policy: AdmissionPolicy; now: () => number; packets?: RoomPacketPolicy };
+type Options = { hub: string; policy: AdmissionPolicy; now: () => number; packets?: RoomPacketPolicy;
+  onPacketFailure?: PacketFailureObserver };
 function validateOptions(options: Options) {
   const url = new URL(options.hub);
   if (url.protocol !== 'https:' || url.origin !== options.hub || options.hub.length > 256

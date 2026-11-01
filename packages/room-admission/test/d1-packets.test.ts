@@ -206,6 +206,26 @@ it.each(['lost-response', 'expired-response'] as const)('reconciles %s without c
   expect(await s.store.recoverPacket(await s.recoverWire(receipt))).toEqual({ ok: false, reason: 'storage_error' });
 });
 
+it.each(['metadata', 'recovery_snapshot', 'recovery_result', 'write_batch'] as const)
+('reports only fixed %s diagnostic labels and retains shared poisoning even if the observer throws', async stage => {
+  const s = await setup(), first = accepted(await s.write());
+  const observed = vi.fn(() => { throw new Error('PRIVATE_OBSERVER_MARKER'); });
+  const store = new D1RoomAdmissionStore(s.db, { ...s.options, onPacketFailure: observed });
+  const recovery = await s.recoverWire(first.receipt);
+  const outgoing = await s.wire(s.request(s.f.peer, { packetHex: 'ab'.repeat(48) }), s.f.peer);
+  if (stage === 'metadata' || stage === 'recovery_snapshot') s.db.beforeRead = async sql => {
+    if (stage === 'metadata' || sql.includes('old.receipt_json')) throw new TypeError('PRIVATE_DRIVER_MARKER');
+  };
+  if (stage === 'recovery_result') s.f.db.exec("UPDATE room_lab_packets SET receipt_json = 'PRIVATE_RECEIPT_MARKER'");
+  if (stage === 'write_batch') s.db.afterCommit = async () => { throw new TypeError('PRIVATE_COMMIT_MARKER'); };
+  expect(await (stage === 'write_batch' ? store.writePacket(outgoing) : store.recoverPacket(recovery)))
+    .toEqual({ ok: false, reason: 'storage_error' });
+  expect(observed.mock.calls).toEqual([[{ stage, kind: stage === 'recovery_result' ? 'syntax' : 'type' }]]);
+  expect(await store.readState('invalid', s.f.owner.signingPublicKey)).toEqual({ ok: false, reason: 'storage_error' });
+  expect(observed).toHaveBeenCalledTimes(1);
+  if (stage === 'write_batch') expect(s.f.db.prepare('SELECT count(*) AS n FROM room_lab_packets').get()?.n).toBe(2);
+});
+
 it.each(['room_lab_packet_sessions', 'room_lab_packets', 'room_lab_packet_usage', 'room_lab_packet_windows'])
 ('rolls back and poisons when %s writes silently fail', async table => {
   const s = await setup(), before = s.snapshot();

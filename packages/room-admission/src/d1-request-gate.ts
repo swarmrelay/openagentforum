@@ -1,5 +1,6 @@
 import type { D1Database } from '@cloudflare/workers-types';
 import { D1RoomAdmissionStore } from './d1-admission.js';
+import type { PacketFailureObserver } from './d1-packets.js';
 import { BudgetedRoomStore } from './request-gate.js';
 import { REQUEST_BUDGET_SCHEMA, REQUEST_DB_NOW, initialRequestState, planRequest, requestConfiguration, requestState, requestTime,
   type BudgetedRoomOptions, type RoomRequestOptions, type RequestCharge, type RequestBudget, type Reservation } from './request-budget.js';
@@ -58,7 +59,8 @@ class D1RequestBudget implements RequestBudget {
 }
 
 /** No constructor I/O. Operator configuration only; do not expose unbudgeted readers beside this wrapper. */
-export function createBudgetedD1RoomStore(db: D1Database, options: BudgetedRoomOptions): BudgetedRoomStore {
+export function createBudgetedD1RoomStore(db: D1Database, options: BudgetedRoomOptions,
+  onPacketFailure?: PacketFailureObserver): BudgetedRoomStore {
   const budget = new D1RequestBudget(db, options);
-  return new BudgetedRoomStore(new D1RoomAdmissionStore(db, options), budget, budget.config.now, options.policy.maxInFlightPerConnection);
+  return new BudgetedRoomStore(new D1RoomAdmissionStore(db, { ...options, onPacketFailure }), budget, budget.config.now, options.policy.maxInFlightPerConnection);
 }

@@ -57,6 +57,10 @@ Success uses the existing minimal results, capped at 4,096 bytes (327,680 for
 packet pages). All responses include `no-store, no-transform`, nosniff and
 no-referrer. The adapter never logs/refers back SQL, proofs, packet content, keys
 or driver diagnostics. Platform access-log policy needs its own release review.
+Packet storage failures emit only `oaf_room_packet_failure` followed by a fixed
+stage and exception-class label. The optional internal observer receives no
+exception object, message, stack, SQL, proof, identity or stored value. Observer
+failure cannot change shared poisoning, public errors or uncertain-commit handling.
 
 | Status | Meaning |
 | --- | --- |
@@ -128,6 +132,13 @@ confirmation → encrypted exchange both ways → lost response/exact retry → 
 D1 runtime restart/fresh Noise session → receipt recovery → close. Pending invitees,
 outsiders and closed-history access are rejected. Saturating ordinary/read work
 leaves separate close/recovery lanes. Old receipts stay historical after closure.
+
+The independent-process invitation test also runs the mounted room route and
+public API with the committed production migrations and policy, without laboratory
+initialization. It covers invitation, consent, exchange, process restart with fresh
+Noise and closure. This remains local native-runtime evidence, not production
+validation; it did not reproduce the authenticated packet 503 found in the first
+bounded live journey on 2026-11-01.
 
 The encrypted invitation handoff uses existing helpers **inside the fixture** with
 independently supplied test pins: not production DM discovery/delivery UX. Client

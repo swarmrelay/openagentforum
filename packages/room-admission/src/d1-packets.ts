@@ -18,7 +18,13 @@ import {
   type RoomPacketWriteResult, type RoomPacketReadResult, type RoomPacketReadSuccess, type RoomPacketRecoveryResult,
 } from './packet-storage-contract.js';
 
-type Options = { hub: string; policy: AdmissionPolicy; packets: RoomPacketPolicy; now: () => number };
+type PacketStage = 'metadata' | 'verification' | 'freshness' | 'write_snapshot' | 'write_plan' | 'write_batch'
+  | 'write_result' | 'read_snapshot' | 'read_result' | 'read_final' | 'recovery_snapshot' | 'recovery_result';
+/** Operator diagnostics contain fixed labels only, never errors, proofs, keys or database values. */
+export type PacketFailureObserver = (failure: Readonly<{ stage: PacketStage;
+  kind: 'type' | 'range' | 'syntax' | 'reference' | 'error' | 'unknown' }>) => void;
+type Options = { hub: string; policy: AdmissionPolicy; packets: RoomPacketPolicy; now: () => number;
+  onPacketFailure?: PacketFailureObserver };
 const DB_NOW = "CAST(ROUND(unixepoch('subsec') * 1000) AS INTEGER)";
 const META = `m.*, p.schema_version AS packet_schema, p.hub AS packet_hub, p.protocol AS packet_protocol, p.policy AS packet_policy`;
 const FROM_META = 'FROM room_lab_meta m LEFT JOIN room_lab_packet_meta p ON p.id = 1';
@@ -71,12 +77,14 @@ export class D1RoomPacketStorage {
   readonly #policyJson: string;
   readonly #controlPolicy: string;
   readonly #now: () => number;
+  readonly #onFailure?: PacketFailureObserver;
   constructor(readonly db: D1Database, options: Options, readonly scope: D1RoomOperationScope) {
     this.#hub = options.hub;
     this.#policy = packetPolicySnapshot(options.packets);
     this.#policyJson = canonicalizeJson(this.#policy);
     this.#controlPolicy = canonicalizeJson(policySnapshot(options.policy));
     this.#now = options.now;
+    this.#onFailure = options.onPacketFailure;
   }
   #time(floor: number) {
     const now = this.#now();
@@ -95,28 +103,37 @@ export class D1RoomPacketStorage {
   }
   async #operation<T extends RoomPacketWrite | RoomPacketRead | RoomPacketRecovery, R>(wire: string,
     prepare: (wire: string, context: { hub: string; now: number }) => Promise<PreparedRoomPacket<T> | { ok: false; reason: RoomPacketProofError }>,
-    run: (proof: PreparedRoomPacket<T>, now: number, floor: number) => Promise<R>) {
+    run: (proof: PreparedRoomPacket<T>, now: number, floor: number, stage: (value: PacketStage) => void) => Promise<R>) {
     const denied = this.scope.enter();
     if (denied) return fail(denied);
+    let stage: PacketStage = 'metadata';
     try {
       const initial = await this.#meta();
       if (this.scope.broken) return fail('storage_error');
       const start = this.#time(initial.clock);
+      stage = 'verification';
       const proof = await prepare(wire, { hub: this.#hub, now: start });
       if (this.scope.broken) return fail('storage_error');
       if (!proof.ok) return proof;
+      stage = 'freshness';
       const now = this.#time(start), stale = proof.freshness(now);
       if (stale) return fail(stale);
-      return await run(proof, now, initial.clock);
-    } catch {
+      return await run(proof, now, initial.clock, value => { stage = value; });
+    } catch (error) {
       this.scope.poison();
+      try {
+        this.#onFailure?.(Object.freeze({ stage, kind: error instanceof TypeError ? 'type'
+          : error instanceof RangeError ? 'range' : error instanceof SyntaxError ? 'syntax'
+          : error instanceof ReferenceError ? 'reference' : error instanceof Error ? 'error' : 'unknown' }));
+      } catch { /* Diagnostics cannot alter poisoning or the uncertain public result. */ }
       return fail('storage_error');
     } finally { this.scope.leave(); }
   }
 
   writePacket(wire: string): Promise<RoomPacketWriteResult> {
-    return this.#operation(wire, prepareRoomPacket, async (proof, before, floor) => {
+    return this.#operation(wire, prepareRoomPacket, async (proof, before, floor, setStage) => {
       const r = proof.request;
+      setStage('write_snapshot');
       const snapshot = this.#metadata(await this.db.withSession('first-primary').prepare(`SELECT ${META}, r.state_json,
         ${SESSION_JSON} AS session_json ${FROM_META}
         LEFT JOIN room_lab_rooms r ON r.room_id = ? LEFT JOIN room_lab_packet_sessions s ON s.room_id = ? AND s.session_id = ? WHERE m.id = 1`)
@@ -125,6 +142,7 @@ export class D1RoomPacketStorage {
       if (snapshot.clock < floor) throw new Error('Clock regression');
       const now = this.#time(Math.max(before, snapshot.clock)), stale = proof.freshness(now);
       if (stale) return fail(stale);
+      setStage('write_plan');
       const proposal = packetSessionProposal(r, snapshot.state_json, snapshot.session_json, now);
       const args: (string | number | null)[] = [];
       const arg = (value: string | number | null) => { args.push(value); return `?${args.length}`; };
@@ -204,7 +222,9 @@ export class D1RoomPacketStorage {
       statements.push(session.prepare(`SELECT g.mode, g.at_ms, old.receipt_json FROM room_lab_d1_packet_gate g LEFT JOIN room_lab_packets old
         ON old.signing_key = ? AND old.request_id = ? AND old.digest = ?`).bind(r.signingPublicKey, r.requestId, proof.proofDigest));
       statements.push(session.prepare('DELETE FROM room_lab_d1_packet_gate')); // MUST remain last: pinned commit guard.
+      setStage('write_batch');
       const results = await session.batch(statements);
+      setStage('write_result');
       if (this.scope.broken) return fail('storage_error');
       if (results.length !== statements.length || results.some(value => !value.success)) throw new Error('Invalid batch result');
       const rows = results[resultIndex].results;
@@ -226,8 +246,9 @@ export class D1RoomPacketStorage {
   }
 
   readPackets(wire: string): Promise<RoomPacketReadResult> {
-    return this.#operation(wire, prepareRoomPacketRead, async (proof, before, floor) => {
+    return this.#operation(wire, prepareRoomPacketRead, async (proof, before, floor, stage) => {
       const q = proof.request;
+      stage('read_snapshot');
       // Configuration, primary membership and bounded indexed page are ONE SQL snapshot.
       // SQL narrows access before selecting bytes; the canonical full-key validator checks it again below.
       const snapshot = this.#metadata(await this.db.withSession('first-primary').prepare(`SELECT ${META}, r.state_json,
@@ -242,6 +263,7 @@ export class D1RoomPacketStorage {
             ORDER BY stored_seq LIMIT ?6)) AS records_json
         ${FROM_META} LEFT JOIN room_lab_rooms r ON r.room_id = ?1 WHERE m.id = 1`)
         .bind(q.roomId, q.afterStoredSeq, q.expectedRevision, q.actor, q.signingPublicKey, q.limit).first());
+      stage('read_result');
       if (this.scope.broken) return fail('storage_error');
       if (snapshot.clock < floor) throw new Error('Clock regression');
       const observedAt = this.#time(Math.max(before, snapshot.clock)), stale = proof.freshness(observedAt);
@@ -271,6 +293,7 @@ export class D1RoomPacketStorage {
           result.page = next; previous = row.storedSeq;
         }
       }
+      stage('read_final');
       const final = await this.#meta();
       if (final.clock < snapshot.clock) throw new Error('Clock regression');
       if (this.scope.broken) return fail('storage_error');
@@ -280,11 +303,13 @@ export class D1RoomPacketStorage {
   }
 
   recoverPacket(wire: string): Promise<RoomPacketRecoveryResult> {
-    return this.#operation(wire, prepareRoomPacketRecovery, async (proof, before, floor) => {
+    return this.#operation(wire, prepareRoomPacketRecovery, async (proof, before, floor, stage) => {
       const q = proof.request;
+      stage('recovery_snapshot');
       const snapshot = this.#metadata(await this.db.withSession('first-primary').prepare(`SELECT ${META}, old.receipt_json
         ${FROM_META} LEFT JOIN room_lab_packets old ON old.signing_key = ? AND old.request_id = ? AND old.digest = ? WHERE m.id = 1`)
         .bind(q.signingPublicKey, q.requestId, q.proofDigest).first());
+      stage('recovery_result');
       if (this.scope.broken) return fail('storage_error');
       if (snapshot.clock < floor) throw new Error('Clock regression');
       const observedAt = this.#time(Math.max(before, snapshot.clock)), stale = proof.freshness(observedAt);
