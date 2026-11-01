@@ -108,6 +108,33 @@ test('skips when the registry already has the version and does not publish when 
   assert.equal(missing.action, 'blocked');
 });
 
+test('registry readback accepts omitted false input defaults but rejects changed or invalid flags', async () => {
+  const manifest = pkg(), metadata = server();
+  const published = structuredClone(metadata);
+  for (const input of published.packages[0].environmentVariables) {
+    delete input.isRequired;
+    delete input.isSecret;
+  }
+  const plan = response => planMcpRegistryPublication({ pkg: manifest, server: metadata, fetchImpl: async url =>
+    url.startsWith(MCP_REGISTRY) ? Response.json({ server: response })
+      : Response.json({ name: manifest.name, version: manifest.version, mcpName: manifest.mcpName }),
+  });
+  assert.equal((await plan(published)).action, 'skip');
+  for (const flag of ['isRequired', 'isSecret']) {
+    for (const value of [true, null, 0, 'false']) {
+      const changed = structuredClone(published);
+      changed.packages[0].environmentVariables[0][flag] = value;
+      await assert.rejects(plan(changed), /inconsistent|different metadata/);
+    }
+    const changed = structuredClone(published);
+    changed.packages[0].environmentVariables[1][flag] = true;
+    await assert.rejects(plan(changed), /different metadata/);
+  }
+  const missing = structuredClone(published);
+  delete missing.packages[0].environmentVariables;
+  await assert.rejects(plan(missing), /inconsistent/);
+});
+
 test('registry plan failures stay closed and do not echo response bodies', async () => {
   const manifest = pkg();
   const metadata = server();

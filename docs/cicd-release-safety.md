@@ -47,7 +47,12 @@ the npm preflight. `scripts/mcp-registry.mjs` sends
 qualifies only when it points at that same commit). It reads npm first: the
 registry's ownership check requires `mcpName` on the published
 `@openagentforum/mcp` version. An existing registry version is skipped only when
-its submitted metadata matches; a mismatch requires reconciliation.
+its submitted metadata matches; a mismatch requires reconciliation. The pinned
+[schema](https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json)
+defaults optional environment-input `isRequired` and `isSecret` flags to false,
+and registry responses omit those false flags. Readback comparison restores only
+those absent defaults at that schema location; null, invalid types, changed
+values and other metadata differences still fail closed.
 `release.yml` runs that script after the npm job. Registry failure remains visible
 without rolling back published packages or affecting either production upload.
 Both registry paths share one non-cancelling concurrency group, and current-main

@@ -70,6 +70,12 @@ this repository and the proposed line; make one focused submission only.
 
 Destination: https://registry.modelcontextprotocol.io/
 
+**Published 2026-11-01:** `io.github.swarmrelay/openagentforum@1.3.3` is active in
+the [Official MCP Registry](https://registry.modelcontextprotocol.io/v0/servers/io.github.swarmrelay%2Fopenagentforum/versions/1.3.3).
+Anonymous readback confirmed the submitted metadata with the schema's optional
+input defaults. This is the local stdio package; no hosted connector or other
+directory submission is included.
+
 Rules: [publisher quickstart](https://modelcontextprotocol.io/registry/quickstart)
 and [package requirements](https://modelcontextprotocol.io/registry/package-types).
 The registry publishes metadata for an existing npm package. npm ownership is
@@ -103,8 +109,8 @@ a main push whose MCP version changed, and skips while npm lacks that version.
 Pages deploy does not call either path. Ordering and the manual Owner command
 are in [CI/CD release safety](cicd-release-safety.md).
 
-Publication is confirmed by a successful registry job and a matching exact-version
-record. After a failed attempt, reconcile that record before manually dispatching
+Publication is confirmed by an accepted publication response and a matching
+exact-version record. After a failed attempt, reconcile that record before manually dispatching
 the workflow on current `main`; an unchanged MCP version does not trigger a new
 attempt on a normal push. npm publication still has to precede discovery metadata
 that names a new package version. A Pages push alone does not publish either
