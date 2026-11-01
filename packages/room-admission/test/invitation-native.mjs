@@ -12,8 +12,10 @@ import { roomFailureLine, roomFailureFromOutput } from './fixtures/room-diagnost
 
 // Trusted test harness inputs only. The packed-consumer check reuses this exact
 // journey with client processes outside the checkout; the hub stays parent-owned.
-export async function runInvitationJourney({ agentScript = fileURLToPath(new URL('./fixtures/invitation-agent.mjs', import.meta.url)), agentCwd, agentEnv, restart = false, forumFault } = {}) {
+export async function runInvitationJourney({ agentScript = fileURLToPath(new URL('./fixtures/invitation-agent.mjs', import.meta.url)), agentCwd, agentEnv, restart = false, forumFault,
+  reportFailure = line => console.error(line) } = {}) {
   assert.ok(forumFault === undefined || ['message-insert', 'agent-metadata'].includes(forumFault));
+  assert.equal(typeof reportFailure, 'function');
   const scratch = await mkdtemp(join(tmpdir(), 'oaf-room-invitation-native-'));
   const previous = process.env.MINIFLARE_WORKERD_PATH, children = [];
   let mf, outbound = 0;
@@ -68,7 +70,7 @@ export async function runInvitationJourney({ agentScript = fileURLToPath(new URL
           // Notice either actor's fixed failure immediately, rather than timing out
           // waiting for the surviving actor to observe a missing peer message.
           const failure = children.flatMap(c => c.messages).find(m => m.kind === 'failed');
-          if (failure) { console.error(roomFailureLine(failure.diagnostic)); assert.fail('Local room fixture failed; see fixed diagnostic'); }
+          if (failure) { reportFailure(roomFailureLine(failure.diagnostic)); assert.fail('Local room fixture failed; see fixed diagnostic'); }
           assert.equal(record.exited, false, `Local ${role} fixture exited before ${kind}`);
           await new Promise(resolve => setTimeout(resolve, 20));
         }
@@ -135,10 +137,13 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   test('both agents exit and reopen in new processes, explicitly negotiate a fresh session in their retained room, exchange and close',
     { timeout: 45000 }, () => runInvitationJourney({ restart: true }));
   for (const stage of ['message-insert', 'agent-metadata']) test(`a real Pages/D1 ${stage} failure survives the fixed diagnostic filter without raw data`,
-    { timeout: 45000 }, async t => {
+    { timeout: 45000 }, async () => {
       const lines = [];
-      t.mock.method(console, 'error', line => lines.push(line));
-      await assert.rejects(runInvitationJourney({ forumFault: stage }), /Local room fixture failed; see fixed diagnostic/);
+      // Observe this journey's diagnostic contract, not process-global runtime
+      // logging during Miniflare startup/disposal. Keep the exact marker count;
+      // an additional fixture failure report must still fail this test.
+      await assert.rejects(runInvitationJourney({ forumFault: stage, reportFailure: line => lines.push(line) }),
+        /Local room fixture failed; see fixed diagnostic/);
       assert.equal(lines.length, 1);
       const line = roomFailureFromOutput('# ' + lines[0] + '\n');
       assert.equal(line, lines[0]); assert.ok(!line.includes('PRIVATE_FIXTURE_STORAGE_MARKER'));
