@@ -4,7 +4,7 @@ import { D1RoomAdmissionStore, initializeD1RoomAdmission } from '../src/d1-admis
 import { RoomAdmissionStore } from '../src/sqlite.js';
 import { ROOM_PACKET_PROTOCOL, ROOM_PACKET_PROFILE, ROOM_PACKET_READ_PROTOCOL, ROOM_PACKET_RECOVERY_PROTOCOL,
   signRoomPacket, signRoomPacketRead, signRoomPacketRecovery, type RoomPacketWrite } from '../src/packet-wire.js';
-import type { RoomPacketPolicy, RoomPacketReceipt, RoomPacketWriteResult } from '../src/packet-storage-contract.js';
+import { packetReceipt, type RoomPacketPolicy, type RoomPacketReceipt, type RoomPacketWriteResult } from '../src/packet-storage-contract.js';
 import { actionFor, admitted, fixture, HUB, START } from './fixtures.js';
 import { TestD1 } from './d1-fixture.js';
 
@@ -69,6 +69,54 @@ it('is opt-in, has no constructor I/O, pins policy and rejects partial schema wi
   s.f.db.exec('DROP TABLE room_lab_packet_usage');
   await expect(initializeD1RoomAdmission(s.db, s.options)).rejects.toThrow('initialization');
   expect(s.f.db.prepare("SELECT name FROM sqlite_schema WHERE name = 'room_lab_packet_usage'").all()).toHaveLength(0);
+});
+
+it('keeps receipt timestamps canonical when the trusted clock leads database time', async () => {
+  const s = await setup();
+  s.f.clock.now += 1000;
+  s.f.db.function('unixepoch', { varargs: true }, () => (s.f.clock.now - 1000) / 1000);
+  const wire = await s.wire(), first = accepted(await s.store.writePacket(wire));
+  expect(first.receipt.committedAt).toBe(s.f.clock.now);
+  const raw = s.f.db.prepare('SELECT receipt_json FROM room_lab_packets').get()!.receipt_json;
+  expect(raw).toBe(canonicalizeJson(first.receipt));
+  expect(await s.store.writePacket(wire)).toEqual({ ...first, replayed: true });
+  expect(await s.store.recoverPacket(await s.recoverWire(first.receipt))).toMatchObject({ ok: true, receipt: first.receipt });
+});
+
+it('recovers and replays only the legacy D1 whole timestamp spelling without rewriting or recharging retained data', async () => {
+  const s = await setup(), wire = await s.wire(), first = accepted(await s.store.writePacket(wire));
+  // Recreate the old SQL encoding, including its original byte charge, in this disposable fixture.
+  s.f.db.prepare("UPDATE room_lab_packets SET receipt_json = json_set(receipt_json, '$.committedAt', CAST(? AS REAL))")
+    .run(first.receipt.committedAt);
+  s.f.db.exec('UPDATE room_lab_packet_usage SET bytes = bytes + 2; UPDATE room_lab_packet_windows SET bytes = bytes + 2');
+  const raw = s.f.db.prepare('SELECT receipt_json FROM room_lab_packets').get()!.receipt_json;
+  expect(raw).toBe(canonicalizeJson(first.receipt).replace(`"committedAt":${first.receipt.committedAt}`, `"committedAt":${first.receipt.committedAt}.0`));
+  expect(() => packetReceipt(raw, first.receipt)).toThrow('Invalid packet receipt'); // Other parsers stay strict.
+  admitted(await s.close());
+  const reopened = new D1RoomAdmissionStore(s.db, s.options), before = s.snapshot();
+  expect(await reopened.recoverPacket(await s.recoverWire(first.receipt))).toMatchObject({ ok: true, receipt: first.receipt });
+  expect(s.snapshot()).toEqual(before); // Own recovery after close is read-only, including original receipt/usage.
+  expect(await reopened.writePacket(wire)).toEqual({ ...first, replayed: true });
+  expect(s.snapshot()).toEqual(before);
+});
+
+it.each(['fraction', 'extra-zero', 'exponent', 'duplicate', 'sequence-real', 'whitespace', 'unsafe'] as const)
+('does not accept %s receipt corruption through legacy D1 timestamp compatibility', async corruption => {
+  const s = await setup(), receipt = accepted(await s.write()).receipt;
+  const canonical = canonicalizeJson(receipt), field = `"committedAt":${receipt.committedAt}`;
+  let raw = canonical.replace(field, field + '.0');
+  if (corruption === 'fraction') raw = canonical.replace(field, field + '.5');
+  if (corruption === 'extra-zero') raw = canonical.replace(field, field + '.00');
+  if (corruption === 'exponent') raw = canonical.replace(field, field + 'e0');
+  if (corruption === 'duplicate') raw = raw.replace(field + '.0', field + '.0,' + field);
+  if (corruption === 'sequence-real') raw = raw.replace('"storedSeq":1', '"storedSeq":1.0');
+  if (corruption === 'whitespace') raw += ' ';
+  if (corruption === 'unsafe') raw = canonical.replace(field, '"committedAt":9007199254740992.0');
+  s.f.db.prepare('UPDATE room_lab_packets SET receipt_json = ?').run(raw);
+  const before = s.snapshot();
+  expect(await s.store.recoverPacket(await s.recoverWire(receipt))).toEqual({ ok: false, reason: 'storage_error' });
+  expect(await s.store.readPackets(await s.readWire())).toEqual({ ok: false, reason: 'storage_error' });
+  expect(s.snapshot()).toEqual(before);
 });
 
 it('enforces current accepted full keys, same-snapshot pages and closed history with historical own recovery', async () => {
