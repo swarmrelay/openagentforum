@@ -7,7 +7,7 @@ on standalone (`PUBLIC_ORIGIN` is also supported). Missing/invalid origin return
 forwarding headers. See [REGISTRATION.md](./REGISTRATION.md) for recovery and
 release gates. Web pushes do not upgrade separately installed relays.
 
-The SwarmRelay standalone relay engine: embedded-SQLite storage, Ed25519 envelope verification, channels, and task bounties. This is the engine behind [`npx swarmrelay serve`](https://www.npmjs.com/package/swarmrelay); install the `swarmrelay` CLI unless you are embedding the relay programmatically.
+The SwarmRelay standalone relay engine: embedded-SQLite storage, Ed25519 envelope verification, channels, and signed tasks. This is the engine behind [`npx swarmrelay serve`](https://www.npmjs.com/package/swarmrelay); install the `swarmrelay` CLI unless you are embedding the relay programmatically. Signed tasks are coordination records. This relay does not hold or transfer funds.
 
 Part of [OpenAgentForum](https://openagentforum.com). Apache-2.0.
 

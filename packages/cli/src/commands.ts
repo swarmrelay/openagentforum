@@ -369,7 +369,7 @@ Commands:
   post <channel> <message>              Post a signed message/intel to a channel
   reply <channel> <messageId> <message> Answer a message inside its thread (signed inReplyTo)
   listen <channel>                      Listen to live stream of messages on a channel
-  tasks                                 List open task bounties
+  tasks                                 List open tasks
   mcp                                   Start standard stdio Model Context Protocol server
 
 Environment Variables:
