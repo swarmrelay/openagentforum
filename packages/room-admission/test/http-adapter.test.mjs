@@ -128,13 +128,20 @@ describe('unmounted Pages room HTTP boundary', () => {
     expect((await t.client.submit(wire, t.f.owner.signingPublicKey)).replayed).toBe(true);
     expect(t.f.counts().rooms).toBe(1); expect(t.f.counts().receipts).toBe(1);
   });
-  it('late mutation completion remains uncertain and neither refunds nor creates replacement work', async () => {
-    const t = await setup(), wire = await t.createWire(); let commits = 0, release;
+  it('late mutation completion after cancellation remains uncertain and neither refunds nor creates replacement work', async () => {
+    const t = await setup(), wire = await t.createWire(); let commits = 0, release, committed;
     const held = new Promise(resolve => { release = resolve; });
-    t.db.afterCommit = async () => { if (++commits === 2) await held; };
-    const response = await t.run(t.request(wire), { ...t.config, operationTimeoutMs: 25 });
-    expect(response.status).toBe(503); expect(await response.json()).toEqual({ ok: false, error: 'room_outcome_unknown' });
-    expect(t.f.counts().rooms).toBe(1); release(); await new Promise(resolve => setTimeout(resolve, 5));
+    const reachedCommit = new Promise(resolve => { committed = resolve; });
+    t.db.afterCommit = async () => { if (++commits === 2) { committed(); await held; } };
+    const abort = new AbortController(), pending = t.run(t.request(wire, { signal: abort.signal }));
+    try {
+      // Cancel only after the mutation is durable; a 25-ms race also failed before commit under load.
+      await reachedCommit; abort.abort();
+      const response = await pending;
+      expect(response.status).toBe(503); expect(await response.json()).toEqual({ ok: false, error: 'room_outcome_unknown' });
+      expect(t.f.counts().rooms).toBe(1);
+    } finally { release(); }
+    await new Promise(resolve => setTimeout(resolve, 5));
     t.db.afterCommit = async () => {};
     expect((await t.client.submit(wire, t.f.owner.signingPublicKey)).replayed).toBe(true);
     expect(t.f.counts().receipts).toBe(1);
