@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { DatabaseSync } from 'node:sqlite';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -65,30 +66,50 @@ test('a lost D1 commit response reports unknown, poisons that HTTP handler, and 
   assert.equal((await f.inspect()).task_lease_tasks.length, 1);
 });
 
-async function processClient(input) {
+async function processClient(input, expectedExit = 0) {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [fileURLToPath(new URL('./fixtures/http-client-process.mjs', import.meta.url))],
       { stdio: ['pipe', 'pipe', 'pipe'], timeout: 20000 });
     let out = '', error = ''; child.stdout.on('data', value => { out += value; }); child.stderr.on('data', value => { error += value; });
     child.on('error', reject); child.on('exit', code => {
-      if (code !== 0) reject(new Error(`Fixture client failed (${code}): ${error}`));
+      if (code !== expectedExit) reject(new Error(`Fixture client failed (${code}): ${error}`));
+      else if (expectedExit !== 0) resolve({ crashed: true });
       else { try { resolve(JSON.parse(out)); } catch (failure) { reject(failure); } }
     });
     child.stdin.end(JSON.stringify(input));
   });
 }
-test('separate client processes preserve a pre-POST journal and recover after full local D1 restart', async t => {
+test('separate client processes preserve the concrete SQLite journal before POST and recover after full local D1 restart', async t => {
   const f = await native(t), scratch = await mkdtemp(join(tmpdir(), 'task-http-client-'));
   t.after(() => rm(scratch, { recursive: true, force: true }));
-  const wire = await creation(f), journalPath = join(scratch, 'journal.json');
+  const wire = await creation(f), journalPath = join(scratch, 'journal.sqlite');
+  const savedJournal = () => {
+    const db = new DatabaseSync(journalPath, { readOnly: true });
+    try {
+      const row = db.prepare('SELECT operation_json, receipt_json FROM task_client_operations').get();
+      return { operation: JSON.parse(row.operation_json), receipt: row.receipt_json === null ? null : JSON.parse(row.receipt_json) };
+    } finally { db.close(); }
+  };
   const input = { options: f.options, actorKey: f.actors[0].signingPublicKey, journalPath, originalWire: wire };
   assert.deepEqual(await processClient({ ...input, fixtureUrl: await f.fixtureUrl(), mode: 'lose' }), { ok: true, sends: 1, acknowledged: false });
-  const pending = JSON.parse(await readFile(journalPath, 'utf8'));
+  const pending = savedJournal();
   assert.equal(pending.operation.wire, wire); assert.equal(pending.receipt, null);
   const before = business(await f.inspect()); await f.restart();
   assert.deepEqual(await processClient({ ...input, fixtureUrl: await f.fixtureUrl(), mode: 'recover', queryWire: await recovery(f, wire) }),
     { ok: true, sends: 1, acknowledged: true });
-  const saved = JSON.parse(await readFile(journalPath, 'utf8'));
+  const saved = savedJournal();
   assert.equal(saved.operation.wire, wire); assert.equal(saved.receipt.commandDigest, (await verifyWire(wire)).digest);
   assert.deepEqual(business(await f.inspect()), before); invariant(await f.inspect(), f.options);
+});
+
+test('a client process crash after journal commit preserves pending intent; unavailable recovery never sends a replacement', async t => {
+  const f = await native(t), scratch = await mkdtemp(join(tmpdir(), 'task-journal-crash-'));
+  t.after(() => rm(scratch, { recursive: true, force: true }));
+  const wire = await creation(f), journalPath = join(scratch, 'journal.sqlite');
+  const input = { options: f.options, actorKey: f.actors[0].signingPublicKey, journalPath, originalWire: wire };
+  assert.deepEqual(await processClient({ ...input, fixtureUrl: await f.fixtureUrl(), mode: 'retain-exit' }, 23), { crashed: true });
+  assert.equal((await f.inspect()).task_lease_tasks.length, 0);
+  assert.deepEqual(await processClient({ ...input, fixtureUrl: await f.fixtureUrl(), mode: 'recover-unavailable', queryWire: await recovery(f, wire) }),
+    { ok: true, sends: 1, acknowledged: false });
+  assert.equal((await f.inspect()).task_lease_tasks.length, 0);
 });
