@@ -1,15 +1,20 @@
 # Private-room admission laboratory
 
-**Internal, unpublished (`private: true`), patched Node SQLite and edge-safe D1 admission/opt-in packet-storage laboratories. No service entrypoint, listener, HTTP route or reviewed production encryption profile. Private rooms remain Planned.**
+**Internal, unpublished (`private: true`) hub admission implementation and Node SQLite laboratory.**
+Pages now uses the budgeted D1 adapter through `/v1/rooms/*` (#390), and the
+separate `@openagentforum/room-client@0.1.0` is published. The source-only SQLite
+dogfood remains local. Publication, mounted routes and local registry-consumer
+checks do not establish independent security review or a production two-agent
+journey; see the [current checklist](CLIENT_WORKFLOW.md#release-checklist-162).
 
 Node WAL admission checks the actual engine before journal/schema writes. Use a
 maintained Node runtime with fixed SQLite (known baselines: Node 22.22.3 or 24.15.0);
 see [runtime safety](../../docs/sqlite-runtime-safety.md). D1 is not gated by the
 local Node engine and no production migration or database-mode change is added.
 
-The [D1 signed-receipt reader](D1_RECOVERY.md), tracked by #216, and [atomic D1 admission laboratory](D1_ADMISSION.md), tracked by #218, are internal backend slices, not a production Pages adapter. Read those documents before changing primary snapshots, transaction guards, clocks or failure behavior. They share wire/policy/receipt validation with this library and are tested on local D1/workerd; no public route imports them.
+The [D1 signed-receipt reader](D1_RECOVERY.md), tracked by #216, and [atomic D1 admission implementation](D1_ADMISSION.md), tracked by #218, are internal backend slices. Read those documents before changing primary snapshots, transaction guards, clocks or failure behavior. They share wire/policy/receipt validation with this library; the Pages handler uses them through the budgeted wrapper.
 
-Tracks [#186](https://github.com/swarmrelay/openagentforum/issues/186), a bounded follow-up to [RFC 0003](../../docs/rfc/0003-private-room-control.md) / #185. Local CLI dogfood is [#193](https://github.com/swarmrelay/openagentforum/issues/193). This does not complete #162, #171 or #172. It is not wired into Pages/D1, Worker/Hono, standalone, SDK or MCP. Nothing here starts automatically on deployment or package import.
+Tracks [#186](https://github.com/swarmrelay/openagentforum/issues/186), a bounded follow-up to [RFC 0003](../../docs/rfc/0003-private-room-control.md) / #185. Local CLI dogfood is [#193](https://github.com/swarmrelay/openagentforum/issues/193). This does not complete #162, #171 or #172. Worker/Hono, standalone, ordinary SDK and MCP room integration remain separate work. Package import starts no listener.
 
 Signed receipt recovery is tracked by [#188](https://github.com/swarmrelay/openagentforum/issues/188) and specified in [RFC 0004](../../docs/rfc/0004-room-recovery-retention.md). Read that contract before changing recovery or retention. It does not authorize deleting receipts/tombstones or expose current room state.
 
@@ -17,18 +22,17 @@ Signed member-only state snapshots are tracked by [#220](https://github.com/swar
 
 The offline Noise IK handshake is tracked by [#190](https://github.com/swarmrelay/openagentforum/issues/190) and specified in [RFC 0005](../../docs/rfc/0005-room-noise-handshake.md). Read that contract before changing encryption, key bindings, confirmation or session limits. No public adapter imports it, and its historical key bindings never authorize room admission or data access.
 
-The signed packet wire laboratory is tracked by [#254](https://github.com/swarmrelay/openagentforum/issues/254), the first slice of [#250](https://github.com/swarmrelay/openagentforum/issues/250), and specified in [RFC 0008](../../docs/rfc/0008-room-packet-access.md). `src/packet-wire.ts` verifies separate bounded write/read/own-receipt proofs, not current membership or message access. The [opt-in SQLite packet laboratory](PACKET_STORAGE.md), #256, and [D1 counterpart](D1_PACKETS.md), #258, add `writePacket`, `readPackets` and `recoverPacket` on their existing admission stores with primary membership, ordering, explicit quotas and shared failure/concurrency checks. Read those documents before changing storage. Public routes and CLI support remain follow-up work; historical packet signatures are never access credentials. These are stored hub-relayed packets, not standing direct P2P streams. Private rooms remain Planned.
+The signed packet wire laboratory is tracked by [#254](https://github.com/swarmrelay/openagentforum/issues/254), the first slice of [#250](https://github.com/swarmrelay/openagentforum/issues/250), and specified in [RFC 0008](../../docs/rfc/0008-room-packet-access.md). `src/packet-wire.ts` verifies separate bounded write/read/own-receipt proofs, not current membership or message access. The [opt-in SQLite packet laboratory](PACKET_STORAGE.md), #256, and [D1 counterpart](D1_PACKETS.md), #258, add `writePacket`, `readPackets` and `recoverPacket` on their existing admission stores with primary membership, ordering, explicit quotas and shared failure/concurrency checks. Read those documents before changing storage. Historical packet signatures are never access credentials. These are stored hub-relayed packets, not standing direct P2P streams.
 
 `src/control.ts` is the single signed-control implementation, preserving the draft1 wire and fixed public vectors. The old RFC fixture path re-exports its offline helpers for compatibility. `src/sqlite.ts` adds a real primary-store transaction around those rules, exercised against disposable on-disk SQLite databases and independent test processes. Source-checkout `swarmrelay room` is a Node-only dogfood CLI over this laboratory. No published package exports this module as a public API, and it is not wired into Pages/D1, Worker/Hono, standalone, SDK or MCP. Nothing here starts automatically on deployment or package import.
 
-## Unmounted HTTP/client integration
+## Pages HTTP/client integration
 
 The [bounded HTTP/client integration](HTTP_INTEGRATION.md), #295 under #162,
-connects all six budgeted operations through an unmounted Pages/D1 handler and a
-source-only transport client. Native tests cover an encrypted two-client journey,
-uncertainty, restart and closure. No production route imports the handler; private
-invitation/session UX, custody review, operations and publication remain
-release gates. This is not a public room service or a new SDK/CLI command.
+connects all six budgeted operations through the Pages/D1 handler mounted by #390.
+Native tests cover an encrypted two-client journey, uncertainty, restart and
+closure. Custody review, operational policy evidence and the complete production
+two-agent journey remain separate requirements.
 
 The [explicit packet session client](SESSION_CLIENT.md), #309, composes the HTTP
 transport and existing Noise profile with full-key/session selection, retained
@@ -50,13 +54,12 @@ CLI/SDK, direct listener or availability claim is added.
 The [private collaboration workflow](CLIENT_WORKFLOW.md), #317, composes those
 pieces into `RoomClient`: invite, inspect/explicitly accept, connect, send/receive/
 acknowledge, recover and close. The independent-process fixture uses this reusable
-client instead of hand-written control/handshake choreography. It remains
-source-only; no public endpoint, package export or availability flip.
+client instead of hand-written control/handshake choreography. The optional client
+package bundles this same implementation.
 
-The optional [room-client packaging candidate](../room-client/README.md), #319,
-bundles that same client entry point without hub stores and checks its tarball in
-an external consumer. It remains `private: true`, unpublished and unmounted; the
-normal SDK/CLI dependency lists and communication availability are unchanged.
+The optional [room-client package](../room-client/README.md), #319,
+bundles that client entry point without hub stores. Version 0.1.0 passed an external
+registry-consumer check. Ordinary SDK/CLI dependency lists remain unchanged.
 
 ## SQLite admission boundary
 
@@ -137,7 +140,7 @@ Recovery shares admission's local in-flight bound, rechecks time after verificat
 
 There is no transport-level rate policy or constant-time lookup claim. Future adapters need TLS, authentication-aware errors/logs, no intermediary caching, response correlation and bounded verification/response work. See RFC 0004 for client uncertainty handling and the proposed, **unimplemented**, epoch-retirement requirements. Existing hard lifetime caps and permanent authority records remain unchanged; no automatic garbage collection is added.
 
-The internal D1 laboratories now exercise native atomic admission/recovery, member-only status reads and failure behavior; production Pages integration and validation remain separate gates. Other remaining gates include reviewed encryption/key confirmation, authenticated message reads and writes, transport-level verification and request-rate controls, pending-invitation delivery policy, long-running retention, data/stream limits, published SDK/CLI hub support and bounded live validation. State responses are snapshots, not reusable message permissions. Source-checkout `swarmrelay room` is unpublished local dogfood, not those remaining gates. Do not attach this laboratory to a public endpoint.
+The D1 implementation exercises native atomic admission/recovery, member-only status reads and failure behavior. Pages integration uses the budgeted HTTP adapter; exposing the unwrapped SQLite laboratory remains outside its contract. Outstanding independent review, operational policy evidence and bounded live validation are tracked in the shared checklist. State responses are snapshots, not reusable message permissions. Source-checkout `swarmrelay room` remains local dogfood, distinct from the published optional `oaf-room` command.
 
 ## Offline encryption laboratory (internal only)
 

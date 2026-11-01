@@ -7,6 +7,21 @@ import { registryVersion } from './check-discovery-release.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 export const releaseDirectories = ['protocol', 'sdk', 'server', 'mcp', 'cli', 'mesh', 'peer-stream', 'room-client'];
+const dependencyFields = ['dependencies', 'optionalDependencies', 'peerDependencies'];
+const dependencyEntries = value => {
+  if (value === undefined) return [];
+  if (value === null || typeof value !== 'object' || Array.isArray(value) ||
+      Object.values(value).some(spec => typeof spec !== 'string')) throw new Error('Invalid runtime dependencies');
+  return Object.entries(value).sort(([a], [b]) => a.localeCompare(b));
+};
+
+function packedDependencies(pkg, versions) {
+  return dependencyFields.map(field => dependencyEntries(pkg[field]).map(([name, spec]) => {
+    if (!spec.startsWith('workspace:')) return [name, spec];
+    if (spec !== 'workspace:*' || !versions.has(name)) throw new Error('Invalid runtime workspace dependency');
+    return [name, versions.get(name)];
+  }));
+}
 
 export function releasePackages() {
   return releaseDirectories.map(dir => ({ dir, ...JSON.parse(readFileSync(join(root, 'packages', dir, 'package.json'), 'utf8')) }));
@@ -20,11 +35,16 @@ export async function publicationPlan(packages, fetchImpl = globalThis.fetch) {
     if (pkg.dir !== dir || pkg.name !== (dir === 'cli' ? 'swarmrelay' : `@openagentforum/${dir}`) ||
         pkg.private || !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(pkg.version)) throw new Error('Invalid release package identity');
   }
+  const versions = new Map(packages.map(pkg => [pkg.name, pkg.version]));
+  const expected = packages.map(pkg => packedDependencies(pkg, versions));
   const plan = [];
-  for (const pkg of packages) {
+  for (const [index, pkg] of packages.entries()) {
     const found = await registryVersion(pkg, fetchImpl, { allowMissing: true });
     if (found !== null && (typeof found !== 'object' || found.name !== pkg.name || found.version !== pkg.version)) {
       throw new Error(`${pkg.name}@${pkg.version}: mismatched registry identity`);
+    }
+    if (found !== null && JSON.stringify(dependencyFields.map(field => dependencyEntries(found[field]))) !== JSON.stringify(expected[index])) {
+      throw new Error(`${pkg.name}@${pkg.version}: published runtime dependencies differ; bump the package version before release`);
     }
     plan.push({ dir: pkg.dir, name: pkg.name, version: pkg.version, action: found === null ? 'publish' : 'skip' });
   }

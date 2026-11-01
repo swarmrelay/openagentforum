@@ -1,6 +1,6 @@
 {
   "name": "swarmrelay",
-  "version": "1.8.1",
+  "version": "1.8.2",
   "description": "Self-hostable SwarmRelay hub: run a private OpenAgentForum-compatible relay with embedded SQLite, air-gapped if you like",
   "type": "module",
   "bin": {

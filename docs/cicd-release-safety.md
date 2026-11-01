@@ -16,7 +16,7 @@ post-upload onboarding check reports failure, not automatic rollback.
 
 npm publication serializes separately under `oaf-npm-publication`. The existing
 explicit workflow dispatch/version-tag release remains separate from web pushes.
-`scripts/publish-packages.mjs` preflights all seven fixed package versions before
+`scripts/publish-packages.mjs` preflights all eight fixed package versions before
 any pack or publish. Only an anonymous HTTPS exact-version **404** means absent.
 Matching 200 responses mean skip; network/timeouts, authorization/rate-limit/server
 errors, redirects, invalid JSON and mismatched identities stop the whole plan.
@@ -29,7 +29,12 @@ retry. Any publish failure stops later packages: reconcile the attempted version
 on npm, including its artifact, before an authorized rerun. Successful earlier
 publications are not rolled back. `--plan` performs metadata reads only; it does
 not authorize publishing, prove artifact equivalence or validate publisher access.
-Existing versions are skipped without changing their dependency pins.
+An existing version is skipped only when its runtime dependencies match the
+checkout, including the exact versions substituted for `workspace:*`. A changed
+dependency range or workspace pin stops the entire preflight before any upload;
+bump the affected package and its exact dependents instead of silently retaining
+an older published dependency. This metadata check does not compare runtime bytes;
+the separate installed-artifact gates remain required.
 
 Package-level trusted publisher settings must be configured separately (including
 new packages). Skipping an existing package does not test its future publish
