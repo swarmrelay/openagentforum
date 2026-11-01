@@ -39,7 +39,8 @@ export function createLineReader(input, signal, limits = CLI_LIMITS) {
         catch { throw new CliIoError('invalid_json'); }
       }
       if (buffer.length > limits.lineBytes || ++reads > 65536) throw new CliIoError('input_limit');
-      const wait = until - performance.now(); if (wait <= 0) throw new CliIoError('stdio_deadline');
+      const wait = until - performance.now();
+      if (wait <= 0) { input.destroy(); throw new CliIoError('stdio_deadline'); }
       const result = await bounded(iterator.next(), wait, signal, () => input.destroy());
       if (result.done) {
         if (buffer.length) throw new CliIoError('incomplete_line');
