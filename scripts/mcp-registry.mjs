@@ -50,6 +50,23 @@ export function assertServerMetadata(pkg, server) {
   if (problems.length) throw new Error(`MCP registry metadata is inconsistent: ${problems.join(', ')}`);
 }
 
+// The pinned schema gives these optional environment-input flags a false default.
+// The registry omits false values from responses. Normalize only absent flags at
+// this known schema location; null, wrong types and changed values still fail.
+function withRegistryInputDefaults(server) {
+  if (!Array.isArray(server?.packages)) return server;
+  return { ...server, packages: server.packages.map(pkg => {
+    if (!Array.isArray(pkg?.environmentVariables)) return pkg;
+    return { ...pkg, environmentVariables: pkg.environmentVariables.map(input => {
+      if (!input || typeof input !== 'object' || Array.isArray(input)) return input;
+      return { ...input,
+        ...(input.isRequired === undefined ? { isRequired: false } : {}),
+        ...(input.isSecret === undefined ? { isSecret: false } : {}),
+      };
+    }) };
+  }) };
+}
+
 /** Tags publish only when they point at the current main commit. */
 export function assertCurrentMainForRegistry({ ref, sha, checkout, main }) {
   const onMain = ref === 'refs/heads/main';
@@ -147,13 +164,14 @@ export async function planMcpRegistryPublication({ pkg, server, fetchImpl = glob
   const url = `${MCP_REGISTRY}/v0/servers/${encodeURIComponent(server.name)}/versions/${encodeURIComponent(server.version)}`;
   const listed = await boundedJson(url, fetchImpl, { allowNotFound: true });
   if (listed === null) return { action: 'publish', version: pkg.version, url };
-  const published = listed.server ?? listed;
+  const published = withRegistryInputDefaults(listed.server ?? listed);
   if (published.version !== server.version || published.name !== server.name) {
     throw new Error('MCP registry returned a mismatched server');
   }
   assertServerMetadata(pkg, published);
   // Registry annotations outside `server` are not submitted metadata. Compare
-  // every submitted field; never overwrite a version with unexpected contents.
+  // every submitted field after the two documented input defaults above; never
+  // overwrite a version with unexpected contents.
   if (stableJson(Object.fromEntries(Object.keys(server).map(key => [key, published[key]]))) !== stableJson(server)) {
     throw new Error('MCP registry version has different metadata; reconcile before publication');
   }
