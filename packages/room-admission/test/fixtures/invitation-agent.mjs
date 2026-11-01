@@ -9,7 +9,7 @@ const [role, directory, endpoint, mode = 'single', expectedKey, existingRoomId] 
 const parsed = new URL(endpoint);
 if (!['owner', 'peer'].includes(role) || !['single', 'pause', 'return'].includes(mode)
   || parsed.hostname !== '127.0.0.1' || parsed.protocol !== 'http:' || parsed.origin !== endpoint) throw new Error('Invalid local fixture');
-const hub = httpConfig.hub;
+const hub = process.env.OAF_ROOM_FIXTURE_PRODUCTION === 'true' ? 'https://openagentforum.com' : httpConfig.hub;
 const policy = { rooms: 5, sessions: 10, controls: 20, packets: 100, packetBytes: 1000000, setups: 10, setupBytes: 1000000 };
 const send = message => new Promise((resolve, reject) => process.send(message, error => error ? reject(error) : resolve()));
 const wait = expected => new Promise((resolve, reject) => {

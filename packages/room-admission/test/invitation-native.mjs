@@ -13,23 +13,26 @@ import { roomFailureLine, roomFailureFromOutput } from './fixtures/room-diagnost
 // Trusted test harness inputs only. The packed-consumer check reuses this exact
 // journey with client processes outside the checkout; the hub stays parent-owned.
 export async function runInvitationJourney({ agentScript = fileURLToPath(new URL('./fixtures/invitation-agent.mjs', import.meta.url)), agentCwd, agentEnv, restart = false, forumFault,
-  reportFailure = line => console.error(line) } = {}) {
+  reportFailure = line => console.error(line), productionMigrations = false } = {}) {
   assert.ok(forumFault === undefined || ['message-insert', 'agent-metadata'].includes(forumFault));
   assert.equal(typeof reportFailure, 'function');
+  assert.equal(typeof productionMigrations, 'boolean');
+  assert.ok(!productionMigrations || forumFault === undefined);
   const scratch = await mkdtemp(join(tmpdir(), 'oaf-room-invitation-native-'));
   const previous = process.env.MINIFLARE_WORKERD_PATH, children = [];
   let mf, outbound = 0;
   try {
     process.env.MINIFLARE_WORKERD_PATH = workerd.default;
     const pages = JSON.parse(await readFile(new URL('../../../apps/web/wrangler.jsonc', import.meta.url), 'utf8'));
-    const bundle = await build({ entryPoints: [fileURLToPath(new URL('./fixtures/invitation-worker.mjs', import.meta.url))],
+    const fixture = productionMigrations ? './fixtures/production-invitation-worker.mjs' : './fixtures/invitation-worker.mjs';
+    const bundle = await build({ entryPoints: [fileURLToPath(new URL(fixture, import.meta.url))],
       bundle: true, write: false, format: 'esm', platform: 'neutral', metafile: true, external: ['node:*', 'cloudflare:*'] });
     assert.ok(Object.values(bundle.metafile.outputs).every(o => o.imports.length === 0));
     assert.ok(Object.keys(bundle.metafile.inputs).every(path => !/noise|local-state|local-files|invitation-mailbox/.test(path)));
     mf = new Miniflare({ host: '127.0.0.1', port: 0, inspectorHost: '127.0.0.1', cf: false,
       telemetry: { enabled: false }, logRequests: false, resourceTmpPath: join(scratch, 'runtime'),
       workers: [{ config: { name: 'room-invitation-test', compatibilityDate: pages.compatibility_date,
-        compatibilityFlags: [], workersDev: false, previewUrls: false, domains: [], triggers: [],
+        compatibilityFlags: productionMigrations ? pages.compatibility_flags : [], workersDev: false, previewUrls: false, domains: [], triggers: [],
         env: { DB: { type: 'd1', id: 'room-invitation-local', dev: { remote: false } } },
         manifest: { mainModule: 'index.mjs', modules: { 'index.mjs': { type: 'esm', contents: bundle.outputFiles[0].text } } },
       }, dev: { unsafeRegisterWorker: false, outboundService: { type: 'fetcher', handler() { outbound++; throw new Error('No outbound traffic'); } } } }],
@@ -45,14 +48,15 @@ export async function runInvitationJourney({ agentScript = fileURLToPath(new URL
       const trigger = schema.indexOf('CREATE TRIGGER '), ordinary = trigger < 0 ? schema : schema.slice(0, trigger);
       await sql(ordinary.split(';').filter(s => s.trim())); if (trigger >= 0) await sql([schema.slice(trigger)]);
     }
-    assert.equal((await worker.fetch('https://fixture.invalid/test-only/init', { method: 'POST' })).status, 200);
+    if (!productionMigrations) assert.equal((await worker.fetch('https://fixture.invalid/test-only/init', { method: 'POST' })).status, 200);
     // Trusted parent-only fault in disposable storage. Never change client lifetimes or retry a POST.
     if (forumFault) await sql([`CREATE TRIGGER fixture_forum_fault BEFORE ${forumFault === 'message-insert'
       ? 'INSERT ON messages' : 'UPDATE OF last_seen_at ON agents'} BEGIN SELECT RAISE(FAIL, 'PRIVATE_FIXTURE_STORAGE_MARKER'); END`]);
     const launch = async (role, mode, identity, roomId) => {
       const directory = join(scratch, role); if (mode !== 'return') await mkdir(directory, { mode: 0o700 });
       const child = fork(agentScript, [role, directory, endpoint, mode, ...(mode === 'return' ? [identity.signingPublicKey, roomId] : [])],
-        { stdio: ['ignore', 'pipe', 'pipe', 'ipc'], execArgv: [], cwd: agentCwd, env: agentEnv });
+        { stdio: ['ignore', 'pipe', 'pipe', 'ipc'], execArgv: [], cwd: agentCwd,
+          env: productionMigrations ? { ...(agentEnv ?? process.env), OAF_ROOM_FIXTURE_PRODUCTION: 'true' } : agentEnv });
       const record = { child, messages: [], bytes: 0, exited: false }; children.push(record);
       const timer = setTimeout(() => child.kill('SIGKILL'), 30000);
       record.exit = new Promise(resolve => { child.once('error', () => resolve(-1)); child.once('exit', (code, signal) => {
@@ -136,6 +140,8 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     { timeout: 45000 }, () => runInvitationJourney());
   test('both agents exit and reopen in new processes, explicitly negotiate a fresh session in their retained room, exchange and close',
     { timeout: 45000 }, () => runInvitationJourney({ restart: true }));
+  test('production migrations and mounted routes support the full returning-agent journey without lab initialization',
+    { timeout: 45000 }, () => runInvitationJourney({ restart: true, productionMigrations: true }));
   for (const stage of ['message-insert', 'agent-metadata']) test(`a real Pages/D1 ${stage} failure survives the fixed diagnostic filter without raw data`,
     { timeout: 45000 }, async () => {
       const lines = [];

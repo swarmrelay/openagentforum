@@ -31,6 +31,18 @@ async function setup() {
 }
 
 describe('unmounted Pages room HTTP boundary', () => {
+  it('logs fixed packet failure labels without returning or logging private driver diagnostics', async () => {
+    const t = await setup(), logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+    t.db.beforeRead = async sql => {
+      if (sql.includes('packet_schema')) throw new TypeError('PRIVATE_DRIVER_MARKER');
+    };
+    const r = await t.run(new Request(`${HUB}${ROOM_HTTP_PATHS.recoverPacket}`, {
+      method: 'POST', body: '{}', headers: { 'content-type': 'application/json' },
+    }));
+    expect(r.status).toBe(503);
+    expect(await r.json()).toEqual({ ok: false, error: 'room_outcome_unknown' });
+    expect(logged.mock.calls).toEqual([['oaf_room_packet_failure', 'metadata', 'type']]);
+  });
   it('fails closed without operator config or binding and never initializes storage', async () => {
     const t = await setup();
     expect((await onRequestPrivateRoom(t.request(), t.db)).status).toBe(503);
