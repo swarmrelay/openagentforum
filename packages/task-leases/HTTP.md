@@ -60,9 +60,11 @@ Responses are hub assertions over HTTPS, not separately signed receipts.
 then sends. It acknowledges only a matching found receipt. The callback contract
 must durably preserve the exact wire/scope/operation/digest before resolving and
 must refuse conflicting reuse or capacity exhaustion. A failed retain prevents a
-send; a failed acknowledgment leaves recovery to the caller. This slice supplies
-the interface, **not a production persistent journal, custody policy or eviction
-scheme**. Do not use an in-memory callback as durable production storage.
+send; a failed acknowledgment leaves recovery to the caller. The separate
+[SQLite journal](JOURNAL.md) implements this contract with bounded retained
+capacity and a reserved completion slot per claim. It remains an internal local
+implementation, not reviewed production custody or an eviction scheme. Do not use
+an in-memory callback as durable production storage.
 
 Recovery takes both the retained original operation and an explicitly signed fresh
 receipt query. `unavailable` leaves the operation pending. Every client error has
@@ -81,10 +83,12 @@ lanes, lost responses, failed durability callbacks and read-only expired views.
 The native workerd fixture bundles the actual Pages factory without Node/SQLite
 imports. It inspects the persisted D1 attempt row at the first body pull, tests
 unknown commits and shared-handler poisoning, and restarts the full local worker
-and D1 persistence. Two separate Node client processes retain a private fixture
+and D1 persistence. Two separate Node client processes use the concrete SQLite
 journal before POST, lose a successful response, then recover the exact receipt
-after the server restart. That fixture journal syncs its file and directory; it
-is test infrastructure, not a released checkpoint implementation. Fixture
+after the server restart. A separate abrupt exit after journal commit and before
+POST retains the pending operation and makes only an explicit unavailable
+recovery in its replacement process. This is local evidence, not released
+checkpoint/custody functionality. Fixture
 networking is parent-owned loopback and rejects outbound requests. HTTPS origin
 matching inside the fixture does not establish live TLS or production evidence.
 

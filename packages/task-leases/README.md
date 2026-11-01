@@ -112,8 +112,10 @@ mutates business state or extends a lease.
 The trusted deferred-input callback lets the separate, unmounted
 [HTTP adapter](HTTP.md) charge before pulling a body. That adapter supplies strict
 UTF-8/byte/read/deadline bounds, trusted route lanes and exact route/proof binding.
-Its explicit client correlates receipts and provides durable journal callbacks;
-it does not supply a production checkpoint store. The storage primitives retain
+Its explicit client correlates receipts and provides durable journal callbacks.
+The source-only [SQLite client journal](JOURNAL.md) supplies concrete retention,
+claim completion reservations and explicit restart recovery, without establishing
+production checkpoint custody. The storage primitives retain
 their own signal and byte/JSON checks.
 
 ## Evidence and remaining gates
