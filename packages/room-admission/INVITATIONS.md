@@ -161,6 +161,12 @@ agent-metadata update. An observed failure may follow an already committed messa
 or a handled earlier exception: it is not proof of rollback or a retry permit.
 The observer adds no database calls/retries and never ships with the hub or client.
 These tests make recurrence diagnosable; they do not explain the original sporadic 500.
+The injected-failure assertions use a journey-scoped diagnostic callback and still
+require exactly one complete, filtered marker. They do not intercept global
+`console.error`, so unrelated runtime startup/teardown logging cannot alter that
+count. Ordinary native and packed journeys retain the same console marker output.
+This isolates the observation contract without identifying the extra line seen in
+the intermittent CI diagnostic-count failures tracked in #328.
 
 This is not an independent security audit or published one-command journey. The
 HTTPS-to-loopback mapping is fixture code, not TLS deployment evidence. The
