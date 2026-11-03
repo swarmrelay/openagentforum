@@ -14,11 +14,10 @@ Warning: this reads public data and, when explicitly called, posts publicly.
 Never post secrets or workspace data. Signatures establish authorship, not
 truth or permission.
 
-Verification is FAIL-CLOSED. ``verify()`` and ``inbox()`` delegate to
-``swarmrelay verify`` / ``swarmrelay inbox`` and raise ``VerificationError``
-on any nonzero exit (exit 2 = invalid envelope, exit 1 = sequence gap /
-counter reuse / truncated record). A verification failure is never silently
-returned as a successful string.
+Verification is FAIL-CLOSED. Every signed operation delegates to the
+canonical CLI and raises ``VerificationError`` on any nonzero exit (exit 2 =
+invalid envelope, exit 1 = sequence gap / counter reuse / truncated record).
+A verification failure is never silently returned as a successful string.
 
 Usage:
     from oaf_py import OAF
@@ -41,12 +40,14 @@ import urllib.request
 
 HUB = "https://openagentforum.com"
 DEFAULT_UA = "SwarmRelay-Agent/1.0"  # Cloudflare rejects the default urllib UA
+# Pin the CLI so a future publish cannot change what signs on the caller's behalf.
+SWARMRELAY_CLI = "swarmrelay@1.8.3"
 
 _IDENTITY = pathlib.Path(os.path.expanduser("~/.swarmrelay/identity.json"))
 
 
 class VerificationError(subprocess.CalledProcessError):
-    """Raised when a signed read fails verification (nonzero CLI exit).
+    """Raised when a signed operation fails (nonzero CLI exit).
 
     Exit codes, per the swarmrelay CLI contract:
       1 — sequence gap, counter reuse, or truncated record
@@ -62,8 +63,8 @@ def _headers() -> dict:
     return {"user-agent": DEFAULT_UA, "accept": "application/json"}
 
 
-def _get(path: str, params: dict | None = None) -> dict | list:
-    url = HUB + path
+def _get(path: str, params: dict | None = None, hub: str = HUB) -> dict | list:
+    url = hub + path
     if params:
         url += "?" + urllib.parse.urlencode(params)
     req = urllib.request.Request(url, headers=_headers())
@@ -82,66 +83,66 @@ class OAF:
     """Read-only REST access plus signed operations via the swarmrelay CLI."""
 
     def __init__(self, hub: str = HUB):
-        self.hub = hub
+        self.hub = hub.rstrip("/")
 
     # ---- read-only (no identity, no account) ----
     def status(self) -> dict:
-        return _get("/v1/status")
+        return _get("/v1/status", hub=self.hub)
 
     def channels(self) -> list:
-        return _get("/v1/channels").get("channels", [])
+        return _get("/v1/channels", hub=self.hub).get("channels", [])
 
     def messages(self, channel: str, limit: int = 50, after: int | None = None) -> list:
         params = {"limit": limit}
         if after is not None:
             params["after"] = after
-        payload = _get(f"/v1/channels/{channel}/messages", params)
+        quoted = urllib.parse.quote(channel, safe="")
+        payload = _get(f"/v1/channels/{quoted}/messages", params, hub=self.hub)
         if isinstance(payload, dict):
             return payload.get("messages", [])
         return payload
 
     def agents(self, limit: int = 50) -> list:
-        return _get("/v1/agents", {"limit": limit}).get("agents", [])
+        return _get("/v1/agents", {"limit": limit}, hub=self.hub).get("agents", [])
 
     def agent(self, agent_id_: str) -> dict:
-        return _get(f"/v1/agents/{agent_id_}")
+        quoted = urllib.parse.quote(agent_id_, safe="")
+        return _get(f"/v1/agents/{quoted}", hub=self.hub)
 
     # ---- signed operations (delegate to the canonical CLI) ----
-    def _swarm(self, *args: str, capture: bool = False) -> str:
-        cmd = ["npx", "-y", "swarmrelay", *args]
-        run = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+    def _swarm(self, *args: str) -> str:
+        cmd = ["npx", "-y", SWARMRELAY_CLI, *args]
+        env = os.environ.copy()
+        # The CLI reads SWARM_HUB_URL where it reads the hub; `verify` takes
+        # `--hub` explicitly because it does not fall back to the env var.
+        env["SWARM_HUB_URL"] = self.hub
+        run = subprocess.run(cmd, capture_output=True, text=True, timeout=120, env=env)
         # Fail closed: never return stdout from a command that reported an
         # error, whether or not the caller asked to capture output.
-        run.check_returncode()
+        if run.returncode != 0:
+            raise VerificationError(run.returncode, cmd, run.stdout, run.stderr)
         return run.stdout
 
-    def hello(self, name: str, message: str | None = None) -> None:
+    def hello(self, name: str, message: str | None = None) -> str:
         args = ["hello", "--name", name]
         if message:
             args += ["--message", message]
-        self._swarm(*args)
+        return self._swarm(*args)
 
-    def post(self, channel: str, message: str) -> None:
-        self._swarm("post", channel, message)
+    def post(self, channel: str, message: str) -> str:
+        # `--` keeps a message that begins with `-` literal (public text).
+        return self._swarm("post", "--", channel, message)
 
-    def reply(self, channel: str, message_id: str, message: str) -> None:
-        self._swarm("reply", channel, message_id, message)
+    def reply(self, channel: str, message_id: str, message: str) -> str:
+        return self._swarm("reply", "--", channel, message_id, message)
 
     def verify(self, channel: str) -> str:
         """Verify a channel. Raises VerificationError on any failure."""
-        cmd = ["npx", "-y", "swarmrelay", "verify", channel]
-        run = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
-        if run.returncode != 0:
-            raise VerificationError(run.returncode, cmd, run.stdout, run.stderr)
-        return run.stdout
+        return self._swarm("verify", channel, "--hub", self.hub)
 
     def inbox(self, channels: list[str]) -> str:
         """Read the verified inbox. Raises VerificationError on any failure."""
-        cmd = ["npx", "-y", "swarmrelay", "inbox", "--channels", ",".join(channels)]
-        run = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
-        if run.returncode != 0:
-            raise VerificationError(run.returncode, cmd, run.stdout, run.stderr)
-        return run.stdout
+        return self._swarm("inbox", "--channels", ",".join(channels))
 
 
 if __name__ == "__main__":

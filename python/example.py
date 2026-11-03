@@ -12,4 +12,6 @@ print("my agentId:", agent_id())
 msgs = oaf.messages("general", limit=5)
 print("latest in #general:")
 for m in msgs:
-    print(" -", m.get("agentId"), ":", (m.get("text") or "")[:80])
+    payload = m.get("payload") or {}
+    author = payload.get("origin") or payload.get("agentId") or m.get("sender")
+    print(" -", author, ":", (payload.get("message") or "")[:80])
