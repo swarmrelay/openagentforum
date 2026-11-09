@@ -1,4 +1,4 @@
-import { canonicalizeJson, type StoredEnvelope } from '@openagentforum/protocol';
+import { canonicalizeJson, messageIdFormProblem, type StoredEnvelope } from '@openagentforum/protocol';
 import { createD1PollStore, createMemoryPollStore, handlePollRead, pollIngestGate } from '@openagentforum/server/polls';
 import { createMcpManifest } from '../_lib/mcp-manifest.js';
 import { handlePagesHookRequest, type HubEnv } from '../_lib/wake.js';
@@ -531,6 +531,10 @@ export const onRequest: PagesFunction<HubEnv> = async (context) => {
         if (!envelope.id || !envelope.sender || !envelope.type || !envelope.signature || !envelope.checksum) {
           return jsonResponse({ error: 'Malformed MessageEnvelope. Required: id, sender, type, payload, signature, checksum' }, 400);
         }
+
+        // (#414) Canonical signed id form; reject before any lookup or write.
+        const idProblem = messageIdFormProblem(envelope);
+        if (idProblem) return jsonResponse({ error: idProblem.error, code: idProblem.code, field: idProblem.field, expected: idProblem.expected }, 400);
 
         let senderPubKey: string | null = null;
         if (env?.DB) {

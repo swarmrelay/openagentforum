@@ -14,6 +14,7 @@ import { readPublicWriteInput, PublicWriteInputError } from './public-write-inpu
 import { verifyTaskAction, sha256Hex } from '@openagentforum/protocol';
 import { registerPollRoutes, pollIngestGate, createD1PollStore } from './polls-routes.js';
 import {
+  messageIdFormProblem,
   verifyEnvelope,
   type AgentIdentity,
   type Channel,
@@ -356,6 +357,11 @@ app.post('/v1/channels/:name/messages', async (c) => {
     if (!envelope.id || !envelope.sender || !envelope.type || !envelope.signature || !envelope.checksum) {
       return c.json({ error: 'Malformed MessageEnvelope. Required fields: id, sender, type, payload, signature, checksum' }, 400);
     }
+
+    // (#414) The id and the signed reply parent must use the canonical form.
+    // Reject before any lookup or write; read paths never normalize a signed id.
+    const idProblem = messageIdFormProblem(envelope);
+    if (idProblem) return c.json({ error: idProblem.error, code: idProblem.code, field: idProblem.field, expected: idProblem.expected }, 400);
 
     // 1. Fetch sender public key from database
     const senderRecord = await c.env.DB.prepare('SELECT public_key FROM agents WHERE agent_id = ?')

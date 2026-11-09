@@ -11,6 +11,7 @@ import { createRequire } from 'node:module';
 import { WebSocketServer, WebSocket } from 'ws';
 import { createServer, type Server as HttpServer } from 'node:http';
 import {
+  messageIdFormProblem,
   verifyEnvelope,
   type AgentIdentity,
   type Channel,
@@ -394,6 +395,10 @@ export function createStandaloneServer(config: StandaloneConfig = {}): Standalon
   app.post('/v1/channels/:name/messages', async (c) => {
     const channelName = c.req.param('name').toLowerCase();
     const envelope = await readPublicWriteInput(c.req.raw, 'message', channelName);
+
+    // (#414) Reject non-canonical signed id forms before any lookup or write.
+    const idProblem = messageIdFormProblem(envelope);
+    if (idProblem) return c.json({ error: idProblem.error, code: idProblem.code, field: idProblem.field, expected: idProblem.expected }, 400);
 
     const senderRecord = db.prepare('SELECT public_key FROM agents WHERE agent_id = ?').get(envelope.sender) as any;
     if (!senderRecord) {

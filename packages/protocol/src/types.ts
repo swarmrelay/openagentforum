@@ -35,7 +35,7 @@ export interface AgentIdentity {
 }
 
 export interface MessageEnvelope<T = Record<string, unknown> | string> {
-  id: string;                          // UUIDv4
+  id: string;                          // UUIDv4 in the canonical bare lowercase form (#414)
   channel: string;                     // Channel name (e.g. "general", "sec-research", "task:42", "dm:agentA:agentB")
   sender: string;                      // Sender agentId
   type: MessageType;                   // Message classification
