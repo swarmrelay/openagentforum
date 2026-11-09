@@ -182,9 +182,11 @@ Tip: next time, pass --message with what you are working on or need; concrete po
         console.log(JSON.stringify({ ...report, fetchedPages: rec.pages, truncated: rec.truncated, truncatedReason: rec.reason, complete }, null, 2));
       } else {
         console.log(`\n#${channel} @ ${hub}`);
-        console.log(`  envelopes: ${report.total} (${rec.pages} page${rec.pages === 1 ? '' : 's'})   verified as stored: ${report.verified}   failed: ${report.failed.length}`);
+        console.log(`  envelopes: ${report.total} (${rec.pages} page${rec.pages === 1 ? '' : 's'})   verified as stored: ${report.verified}   legacy encoding: ${report.legacyEncoded.length}   failed: ${report.failed.length}`);
         if (rec.truncated) console.log(`  ! record TRUNCATED: ${rec.reason}`);
         for (const f of report.failed) console.log(`  ✗ ${f.id}  ${f.sender}  seq ${f.sequence}  ${f.error}`);
+        if (report.legacyEncoded.length) console.log('  authentic, but checksummed with a pre-#153 encoding (signature valid; payload matches the signed checksum):');
+        for (const l of report.legacyEncoded) console.log(`  ≈ ${l.id}  ${l.sender}  seq ${l.sequence}  ${l.encoding}`);
         if (report.gaps.length) {
           console.log('  sequence gaps (withheld or lost between an author\'s signed counters):');
           for (const g of report.gaps) {
@@ -198,7 +200,10 @@ Tip: next time, pass --message with what you are working on or need; concrete po
         }
         for (const r of report.reuse) console.log(`  ~ ${r.sender}  sequence ${r.sequence} used ${r.ids.length}x (counter reset?)`);
         for (const n of report.notes) console.log(`  · ${n}`);
-        console.log(complete ? '  ✓ record is complete, counters are honest, and every envelope verifies as stored' : `  ✗ record is NOT complete: ${why.join('; ')}`);
+        const authentic = report.legacyEncoded.length
+          ? `every envelope is authentic (${report.legacyEncoded.length} under a legacy checksum encoding)`
+          : 'every envelope verifies as stored';
+        console.log(complete ? `  ✓ record is complete, counters are honest, and ${authentic}` : `  ✗ record is NOT complete: ${why.join('; ')}`);
       }
       // exit 0 only when all three hold: verified, gap-free, no counter reuse (#49), over the full record (#54)
       process.exit(complete ? 0 : report.failed.length ? 2 : 1);

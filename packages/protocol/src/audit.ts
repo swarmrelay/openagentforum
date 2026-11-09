@@ -10,7 +10,7 @@
  * author's counter jumped. Either way it is visible, which is exactly the
  * property a plain feed cannot offer.
  */
-import { verifyEnvelope } from './crypto.js';
+import { canonicalizeJson, deriveAgentId, getEnvelopeSignString, importEdPublicKey, sha256Hex, verifyEnvelope } from './crypto.js';
 import type { MessageEnvelope } from './types.js';
 
 export interface AuditEnvelopeResult {
@@ -20,6 +20,48 @@ export interface AuditEnvelopeResult {
   storedSeq?: number;
   valid: boolean;
   error?: string;
+}
+
+/**
+ * Checksum encodings some early clients used before the canonical form was
+ * pinned (#153, 2026-09-12). A closed set: anything else is a failure.
+ * - `ascii-escaped`: sorted keys, but non-ASCII escaped as lowercase \uXXXX
+ *   (Python's default `ensure_ascii`).
+ * - `unsorted-keys`: compact JSON in the stored key order instead of sorted.
+ */
+export type LegacyChecksumEncoding = 'ascii-escaped' | 'unsorted-keys';
+
+export interface LegacyEncodedEnvelope extends AuditEnvelopeResult {
+  encoding: LegacyChecksumEncoding;
+}
+
+const LEGACY_ENCODINGS: Array<[LegacyChecksumEncoding, (payload: unknown) => string]> = [
+  ['ascii-escaped', (payload) => canonicalizeJson(payload).replace(/[\u0080-\uffff]/g, (c) => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'))],
+  ['unsorted-keys', (payload) => JSON.stringify(payload)],
+];
+
+/**
+ * The legacy encoding under which this envelope is authentic, or null. Every
+ * condition must hold: the key derives to the sender, the Ed25519 signature
+ * verifies over the stored fields (which include the checksum), and the payload
+ * hashes to that signed checksum under one of the closed set of encodings. So
+ * the payload shown is the value the author hashed and signed; only the byte
+ * encoding differs from the pinned canonical form.
+ */
+export async function legacyChecksumEncoding(env: MessageEnvelope<any>, signingPublicKeyHex: string): Promise<LegacyChecksumEncoding | null> {
+  try {
+    if (typeof env.checksum !== 'string' || !/^[0-9a-f]{64}$/i.test(env.checksum)) return null;
+    if (typeof env.signature !== 'string' || !/^[0-9a-f]{128}$/i.test(env.signature)) return null;
+    if (env.sender.toLowerCase() !== (await deriveAgentId(signingPublicKeyHex)).toLowerCase()) return null;
+    const signature = Uint8Array.from(env.signature.match(/../g)!.map((b) => parseInt(b, 16)));
+    const signed = await crypto.subtle.verify('Ed25519', await importEdPublicKey(signingPublicKeyHex), signature,
+      new TextEncoder().encode(getEnvelopeSignString(env)));
+    if (!signed) return null;
+    for (const [name, encode] of LEGACY_ENCODINGS) {
+      if ((await sha256Hex(encode(env.payload))) === env.checksum.toLowerCase()) return name;
+    }
+  } catch { /* unparseable input is a failure, not a legacy encoding */ }
+  return null;
 }
 
 export interface SequenceGap {
@@ -60,13 +102,21 @@ export interface ChannelAuditReport {
   total: number;
   verified: number;
   failed: AuditEnvelopeResult[];
+  /**
+   * Authentic envelopes whose checksum uses a documented pre-#153 encoding.
+   * Counted neither as verified (they do not verify under the pinned canonical
+   * form) nor as failed, and included in sequence accounting because their
+   * signatures cover their counters.
+   */
+  legacyEncoded: LegacyEncodedEnvelope[];
   unknownSenders: string[];
   gaps: SequenceGap[];
   reuse: SequenceReuse[];
   /**
-   * every envelope verified as stored, no author shows a gap, AND no author
-   * reused a signed counter (#49). Reuse weakens gap evidence, so a record
-   * with reuse is not one this auditor will call complete.
+   * no envelope failed (every one verified as stored, or is authentic under a
+   * listed legacy encoding), no author shows a gap, AND no author reused a
+   * signed counter (#49). Reuse weakens gap evidence, so a record with reuse is
+   * not one this auditor will call complete.
    */
   complete: boolean;
   notes: string[];
@@ -80,6 +130,7 @@ export async function auditChannel(
   resolvePublicKey: PublicKeyResolver
 ): Promise<ChannelAuditReport> {
   const failed: AuditEnvelopeResult[] = [];
+  const legacyEncoded: LegacyEncodedEnvelope[] = [];
   const unknown = new Set<string>();
   const bySender = new Map<string, Map<number, string[]>>();
   const keyCache = new Map<string, string | null>();
@@ -101,10 +152,14 @@ export async function auditChannel(
     }
     const result = await verifyEnvelope(env, pub);
     if (!result.valid) {
-      failed.push({ id: env.id, sender: env.sender, sequence: env.sequence, storedSeq: env.storedSeq, valid: false, error: result.error });
-      continue;
-    }
-    verified++;
+      const encoding = await legacyChecksumEncoding(env, pub);
+      if (!encoding) {
+        failed.push({ id: env.id, sender: env.sender, sequence: env.sequence, storedSeq: env.storedSeq, valid: false, error: result.error });
+        continue;
+      }
+      legacyEncoded.push({ id: env.id, sender: env.sender, sequence: env.sequence, storedSeq: env.storedSeq, valid: false, encoding,
+        error: `checksum uses the legacy ${encoding} encoding; signature and payload are authentic` });
+    } else verified++;
     const seqs = bySender.get(env.sender) ?? new Map<number, string[]>();
     seqs.set(env.sequence, [...(seqs.get(env.sequence) ?? []), env.id]);
     bySender.set(env.sender, seqs);
@@ -147,6 +202,7 @@ export async function auditChannel(
       if (ids.length > 1) reuse.push({ sender, sequence: seq, ids });
     }
   }
+  if (legacyEncoded.length) notes.push(`${legacyEncoded.length} envelope(s) are authentic but checksummed with a pre-#153 encoding (${[...new Set(legacyEncoded.map((e) => e.encoding))].join(', ')}); they are listed separately, not counted as verified as stored`);
   if (reuse.length) notes.push('sequence reuse usually means an author restarted its counter; it weakens gap evidence for that author, so the record is not reported complete');
 
   return {
@@ -154,6 +210,7 @@ export async function auditChannel(
     total: envelopes.length,
     verified,
     failed,
+    legacyEncoded,
     unknownSenders: [...unknown],
     gaps,
     reuse,

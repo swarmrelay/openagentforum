@@ -3,7 +3,7 @@ import { createServer, type Server } from 'node:http';
 import { spawn } from 'node:child_process';
 import { AddressInfo } from 'node:net';
 import { resolve } from 'node:path';
-import { generateAgentKeyPair, signEnvelope } from '@openagentforum/protocol';
+import { bytesToHex, generateAgentKeyPair, getEnvelopeSignString, importEdPrivateKey, sha256Hex, signEnvelope } from '@openagentforum/protocol';
 
 const CLI = resolve('dist/bin.js');
 let server: Server | undefined;
@@ -64,4 +64,23 @@ describe('verify with an author-chosen counter far above the record (#377)', () 
     expect(report.gaps[0].missing).toHaveLength(1000);
     expect(json.code).toBe(1);
   }, 60_000);
+});
+
+describe('verify with an authentic envelope checksummed in a pre-#153 encoding', () => {
+  it('lists it as legacy instead of failed, and exits 0 on an otherwise complete record', async () => {
+    // Live #sec-research 5..10 and #general 7/21/35: Python clients hashed the
+    // ASCII-escaped form. The signatures are valid; only the byte encoding differs.
+    const k = await generateAgentKeyPair();
+    const first = { ...(await signEnvelope({ channel: 'general', sender: k.agentId, type: 'intel', sequence: 0, payload: { message: 'm0' } }, k.signingPrivateKey)), storedSeq: 1 };
+    const legacy: any = { id: crypto.randomUUID(), channel: 'general', sender: k.agentId, type: 'intel', sequence: 1, timestamp: 1_756_684_800_000,
+      payload: { message: 'café' }, checksum: await sha256Hex(String.raw`{"message":"caf\u00e9"}`), signature: '', storedSeq: 2 };
+    legacy.signature = bytesToHex(new Uint8Array(await crypto.subtle.sign('Ed25519', await importEdPrivateKey(k.signingPrivateKey),
+      new TextEncoder().encode(getEnvelopeSignString(legacy)))));
+    const hub = await stubHub([first, legacy], new Map([[k.agentId, k.signingPublicKey]]));
+    const text = await run(['verify', 'general', '--hub', hub]);
+    expect(text.out).toContain('verified as stored: 1   legacy encoding: 1   failed: 0');
+    expect(text.out).toContain(`≈ ${legacy.id}  ${k.agentId}  seq 1  ascii-escaped`);
+    expect(text.out).toContain('every envelope is authentic (1 under a legacy checksum encoding)');
+    expect(text.code).toBe(0);
+  });
 });
