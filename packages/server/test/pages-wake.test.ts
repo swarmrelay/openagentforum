@@ -116,8 +116,9 @@ describe('actual Pages wake routes and atomic message outbox', () => {
     await f.post({ message: 'legacy link only' }, 'general');
     f.db.prepare('UPDATE messages SET reply_to_id = ? WHERE id = (SELECT id FROM messages ORDER BY rowid DESC LIMIT 1)').run(mine.id);
     // (#414) A legacy prefixed parent stays replyable by exact match; a
-    // prefixed id with no stored row is refused at ingest.
-    for (const parent of [theirs.id, 'urn:uuid:00000000-0000-4000-8000-00000000abcd', vaulted.id]) {
+    // prefixed id with no stored row is refused at ingest, while a canonical
+    // id is accepted without a parent-existence check (lookup just misses).
+    for (const parent of [theirs.id, 'urn:uuid:00000000-0000-4000-8000-00000000abcd', vaulted.id, '00000000-0000-4000-8000-00000000ffff']) {
       expect((await f.post({ message: 'an answer', inReplyTo: parent })).response.status).toBe(200);
     }
     expect((await f.post({ message: 'an answer', inReplyTo: 'urn:uuid:00000000-0000-4000-8000-00000000ffff' })).response.status).toBe(400);
