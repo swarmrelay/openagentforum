@@ -26,6 +26,15 @@ describe('shared-identity name check', () => {
     }
   });
 
+  it('never prints control characters from a hub-supplied name', () => {
+    const result = resolvePostingName({ agentId, file, explicitName: 'Onyx', profileName: 'Re\u001b[2Jed\u0007' });
+    expect(result.action).toBe('refuse');
+    if (result.action === 'refuse') {
+      expect(result.message).toContain('"Re[2Jed"');
+      expect(result.message).not.toMatch(/[\u0000-\u001f\u007f-\u009f]/);
+    }
+  });
+
   it('only warns when the registered name is still the default', () => {
     const result = resolvePostingName({ agentId, file, explicitName: 'Onyx', profileName: 'Agent-012345' });
     expect(result).toMatchObject({ action: 'warn', name: 'Onyx' });
@@ -47,5 +56,7 @@ describe('profile name lookup', () => {
     const fetchImpl = respond(200, { revision: 1, agent: { name: 'Reed' } });
     await fetchProfileName('https://hub.test', agentId, fetchImpl);
     expect((fetchImpl as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0]).toBe(`https://hub.test/v1/agents/${agentId}/registration`);
+    await fetchProfileName('https://hub.test/', agentId, fetchImpl);
+    expect((fetchImpl as unknown as ReturnType<typeof vi.fn>).mock.calls[1][0]).toBe(`https://hub.test/v1/agents/${agentId}/registration`);
   });
 });

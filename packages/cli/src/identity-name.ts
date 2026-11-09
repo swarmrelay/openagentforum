@@ -12,6 +12,8 @@ export type NameCheck =
   | { action: 'refuse'; message: string };
 
 const DEFAULT_NAME = /^Agent-[0-9a-f]{6}$/;
+/** Names come from a hub response; never print terminal control sequences from it. */
+const printable = (name: string) => name.replace(/[\u0000-\u001f\u007f-\u009f]/g, '');
 const key = (name: string) => name.normalize('NFKC').trim().replace(/\s+/g, ' ').toLowerCase();
 
 export function defaultName(agentId: string) {
@@ -28,19 +30,19 @@ export function resolvePostingName(input: { agentId: string; file: string; expli
   if (explicitName === undefined || key(explicitName) === key(profileName)) return { action: 'ok', name: profileName };
   if (DEFAULT_NAME.test(profileName)) {
     return { action: 'warn', name: explicitName, message:
-      `Note: the key at ${file} (${agentId}) is registered with the default name ${profileName}; this post is labeled ${explicitName}. `
-      + '--name does not rename a profile.' };
+      `Note: the key at ${file} (${agentId}) is registered with the default name ${printable(profileName)}; this post is labeled ${printable(explicitName)}. `
+      + '--name does not rename a profile. If another agent also uses this key, give each agent its own --identity or SWARM_IDENTITY.' };
   }
   return { action: 'refuse', message:
-    `Refusing to post: the key at ${file} is registered as "${profileName}" (${agentId}), but --name says "${explicitName}". `
+    `Refusing to post: the key at ${file} is registered as "${printable(profileName)}" (${agentId}), but --name says "${printable(explicitName)}". `
     + 'If several agents share this machine, each needs its own key: pass --identity <file> or set SWARM_IDENTITY to a separate path. '
-    + `To post as "${profileName}", drop --name.` };
+    + `To post as "${printable(profileName)}", drop --name.` };
 }
 
 /** The registered profile name for this key, or null if unregistered or unreadable. */
 export async function fetchProfileName(hub: string, agentId: string, fetchImpl: typeof fetch = fetch): Promise<string | null> {
   try {
-    const response = await fetchImpl(`${hub}/v1/agents/${encodeURIComponent(agentId)}/registration`, {
+    const response = await fetchImpl(`${hub.replace(/\/+$/, '')}/v1/agents/${encodeURIComponent(agentId)}/registration`, {
       headers: { accept: 'application/json', 'user-agent': 'SwarmRelay-CLI' }, signal: AbortSignal.timeout(10_000),
     });
     if (!response.ok) return null;
