@@ -58,6 +58,34 @@ describe('public input transport and structure bounds', () => {
     }
   });
 
+  it('names the failing envelope field with a fixed hint and never echoes the submitted value', async () => {
+    const valid = examples[1][2] as Record<string, unknown>;
+    const secret = 'PRIVATE-VALUE-123';
+    const cases: [string, Record<string, unknown>][] = [
+      ['id', { id: undefined }], ['sender', { sender: secret }], ['channel', { channel: undefined }],
+      ['channel', { channel: secret }], ['type', { type: 7 }], ['sequence', { sequence: -1 }],
+      ['timestamp', { timestamp: secret }], ['signature', { signature: secret }], ['checksum', { checksum: secret }],
+      ['payload', { payload: undefined }],
+    ];
+    for (const [field, patch] of cases) {
+      const error = await read(JSON.stringify({ ...valid, ...patch }), 'message').catch(e => e);
+      expect(error, field).toBeInstanceOf(PublicWriteInputError);
+      const body = await error.getResponse().json();
+      expect(body).toEqual({ error: 'invalid_public_input', code: 'invalid_public_input', field, hint: expect.any(String) });
+      expect(JSON.stringify(body)).not.toContain(secret);
+    }
+  });
+
+  it('accepts the shape of the agent.md hello example and names channel when it is missing', async () => {
+    // Mirrors apps/web/public/agent.md "Step 3: Say Hello", with the placeholders filled in.
+    const hello = { id: 'f47ac10b-58cc-4372-a567-0e02b2c3d479', channel: 'example', sender: id, type: 'intel', sequence: 0,
+      timestamp: 1, payload: { message: 'Hello mesh!', origin: 'YourAgentHandle' }, signature: 'b'.repeat(128), checksum: 'a'.repeat(64) };
+    expect(await read(JSON.stringify(hello), 'message')).toEqual(hello);
+    const { channel: _omitted, ...withoutChannel } = hello;
+    const error = await read(JSON.stringify(withoutChannel), 'message').catch(e => e);
+    expect(await error.getResponse().json()).toMatchObject({ code: 'invalid_public_input', field: 'channel' });
+  });
+
   it('bounds depth before parsing, and bounds collection width, total nodes and property lengths before canonicalization', async () => {
     const base = { name: 'structure', title: 'Structure' };
     const deep = (n: number) => '{"name":"structure","title":"Structure","extension":' + '['.repeat(n) + '0' + ']'.repeat(n) + '}';

@@ -39,17 +39,23 @@ const codes = { 400: 'invalid_public_input', 408: 'public_input_timeout',
   413: 'public_input_too_large', 415: 'unsupported_public_input' } as const;
 export class PublicWriteInputError extends Error {
   readonly code: typeof codes[keyof typeof codes];
-  constructor(readonly status: keyof typeof codes) {
+  /** `field` and `hint` are fixed strings from this module, never request data. */
+  constructor(readonly status: keyof typeof codes, readonly field?: string, readonly hint?: string) {
     super(codes[status]); this.code = codes[status];
   }
   /** Also understood by Hono's default error handler; never includes request data. */
   getResponse(): Response {
-    return new Response(JSON.stringify({ error: this.code, code: this.code }), { status: this.status,
+    const detail = this.field ? { field: this.field, hint: this.hint } : {};
+    return new Response(JSON.stringify({ error: this.code, code: this.code, ...detail }), { status: this.status,
       headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'Access-Control-Allow-Origin': '*' } });
   }
 }
 function requireInput(condition: unknown, status: keyof typeof codes = 400): asserts condition {
   if (!condition) throw new PublicWriteInputError(status);
+}
+/** Name the envelope field that failed, so hand-built clients can fix it from the 400 alone. */
+function requireField(condition: unknown, field: string, hint: string): asserts condition {
+  if (!condition) throw new PublicWriteInputError(400, field, hint);
 }
 function object(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -117,10 +123,16 @@ function validate<K extends PublicWriteKind>(value: Record<string, unknown>, kin
     // Existing handlers retain their explicit 501 for unsupported membership and
     // their privacy/encryption checks; this reader never supplies room authority.
   } else if (kind === 'message') {
-    requireInput(text(value.id, PUBLIC_WRITE_LIMITS.identifierLength) && agentId(value.sender)
-      && text(value.channel, PUBLIC_WRITE_LIMITS.channelLength) && value.channel === destination
-      && text(value.type, PUBLIC_WRITE_LIMITS.typeLength) && integer(value.sequence) && integer(value.timestamp)
-      && hex(value.signature, 128) && hex(value.checksum, 64) && Object.hasOwn(value, 'payload'));
+    requireField(text(value.id, PUBLIC_WRITE_LIMITS.identifierLength), 'id', `required string, at most ${PUBLIC_WRITE_LIMITS.identifierLength} characters`);
+    requireField(agentId(value.sender), 'sender', 'required: agent_ followed by 16 lowercase hex characters');
+    requireField(text(value.channel, PUBLIC_WRITE_LIMITS.channelLength) && value.channel === destination,
+      'channel', 'required: must equal the channel name in the request URL');
+    requireField(text(value.type, PUBLIC_WRITE_LIMITS.typeLength), 'type', `required string, at most ${PUBLIC_WRITE_LIMITS.typeLength} characters`);
+    requireField(integer(value.sequence), 'sequence', 'required non-negative integer (your per-channel counter)');
+    requireField(integer(value.timestamp), 'timestamp', 'required non-negative integer (epoch milliseconds)');
+    requireField(hex(value.signature, 128), 'signature', 'required: 128 hex characters (Ed25519 over the sign string)');
+    requireField(hex(value.checksum, 64), 'checksum', 'required: 64 hex characters (SHA-256 of the canonical payload)');
+    requireField(Object.hasOwn(value, 'payload'), 'payload', 'required');
     if (typeof value.replyToId === 'string') requireInput(value.replyToId.length <= PUBLIC_WRITE_LIMITS.identifierLength, 413);
     if (object(value.recipientKeys)) requireInput(Object.keys(value.recipientKeys).length <= PUBLIC_WRITE_LIMITS.recipients, 413);
   } else {
