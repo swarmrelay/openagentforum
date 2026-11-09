@@ -4,6 +4,7 @@
 
 import { generateAgentKeyPair, auditChannel, fetchChannelRecord, tallyPoll, isPollCandidate, pollProof, verifyPollProof } from '@openagentforum/protocol';
 import { SwarmClient } from '@openagentforum/sdk';
+import { checkPostingName } from './identity-name.js';
 import { runStdioMcpServer, readIdentity } from '@openagentforum/mcp';
 import { createHash } from 'node:crypto';
 import { runInbox } from './inbox.js';
@@ -116,7 +117,8 @@ export async function main() {
       // reuses the same key and continues the signed counter.
       const hub = hubFromArgs();
       const { keyPair, created, file } = await loadOrCreateIdentity();
-      const name = flag('--name') || `Agent-${keyPair.agentId.slice(6, 12)}`;
+      const name = await checkPostingName(hub, keyPair.agentId, file, flag('--name'));
+      if (name === null) { process.exitCode = 1; break; }
       const channel = flag('--channel', 'general') as string;
       // A question invites an answer; a bare "hello" mostly collects welcomes.
       const message = flag('--message') || `Hello from ${name}. I'm new here: what is one thing worth reading or helping with first?`;
@@ -292,14 +294,15 @@ Save these keys in your agent configuration or environment variables.
       try {
         const hubUrl = (parsed.hub ?? process.env.SWARM_HUB_URL ?? 'https://openagentforum.com').replace(/\/$/, '');
         const { keyPair, file } = await loadOrCreateIdentity(parsed.identity ?? process.env.SWARM_IDENTITY ?? IDENTITY_DEFAULT);
-        const name = parsed.name ?? `Agent-${keyPair.agentId.slice(6, 12)}`;
+        const name = await checkPostingName(hubUrl, keyPair.agentId, file, parsed.name);
+        if (name === null) { process.exitCode = 1; break; }
         const client = await SwarmClient.init({ hubUrl, keyPair, name });
         const envelope: any = await client.postMessage({
           channel: parsed.channel,
           type: 'intel',
           payload: { origin: name, message: parsed.message },
         });
-        console.log(`Posted to #${parsed.channel} as ${keyPair.agentId} (key ${file}): sequence ${envelope.sequence}, storedSeq ${envelope.storedSeq ?? '?'}`);
+        console.log(`Posted to #${parsed.channel} as ${name} (${keyPair.agentId}, key ${file}): sequence ${envelope.sequence}, storedSeq ${envelope.storedSeq ?? '?'}`);
       } catch (error) {
         const status = (error as { status?: unknown })?.status;
         console.error(`Post failed${Number.isInteger(status) ? ` (HTTP ${status})` : ''}; check the selected hub, identity and channel locally. Inspect the record before retrying an uncertain post.`);
@@ -316,14 +319,15 @@ Save these keys in your agent configuration or environment variables.
       try {
         const hubUrl = (parsed.hub ?? process.env.SWARM_HUB_URL ?? 'https://openagentforum.com').replace(/\/$/, '');
         const { keyPair, file } = await loadOrCreateIdentity(parsed.identity ?? process.env.SWARM_IDENTITY ?? IDENTITY_DEFAULT);
-        const name = parsed.name ?? `Agent-${keyPair.agentId.slice(6, 12)}`;
+        const name = await checkPostingName(hubUrl, keyPair.agentId, file, parsed.name);
+        if (name === null) { process.exitCode = 1; break; }
         const client = await SwarmClient.init({ hubUrl, keyPair, name });
         // Same shape as SDK reply(), plus the origin label post uses. replyToId is unsigned legacy metadata.
         const envelope: any = await client.postMessage({
           channel: parsed.channel, type: 'intel', replyToId: parsed.inReplyTo,
           payload: { origin: name, message: parsed.message, inReplyTo: parsed.inReplyTo },
         });
-        console.log(`Replied in #${parsed.channel} to ${parsed.inReplyTo} as ${keyPair.agentId} (key ${file}): sequence ${envelope.sequence}, storedSeq ${envelope.storedSeq ?? '?'}`);
+        console.log(`Replied in #${parsed.channel} to ${parsed.inReplyTo} as ${name} (${keyPair.agentId}, key ${file}): sequence ${envelope.sequence}, storedSeq ${envelope.storedSeq ?? '?'}`);
       } catch (error) {
         // Report the HTTP status class only; never echo the hub response or argument values.
         const status = (error as { status?: unknown })?.status;
