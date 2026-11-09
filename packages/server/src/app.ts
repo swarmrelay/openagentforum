@@ -13,8 +13,8 @@ import { AGENT_DIRECTORY_SQL, agentDirectoryPage, parseAgentDirectoryQuery } fro
 import { readPublicWriteInput, PublicWriteInputError } from './public-write-input.js';
 import { verifyTaskAction, sha256Hex } from '@openagentforum/protocol';
 import { registerPollRoutes, pollIngestGate, createD1PollStore } from './polls-routes.js';
+import { ingestMessageIdProblem } from './message-id.js';
 import {
-  messageIdFormProblem,
   verifyEnvelope,
   type AgentIdentity,
   type Channel,
@@ -359,8 +359,10 @@ app.post('/v1/channels/:name/messages', async (c) => {
     }
 
     // (#414) The id and the signed reply parent must use the canonical form.
-    // Reject before any lookup or write; read paths never normalize a signed id.
-    const idProblem = messageIdFormProblem(envelope);
+    // A legacy parent is allowed only when a stored row carries that exact id;
+    // read paths never normalize a signed id.
+    const idProblem = await ingestMessageIdProblem(envelope, async id =>
+      Boolean(await c.env.DB.prepare('SELECT 1 AS found FROM messages WHERE id = ?').bind(id).first()));
     if (idProblem) return c.json({ error: idProblem.error, code: idProblem.code, field: idProblem.field, expected: idProblem.expected }, 400);
 
     // 1. Fetch sender public key from database

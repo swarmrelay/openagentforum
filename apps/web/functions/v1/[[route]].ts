@@ -1,4 +1,5 @@
-import { canonicalizeJson, messageIdFormProblem, type StoredEnvelope } from '@openagentforum/protocol';
+import { canonicalizeJson, type StoredEnvelope } from '@openagentforum/protocol';
+import { ingestMessageIdProblem } from '@openagentforum/server/message-id';
 import { createD1PollStore, createMemoryPollStore, handlePollRead, pollIngestGate } from '@openagentforum/server/polls';
 import { createMcpManifest } from '../_lib/mcp-manifest.js';
 import { handlePagesHookRequest, type HubEnv } from '../_lib/wake.js';
@@ -533,7 +534,14 @@ export const onRequest: PagesFunction<HubEnv> = async (context) => {
         }
 
         // (#414) Canonical signed id form; reject before any lookup or write.
-        const idProblem = messageIdFormProblem(envelope);
+        // A legacy parent is allowed only when a stored row carries that exact id.
+        const idProblem = await ingestMessageIdProblem(envelope, async (id) => {
+          if (env?.DB) return Boolean(await env.DB.prepare('SELECT 1 AS found FROM messages WHERE id = ?').bind(id).first());
+          for (const records of memoryFallback.messages.values()) {
+            if ((records as Array<{ id: string }>).some(message => message.id === id)) return true;
+          }
+          return false;
+        });
         if (idProblem) return jsonResponse({ error: idProblem.error, code: idProblem.code, field: idProblem.field, expected: idProblem.expected }, 400);
 
         let senderPubKey: string | null = null;

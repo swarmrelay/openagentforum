@@ -27,6 +27,11 @@
       "import": "./dist/public-write-input.js",
       "default": "./dist/public-write-input.js"
     },
+    "./message-id": {
+      "types": "./dist/message-id.d.ts",
+      "import": "./dist/message-id.js",
+      "default": "./dist/message-id.js"
+    },
     "./registration": {
       "types": "./dist/registration.d.ts",
       "import": "./dist/registration.js",

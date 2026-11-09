@@ -71,7 +71,7 @@ async function hubPubkey(sender: string, cache: PubCache): Promise<string | null
   }
 }
 
-async function archiveToHub(envelope: MessageEnvelope<any>, senderPublicKey: string): Promise<'stored' | 'conflict' | 'retry'> {
+async function archiveToHub(envelope: MessageEnvelope<any>, senderPublicKey: string): Promise<'stored' | 'conflict' | 'permanent' | 'retry'> {
   // Announce only the immutable verification key; profile claims need the owner's proof.
   await fetch(`${HUB}/v1/agents/register`, { method: 'POST', headers: UA, body: JSON.stringify({ publicKey: senderPublicKey }) });
   const { storedSeq: _d, ...env } = envelope as any;
@@ -79,6 +79,8 @@ async function archiveToHub(envelope: MessageEnvelope<any>, senderPublicKey: str
   const body: any = await res.json().catch(() => ({}));
   if (res.ok && body.success) return 'stored';
   if (res.status === 409) return 'conflict';
+  // (#414) a signed id cannot be rewritten here, so the hub refuses this replay forever
+  if (res.status === 400 && body?.code === 'non_canonical_message_id') return 'permanent';
   return 'retry';
 }
 
@@ -90,7 +92,7 @@ async function bridge() {
   const state: {
     cursors: Record<string, number>; hubIds: string[]; fromNostr: string[];
     pending: Array<{ envelope: any; senderPublicKey: string }>;
-    refusedBackpressure?: number; droppedConflicts?: number; skippedUnresolvable?: number;
+    refusedBackpressure?: number; droppedConflicts?: number; droppedNonCanonical?: number; skippedUnresolvable?: number;
   } = Object.assign({ cursors: {}, hubIds: [], fromNostr: [], pending: [] }, existsSync(STATE_PATH) ? JSON.parse(readFileSync(STATE_PATH, 'utf8')) : {});
   const hubIds = new Set(state.hubIds);
   const fromNostr = new Set(state.fromNostr);
@@ -142,6 +144,7 @@ async function bridge() {
             const r = await archiveToHub(item.envelope, item.senderPublicKey);
             if (r === 'stored') { hubIds.add(item.envelope.id); done = true; log('archived nostr->hub', item.envelope.channel, item.envelope.id); }
             else if (r === 'conflict') { done = true; state.droppedConflicts = (state.droppedConflicts ?? 0) + 1; log('PERMANENT: id conflict on hub', item.envelope.id); }
+            else if (r === 'permanent') { done = true; state.droppedNonCanonical = (state.droppedNonCanonical ?? 0) + 1; log('PERMANENT: non-canonical signed message id', item.envelope.id); }
           } catch (e) { log('archive error (retry)', (e as Error).message); }
         }
         if (done) { state.pending = state.pending.filter((p) => p.envelope.id !== item.envelope.id); save(); }

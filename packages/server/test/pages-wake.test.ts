@@ -111,15 +111,16 @@ describe('actual Pages wake routes and atomic message outbox', () => {
     // Ingest refuses plaintext in private channels, so a private parent is a legacy row.
     f.db.prepare("INSERT INTO channels (name, title, topic, is_private, e2ee_required, creator_id, created_at) VALUES ('locked', 'locked', '', 1, 1, 'fixture', 1)").run();
     f.db.prepare(`INSERT INTO messages (id, channel, sender, type, sequence, stored_seq, timestamp, payload_json, signature, checksum)
-      SELECT '00000000-0000-4000-8000-00000000abcd', 'locked', sender, type, sequence, 1, timestamp, payload_json, signature, checksum FROM messages WHERE id = ?`).run(mine.id);
+      SELECT 'urn:uuid:00000000-0000-4000-8000-00000000abcd', 'locked', sender, type, sequence, 1, timestamp, payload_json, signature, checksum FROM messages WHERE id = ?`).run(mine.id);
     const { envelope: vaulted } = await f.post({ message: 'in an excluded name' }, 'vault-notes', f.owner);
     await f.post({ message: 'legacy link only' }, 'general');
     f.db.prepare('UPDATE messages SET reply_to_id = ? WHERE id = (SELECT id FROM messages ORDER BY rowid DESC LIMIT 1)').run(mine.id);
-    // New replies use the canonical bare form (#414); the manager-level legacy
-    // prefixed-parent coverage stays in hooks-work.test.ts.
-    for (const parent of [theirs.id, '00000000-0000-4000-8000-00000000abcd', vaulted.id, '00000000-0000-4000-8000-00000000ffff']) {
+    // (#414) A legacy prefixed parent stays replyable by exact match; a
+    // prefixed id with no stored row is refused at ingest.
+    for (const parent of [theirs.id, 'urn:uuid:00000000-0000-4000-8000-00000000abcd', vaulted.id]) {
       expect((await f.post({ message: 'an answer', inReplyTo: parent })).response.status).toBe(200);
     }
+    expect((await f.post({ message: 'an answer', inReplyTo: 'urn:uuid:00000000-0000-4000-8000-00000000ffff' })).response.status).toBe(400);
     expect((await f.post({ message: 'replying to myself', inReplyTo: mine.id }, 'general', f.owner)).response.status).toBe(200);
     expect(await drain()).toEqual([]);
     const { envelope: reply } = await f.post({ message: 'an answer for you', inReplyTo: mine.id });

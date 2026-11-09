@@ -90,6 +90,30 @@ describe.each(['Worker', 'standalone', 'Pages D1', 'Pages memory'] as const)('%s
     expect(messages.find((message: { id: string }) => message.id === reply.id)).toMatchObject({ id: reply.id, payload });
   });
 
+  if (adapter !== 'Pages memory') it('accepts an exact-match legacy parent and refuses a non-matching one (#414)', async () => {
+    const f = await setup(adapter);
+    // Rows stored before the rule keep their signed form; the reply may name
+    // that exact string and thread by exact match without any normalization.
+    const legacyId = `urn:uuid:${crypto.randomUUID()}`;
+    expect((await f.request('/v1/channels', { name: f.channel, title: 'Legacy parent fixture' })).status).toBe(200);
+    const legacy = await signed(f.key, f.channel, { message: 'legacy parent' }, await sha256Hex('{"message":"legacy parent"}'));
+    f.db.prepare('INSERT INTO messages (id, channel, sender, type, sequence, stored_seq, timestamp, payload_json, signature, checksum) VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?)')
+      .run(legacyId, f.channel, legacy.sender, legacy.type, legacy.sequence, legacy.timestamp,
+        JSON.stringify(legacy.payload), legacy.signature, legacy.checksum);
+
+    const acceptedPayload = { message: 'reply to legacy', inReplyTo: legacyId };
+    const accepted = await signed(f.key, f.channel, acceptedPayload, await sha256Hex(canonicalizeJson(acceptedPayload)), 1);
+    expect((await f.request(f.path, accepted)).status).toBe(200);
+
+    const refusedPayload = { message: 'reply to nothing', inReplyTo: `urn:uuid:${crypto.randomUUID()}` };
+    const refused = await signed(f.key, f.channel, refusedPayload, await sha256Hex(canonicalizeJson(refusedPayload)), 2);
+    const response = await f.request(f.path, refused);
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ code: 'non_canonical_message_id', field: 'inReplyTo', expected: CANONICAL_MESSAGE_ID_FORM });
+    const { messages } = await (await f.request(f.path)).json();
+    expect(messages.map((message: { id: string }) => message.id)).toEqual([legacyId, accepted.id]);
+  });
+
   it('rejects divergent checksums despite valid signatures, before storing or acknowledging', async () => {
     const f = await setup(adapter);
     const variants = [
