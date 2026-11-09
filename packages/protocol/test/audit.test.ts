@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { generateAgentKeyPair, signEnvelope, auditChannel, MAX_MISSING_REPORTED } from '../src/index.js';
+import { generateAgentKeyPair, signEnvelope, auditChannel, MAX_MISSING_REPORTED, sha256Hex, bytesToHex, importEdPrivateKey, getEnvelopeSignString } from '../src/index.js';
 
 describe('auditChannel: replay a record and expose what a feed hides', () => {
   it('verifies, detects gaps, reuse, tampering, and unknown senders', async () => {
@@ -95,5 +95,51 @@ describe('auditChannel: replay a record and expose what a feed hides', () => {
     expect(report.verified).toBe(2);
     expect(report.gaps).toEqual([]);
     expect(report.notes.join(' ')).toMatch(/not a non-negative safe integer/);
+  });
+});
+
+describe('auditChannel: legacy checksum encodings (pre-#153)', () => {
+  // Sign an envelope whose checksum covers `encoded` instead of the canonical form.
+  async function signedOver(k: Awaited<ReturnType<typeof generateAgentKeyPair>>, sequence: number, payload: unknown, encoded: string) {
+    const env: any = { id: crypto.randomUUID(), channel: 'general', sender: k.agentId, type: 'intel', sequence,
+      timestamp: 1_756_684_800_000, payload, checksum: await sha256Hex(encoded), signature: '' };
+    env.signature = bytesToHex(new Uint8Array(await crypto.subtle.sign('Ed25519', await importEdPrivateKey(k.signingPrivateKey),
+      new TextEncoder().encode(getEnvelopeSignString(env)))));
+    return env;
+  }
+
+  it('lists ascii-escaped and unsorted-key checksums as authentic legacy, not failed, and counts their sequences', async () => {
+    const k = await generateAgentKeyPair();
+    const unicode = { message: 'Grüße 😀 — café\u007f' };
+    const unordered = { tags: ['x'], insight: 'order' };
+    const s0 = await signEnvelope({ channel: 'general', sender: k.agentId, type: 'intel', sequence: 0, payload: { n: 0 } }, k.signingPrivateKey);
+    // What Python's json.dumps(payload, sort_keys=True, separators=(',', ':')) produced.
+    const s1 = await signedOver(k, 1, unicode, String.raw`{"message":"Gr\u00fc\u00dfe \ud83d\ude00 \u2014 caf\u00e9\u007f"}`);
+    const s2 = await signedOver(k, 2, unordered, JSON.stringify(unordered));
+    const s3 = await signEnvelope({ channel: 'general', sender: k.agentId, type: 'intel', sequence: 3, payload: { n: 3 } }, k.signingPrivateKey);
+
+    const report = await auditChannel('general', [s0, s1, s2, s3], async () => k.signingPublicKey);
+    expect(report.failed).toEqual([]);
+    expect(report.verified).toBe(2);
+    expect(report.legacyEncoded.map((e) => [e.id, e.encoding])).toEqual([[s1.id, 'ascii-escaped'], [s2.id, 'unsorted-keys']]);
+    expect(report.gaps).toEqual([]);
+    expect(report.complete).toBe(true);
+    expect(report.notes.join(' ')).toMatch(/pre-#153 encoding/);
+  });
+
+  it('keeps tampered payloads, bad signatures and wrong keys as failures', async () => {
+    const k = await generateAgentKeyPair();
+    const other = await generateAgentKeyPair();
+    const unordered = { tags: ['x'], insight: 'order' };
+    const tampered = { ...(await signedOver(k, 0, unordered, JSON.stringify(unordered))), payload: { tags: ['x'], insight: 'changed' } };
+    const badSig = { ...(await signedOver(k, 1, unordered, JSON.stringify(unordered))), signature: 'ab'.repeat(64) };
+    const wrongKey = await signedOver(other, 0, unordered, JSON.stringify(unordered));
+    const otherEncoding = await signedOver(k, 2, unordered, JSON.stringify(unordered, null, 2));
+
+    const keys: Record<string, string> = { [k.agentId]: k.signingPublicKey, [other.agentId]: k.signingPublicKey };
+    const report = await auditChannel('general', [tampered, badSig, wrongKey, otherEncoding], async (s) => keys[s]);
+    expect(report.legacyEncoded).toEqual([]);
+    expect(report.failed.map((f) => f.id)).toEqual([tampered.id, badSig.id, wrongKey.id, otherEncoding.id]);
+    expect(report.complete).toBe(false);
   });
 });
