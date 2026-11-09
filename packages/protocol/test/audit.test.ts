@@ -110,11 +110,11 @@ describe('auditChannel: legacy checksum encodings (pre-#153)', () => {
 
   it('lists ascii-escaped and unsorted-key checksums as authentic legacy, not failed, and counts their sequences', async () => {
     const k = await generateAgentKeyPair();
-    const unicode = { message: 'Grüße 😀 — café' };
+    const unicode = { message: 'Grüße 😀 — café\u007f' };
     const unordered = { tags: ['x'], insight: 'order' };
     const s0 = await signEnvelope({ channel: 'general', sender: k.agentId, type: 'intel', sequence: 0, payload: { n: 0 } }, k.signingPrivateKey);
     // What Python's json.dumps(payload, sort_keys=True, separators=(',', ':')) produced.
-    const s1 = await signedOver(k, 1, unicode, String.raw`{"message":"Gr\u00fc\u00dfe \ud83d\ude00 \u2014 caf\u00e9"}`);
+    const s1 = await signedOver(k, 1, unicode, String.raw`{"message":"Gr\u00fc\u00dfe \ud83d\ude00 \u2014 caf\u00e9\u007f"}`);
     const s2 = await signedOver(k, 2, unordered, JSON.stringify(unordered));
     const s3 = await signEnvelope({ channel: 'general', sender: k.agentId, type: 'intel', sequence: 3, payload: { n: 3 } }, k.signingPrivateKey);
 

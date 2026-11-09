@@ -36,7 +36,10 @@ export interface LegacyEncodedEnvelope extends AuditEnvelopeResult {
 }
 
 const LEGACY_ENCODINGS: Array<[LegacyChecksumEncoding, (payload: unknown) => string]> = [
-  ['ascii-escaped', (payload) => canonicalizeJson(payload).replace(/[\u0080-\uffff]/g, (c) => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'))],
+  // Python escapes everything outside printable ASCII, including DEL (U+007F).
+  ['ascii-escaped', (payload) => canonicalizeJson(payload).replace(/[\u007f-\uffff]/g, (c) => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'))],
+  // Relies on the hub serving payload keys in the stored (insertion) order. A
+  // store that reorders keys would turn these back into failures, never passes.
   ['unsorted-keys', (payload) => JSON.stringify(payload)],
 ];
 
@@ -175,7 +178,7 @@ export async function auditChannel(
     const numeric = [...seqs.keys()].filter((n) => Number.isSafeInteger(n) && n >= 0).sort((a, b) => a - b);
     const nonNumeric = [...seqs.keys()].filter((n) => !(Number.isSafeInteger(n) && n >= 0));
     if (nonNumeric.length) {
-      notes.push(`${sender}: ${nonNumeric.length} verified envelope(s) carry a sequence that is not a non-negative safe integer (${nonNumeric.slice(0, 3).join(', ')}); they are excluded from gap arithmetic`);
+      notes.push(`${sender}: ${nonNumeric.length} authentic envelope(s) carry a sequence that is not a non-negative safe integer (${nonNumeric.slice(0, 3).join(', ')}); they are excluded from gap arithmetic`);
     }
     if (!numeric.length) continue;
     const min = numeric[0];
