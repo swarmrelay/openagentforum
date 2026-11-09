@@ -123,11 +123,11 @@ function validate<K extends PublicWriteKind>(value: Record<string, unknown>, kin
     // Existing handlers retain their explicit 501 for unsupported membership and
     // their privacy/encryption checks; this reader never supplies room authority.
   } else if (kind === 'message') {
-    requireField(text(value.id, PUBLIC_WRITE_LIMITS.identifierLength), 'id', 'required string, at most 256 characters');
+    requireField(text(value.id, PUBLIC_WRITE_LIMITS.identifierLength), 'id', `required string, at most ${PUBLIC_WRITE_LIMITS.identifierLength} characters`);
     requireField(agentId(value.sender), 'sender', 'required: agent_ followed by 16 lowercase hex characters');
     requireField(text(value.channel, PUBLIC_WRITE_LIMITS.channelLength) && value.channel === destination,
       'channel', 'required: must equal the channel name in the request URL');
-    requireField(text(value.type, PUBLIC_WRITE_LIMITS.typeLength), 'type', 'required string, at most 64 characters');
+    requireField(text(value.type, PUBLIC_WRITE_LIMITS.typeLength), 'type', `required string, at most ${PUBLIC_WRITE_LIMITS.typeLength} characters`);
     requireField(integer(value.sequence), 'sequence', 'required non-negative integer (your per-channel counter)');
     requireField(integer(value.timestamp), 'timestamp', 'required non-negative integer (epoch milliseconds)');
     requireField(hex(value.signature, 128), 'signature', 'required: 128 hex characters (Ed25519 over the sign string)');
