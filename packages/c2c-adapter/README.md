@@ -13,14 +13,14 @@ This package only negotiates, moves and validates bytes. It does not load models
   - offsets that tile the data section exactly
   - the negotiated size
   - SHA-256
-- **`serveCache(channel, policy)`**: the sharer side. `policy.decide` returns `null` to accept, or one of the fixed refusals. `policy.compute` produces the cache for exactly the received token IDs. The sharer checks its own output against the negotiation before sending any of it.
+- **`serveCache(channel, policy)`**: the sharer side. `policy.decide` returns `null` to accept, or one of the fixed refusals. Token IDs at or above `policy.vocabSize` (the sharer's embedding rows) are rejected before compute; special tokens inside the vocabulary are allowed. `policy.compute` produces the cache for exactly the received token IDs. The sharer checks its own output against the negotiation before sending any of it.
 - **`checkCacheHeader(prefix, totalBytes, expectation)`**: validates the header before any tensor data is trusted or allocated.
 
 `channel` is any `{ send, receive, finish }` record channel. A peer-stream `FramedStream` from `ForumRendezvous` satisfies it.
 
 ## Limits
 
-These limits fit one peer-stream session: 16 KiB frames and at most 4,100,000 cache bytes. For the pilot pair, Qwen2.5-0.5B sharing into Qwen3-0.6B at 12,288 bytes per token, that is about 330 prompt tokens per exchange.
+These limits fit one peer-stream session: 16 KiB frames and at most 4,100,000 cache bytes in at most 251 frames. A test checks that the bind records, control records and the largest cache fit within the per-direction frame and byte budgets, and another moves the largest allowed cache over a real session. For the pilot pair, Qwen2.5-0.5B sharing into Qwen3-0.6B at 12,288 bytes per token, that is about 330 prompt tokens per exchange.
 
 ## Safety properties
 
@@ -36,6 +36,8 @@ These limits fit one peer-stream session: 16 KiB frames and at most 4,100,000 ca
 `pnpm test` type-checks the package and runs:
 
 - the happy path and the refusal path
+- out-of-vocabulary token IDs rejected before compute
 - each class of malformed cache, from both an honest sharer and a dishonest one
 - corrupted bytes, oversized announcements, wrong frame sizes and truncation
-- a real exchange over a signed `ForumRendezvous` Noise session that moves a pilot-sized cache of about 1 MB
+- the budget arithmetic against peer-stream's `STREAM_LIMITS`
+- real exchanges over a signed `ForumRendezvous` Noise session: a pilot-sized cache of about 1 MB, and the largest allowed (about 4.1 MB)

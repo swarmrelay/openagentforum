@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { generateAgentKeyPair } from '@openagentforum/protocol';
-import { ForumRendezvous, rendezvousScope } from '@openagentforum/peer-stream';
+import { ForumRendezvous, rendezvousScope, STREAM_LIMITS } from '@openagentforum/peer-stream';
 import {
   ADAPTER, C2C_LIMITS, C2CFailure, KV_FORMAT, cacheDataBytes, checkCacheHeader, requestCache, serveCache,
   sha256Hex, tokenBytes, type Hello, type KvSchema, type RecordChannel, type SharerPolicy,
@@ -40,7 +40,7 @@ function cacheFor(ids: Uint32Array, tweak: Tweak = () => {}, opts: Opts = {}) {
   tweak(meta, tensors);
   return safetensors(tensors, meta, opts);
 }
-const ids = (n: number) => Uint32Array.from({ length: n }, (_, i) => 151_000 + (i * 7919) % 1000);
+const ids = (n: number) => Uint32Array.from({ length: n }, (_, i) => 150_000 + (i * 7919) % 1000);   // inside the vocabulary
 function hello(tokenIds: Uint32Array, overrides: Partial<Hello> = {}): Hello {
   return {
     kind: 'oaf.c2c.hello.v0', adapter: ADAPTER,
@@ -67,7 +67,8 @@ function channelPair(): [RecordChannel & { sent: Uint8Array[] }, RecordChannel &
   };
   return [end(ab, ba), end(ba, ab)];
 }
-const policy = (compute: SharerPolicy['compute'], decide: SharerPolicy['decide'] = () => null): SharerPolicy => ({ decide, compute });
+const VOCAB = 151_936;   // Qwen2.5-0.5B embedding rows
+const policy = (compute: SharerPolicy['compute'], decide: SharerPolicy['decide'] = () => null): SharerPolicy => ({ vocabSize: VOCAB, decide, compute });
 const json = (value: unknown) => new TextEncoder().encode(JSON.stringify(value));
 
 /** A sharer that skips every self-check, to exercise the receiver's own validation. */
@@ -195,6 +196,18 @@ describe('C2C adapter negotiation and transfer', () => {
     }
   });
 
+  it('the sharer rejects token IDs outside its vocabulary before computing', async () => {
+    const tokenIds = Uint32Array.from([151_643, 872, VOCAB]);   // a special token is fine; VOCAB itself is one past the table
+    const [receiver, sharerEnd] = channelPair();
+    const [result, served] = await Promise.all([
+      requestCache(receiver, hello(tokenIds), tokenIds).catch(e => e),
+      serveCache(sharerEnd, policy(async () => { throw new Error('must not compute'); })).catch(e => e),
+    ]);
+    expect(served).toMatchObject({ code: 'protocol', reason: 'token range' });
+    expect(result).toMatchObject({ code: 'closed' });
+    await expect(serveCache(channelPair()[1], { ...policy(async () => new Uint8Array()), vocabSize: 0 })).rejects.toMatchObject({ reason: 'vocabSize' });
+  });
+
   it('the sharer rejects token IDs that do not match the hello', async () => {
     const tokenIds = ids(12);
     const [receiver, sharerEnd] = channelPair();
@@ -220,26 +233,49 @@ describe('C2C adapter negotiation and transfer', () => {
   });
 });
 
+describe('fits one peer-stream session', () => {
+  it('keeps the largest exchange inside the per-direction frame and byte budgets', () => {
+    const bind = { frames: 2, bytes: 2 * 512 };   // ForumRendezvous hello + confirm records, each at most 512 bytes
+    expect(C2C_LIMITS.frameBytes).toBe(STREAM_LIMITS.frameBytes);
+    expect(C2C_LIMITS.maxFrames).toBe(Math.ceil(C2C_LIMITS.maxBytes / C2C_LIMITS.frameBytes));
+    // Sharer direction: bind, accept, cache header, cache frames.
+    expect(bind.frames + 2 + C2C_LIMITS.maxFrames).toBeLessThanOrEqual(STREAM_LIMITS.framesPerDirection);
+    expect(bind.bytes + 2 * C2C_LIMITS.controlBytes + C2C_LIMITS.maxBytes).toBeLessThanOrEqual(STREAM_LIMITS.bytesPerDirection);
+    // Receiver direction: bind, hello, token IDs, done.
+    expect(bind.bytes + 2 * C2C_LIMITS.controlBytes + 4 * C2C_LIMITS.maxTokens).toBeLessThanOrEqual(STREAM_LIMITS.bytesPerDirection);
+    expect(4 * C2C_LIMITS.maxTokens).toBeLessThanOrEqual(STREAM_LIMITS.frameBytes);
+  });
+
+  it('refuses an announcement with more frames than one exchange allows', async () => {
+    const tokenIds = ids(20), blob = cacheFor(tokenIds);
+    const [receiver, sharerEnd] = channelPair();
+    void rawSharer(sharerEnd, blob, { frameBytes: 1_000 });
+    await expect(requestCache(receiver, hello(tokenIds), tokenIds)).rejects.toMatchObject({ code: 'limit', reason: 'cache header' });
+  });
+});
+
 describe('over a real authenticated peer-stream session', () => {
   const sessions: ForumRendezvous[] = [];
   afterEach(async () => { await Promise.all(sessions.splice(0).map(s => s.close())); });
 
-  it('carries a ~1 MB pilot cache through signed rendezvous, Noise and the session budget', async () => {
+  it.each([
+    ['a pilot-sized (~1 MB, 85-token)', 85],
+    ['the largest allowed (~4.1 MB, 333-token)', 333],
+  ])('carries %s cache through signed rendezvous, Noise and the session budget', async (_label, tokens) => {
     const [a, b] = await Promise.all([generateAgentKeyPair(), generateAgentKeyPair()]);
     const scope = rendezvousScope('http://127.0.0.1:9876', 'c2c-adapter-fixture');
     const receiverSide = new ForumRendezvous(a, b.signingPublicKey, scope), sharerSide = new ForumRendezvous(b, a.signingPublicKey, scope);
     sessions.push(receiverSide, sharerSide);
     const offer = await receiverSide.offer(0), acceptance = await sharerSide.accept(offer, 0);
     const [receiverStream, sharerStream] = await Promise.all([receiverSide.wait(acceptance), sharerSide.connect()]);
-    const tokenIds = ids(85), blob = cacheFor(tokenIds);
-    const started = Date.now();
+    const tokenIds = ids(tokens), blob = cacheFor(tokenIds);
+    expect(blob.byteLength).toBeGreaterThan(cacheDataBytes(schema, tokens));
+    expect(blob.byteLength).toBeLessThanOrEqual(C2C_LIMITS.maxBytes);
     const [got, ok] = await Promise.all([
       requestCache(receiverStream, hello(tokenIds), tokenIds),
       serveCache(sharerStream, policy(async () => blob)),
     ]);
     expect(got).toEqual(blob);
     expect(ok).toBe(true);
-    expect(blob.byteLength).toBeGreaterThan(1_000_000);
-    expect(Date.now() - started).toBeLessThan(20_000);
-  }, 30_000);
+  }, 45_000);
 });

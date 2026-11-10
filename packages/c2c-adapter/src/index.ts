@@ -16,6 +16,7 @@ export const C2C_LIMITS = Object.freeze({
   controlBytes: 4_096,
   maxTokens: 4_096,            // token IDs travel in one frame: 4 bytes each
   maxBytes: 4_100_000,         // leaves room for bind and control records in the session budget
+  maxFrames: 251,              // ceil(maxBytes / frameBytes): the most cache frames one exchange may announce
   headerBytes: 1 << 20,
 });
 
@@ -169,7 +170,8 @@ export async function requestCache(ch: RecordChannel, hello: Hello, tokenIds: Ui
   await ch.send(ids);
   const header = await receiveControl(ch);
   if (!exact(header, ['kind', 'bytes', 'sha256', 'frames']) || header.kind !== 'oaf.c2c.cache.v0' || !int(header.bytes, 8 + expected, hello.limits.maxBytes)
-      || !HEX64.test(String(header.sha256)) || header.frames !== Math.ceil((header.bytes as number) / C2C_LIMITS.frameBytes)) {
+      || !HEX64.test(String(header.sha256)) || !int(header.frames, 1, C2C_LIMITS.maxFrames)
+      || header.frames !== Math.ceil((header.bytes as number) / C2C_LIMITS.frameBytes)) {
     await sendControl(ch, { kind: 'oaf.c2c.done.v0', ok: false, reason: 'limits' }).catch(() => {});
     fail('limit', 'cache header');
   }
@@ -197,6 +199,8 @@ export async function requestCache(ch: RecordChannel, hello: Hello, tokenIds: Ui
 }
 
 export interface SharerPolicy {
+  /** Rows in the sharer's embedding table; any token ID at or above it is rejected before compute. */
+  vocabSize: number;
   /** Return null to accept, or a fixed refusal. Never download a model because a peer asked. */
   decide(hello: Hello): RefusalReason | null;
   /** Compute the sharer cache for exactly these token IDs, as a safetensors file. */
@@ -205,6 +209,7 @@ export interface SharerPolicy {
 
 /** Sharer: answer one hello on a bound channel. Returns true when the receiver confirmed the cache. */
 export async function serveCache(ch: RecordChannel, policy: SharerPolicy): Promise<boolean> {
+  if (!int(policy.vocabSize, 1, 2 ** 32)) fail('protocol', 'vocabSize');
   const hello = validateHello(await receiveControl(ch));
   const refusal = policy.decide(hello);
   if (refusal !== null) {
@@ -220,6 +225,8 @@ export async function serveCache(ch: RecordChannel, policy: SharerPolicy): Promi
     if (ids!.byteLength !== hello.tokenIds.count * 4 || sha256Hex(ids!) !== hello.tokenIds.sha256) fail('protocol', 'token ids');
     const view = new DataView(ids!.buffer, ids!.byteOffset, ids!.byteLength);
     const tokenIds = Uint32Array.from({ length: hello.tokenIds.count }, (_, i) => view.getUint32(i * 4, true));
+    // An out-of-range ID is an out-of-bounds embedding lookup on some runtimes. Special tokens inside the vocabulary are allowed.
+    if (tokenIds.some(id => id >= policy.vocabSize)) fail('protocol', 'token range');
     const blob = await policy.compute(tokenIds, hello);
     if (blob.byteLength > hello.limits.maxBytes) fail('limit', 'computed cache exceeds maxBytes');
     // Check our own output against the negotiation before sending anything.
