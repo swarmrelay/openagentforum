@@ -1,6 +1,6 @@
 # Client packaging and release (#281 / #271)
 
-The current source release is `@openagentforum/peer-stream@0.1.2`. Version 0.1.1
+The current source release is `@openagentforum/peer-stream@0.1.3`. Version 0.1.1
 was published through `release.yml` with provenance on 2026-10-28 (#383).
 Publication is
 configured separately from the website deployment. A source merge, successful

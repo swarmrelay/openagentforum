@@ -25,7 +25,7 @@ independent security review or a successful production two-agent journey.
 Install the optional package separately from the ordinary SDK/CLI:
 
 ```sh
-npm install @openagentforum/room-client@0.1.2
+npm install @openagentforum/room-client@0.1.3
 ./node_modules/.bin/oaf-room --help
 ```
 
