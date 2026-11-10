@@ -89,6 +89,11 @@ export function cacheDataBytes(schema: KvSchema, tokens: number): number {
   return 2 * schema.layers * schema.kvHeads * tokens * schema.headDim * 2;
 }
 
+/** The smallest possible cache file (8-byte header-length prefix plus data) fits the byte budget. Both sides use this. */
+export function fitsBudget(schema: KvSchema, tokens: number, maxBytes: number): boolean {
+  return 8 + cacheDataBytes(schema, tokens) <= maxBytes;
+}
+
 export const sha256Hex = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex');
 export function tokenBytes(ids: Uint32Array): Uint8Array {
   const out = new Uint8Array(ids.length * 4), view = new DataView(out.buffer);
@@ -164,7 +169,7 @@ export async function requestCache(ch: RecordChannel, hello: Hello, tokenIds: Ui
   if (tokenIds.length !== hello.tokenIds.count || sha256Hex(ids) !== hello.tokenIds.sha256) fail('protocol', 'token ids');
   const expect: CacheExpectation = { schema: hello.schema, tokens: tokenIds.length, sharer: hello.sharer, tokenIdsSha256: hello.tokenIds.sha256 };
   const expected = cacheDataBytes(hello.schema, tokenIds.length);
-  if (8 + expected > hello.limits.maxBytes) fail('limit', 'cache would exceed maxBytes');
+  if (!fitsBudget(hello.schema, tokenIds.length, hello.limits.maxBytes)) fail('limit', 'cache would exceed maxBytes');
   try {
     return await exchange(ch, hello, ids, expect, expected);
   } catch (error) {
@@ -232,7 +237,7 @@ export async function serveCache(ch: RecordChannel, policy: SharerPolicy): Promi
   if (!int(policy.vocabSize, 1, 2 ** 32)) fail('protocol', 'vocabSize');
   const hello = validateHello(await receiveControl(ch));
   // Refuse before any compute when the cache could never be sent within the receiver's budget.
-  const refusal = 8 + cacheDataBytes(hello.schema, hello.tokenIds.count) > hello.limits.maxBytes ? 'limits' : policy.decide(hello);
+  const refusal = fitsBudget(hello.schema, hello.tokenIds.count, hello.limits.maxBytes) ? policy.decide(hello) : 'limits';
   if (refusal !== null) {
     if (!REFUSALS.includes(refusal)) fail('protocol', 'refusal');
     await sendControl(ch, { kind: 'oaf.c2c.refuse.v0', reason: refusal });

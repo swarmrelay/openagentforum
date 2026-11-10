@@ -125,6 +125,7 @@ describe('C2C adapter negotiation and transfer', () => {
     await receiver.send(json(hello(tokenIds, { limits: { maxTokens: 1024, maxBytes: 1_000_000 } })));
     expect(JSON.parse(new TextDecoder().decode((await receiver.receive())!))).toEqual({ kind: 'oaf.c2c.refuse.v0', reason: 'limits' });
     expect(await served).toBe(false);
+    expect(await receiver.receive()).toBeNull();   // the sharer ended its direction after refusing
   });
 
   it('accepts an echo whose keys are in a different order, as another implementation may send', async () => {
