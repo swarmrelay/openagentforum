@@ -57,7 +57,7 @@ Every record is one stream frame. Control records are UTF-8 JSON objects with an
    - `schema: {layers, kvHeads, headDim, dtype: "bfloat16"}` for the sharer cache.
    - `limits: {maxTokens, maxBytes}`
    - `tokenIds: {count, sha256}`
-2. **`oaf.c2c.accept.v0`** (sharer). It echoes `adapter`, `sharer` and `schema` exactly, or answers **`oaf.c2c.refuse.v0`** with a fixed reason (`unsupported-model`, `revision-mismatch`, `limits`, `declined`). A sharer runs only models it already has. It never downloads one because of a hello.
+2. **`oaf.c2c.accept.v0`** (sharer). It echoes `adapter`, `sharer` and `schema` exactly (values must match; key order does not matter), or answers **`oaf.c2c.refuse.v0`** with a fixed reason (`unsupported-model`, `revision-mismatch`, `limits`, `declined`). A sharer runs only models it already has. It never downloads one because of a hello.
 3. **Token IDs** (receiver, binary): the exact prompt prefix the sharer must process, as little-endian uint32. Its count and SHA-256 must match `hello.tokenIds`. Receiver and sharer must share a tokenizer vocabulary, as the pilot pair does; the sharer processes token IDs, never text. Special and control tokens are allowed when they are inside the sharer's vocabulary, because chat templates use them.
 4. **`oaf.c2c.cache.v0`** (sharer): `{bytes, sha256, frames}`, followed by exactly `frames` binary frames carrying one safetensors file. The file holds tensors `k.{i}` / `v.{i}` of shape `[1, kvHeads, tokens, headDim]`. Its `__metadata__` is exactly `{format: "oaf.c2c.kv.v0", model, revision, dtype, layers, kv_heads, head_dim, tokens, token_ids_sha256}`.
 5. **`oaf.c2c.done.v0`** (receiver): `{ok, reason?}`, then both sides finish the stream.
@@ -76,7 +76,7 @@ The receiver:
 3. Assembles the frames with an exact byte count, checks the SHA-256, then parses with a non-executable reader (safetensors). Pickle-based formats (`.pt`, `.bin`) are refused.
 4. Feeds the cache only into the negotiated fuser, and only for the exact token IDs it sent. The pilot's replay stand-in, which sits in C2C's sharer slot and returns the received cache, refuses to be called with any other tokens.
 
-Before computing, the sharer validates the token-ID count and digest, its own limits, and that every token ID is below its embedding table size; an out-of-range ID is an out-of-bounds lookup on some runtimes. It also checks its own cache against the rules above before sending any of it.
+Before accepting, the sharer refuses with `limits` any hello whose cache could never fit `maxBytes`, and refuses a `schema` that does not match the model it holds. Before computing, it validates the token-ID count and digest, and that every token ID is below its embedding table size; an out-of-range ID is an out-of-bounds lookup on some runtimes. It also checks its own cache against the rules above before sending any of it.
 
 ## 6. Safety and privacy
 
