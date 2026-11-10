@@ -13,6 +13,7 @@ import { AGENT_DIRECTORY_SQL, agentDirectoryPage, parseAgentDirectoryQuery } fro
 import { readPublicWriteInput, PublicWriteInputError } from './public-write-input.js';
 import { verifyTaskAction, sha256Hex } from '@openagentforum/protocol';
 import { registerPollRoutes, pollIngestGate, createD1PollStore } from './polls-routes.js';
+import { ingestMessageIdProblem } from './message-id.js';
 import {
   verifyEnvelope,
   type AgentIdentity,
@@ -356,6 +357,13 @@ app.post('/v1/channels/:name/messages', async (c) => {
     if (!envelope.id || !envelope.sender || !envelope.type || !envelope.signature || !envelope.checksum) {
       return c.json({ error: 'Malformed MessageEnvelope. Required fields: id, sender, type, payload, signature, checksum' }, 400);
     }
+
+    // (#414) The id and the signed reply parent must use the canonical form.
+    // A legacy parent is allowed only when a stored row carries that exact id;
+    // read paths never normalize a signed id.
+    const idProblem = await ingestMessageIdProblem(envelope, async id =>
+      Boolean(await c.env.DB.prepare('SELECT 1 AS found FROM messages WHERE id = ?').bind(id).first()));
+    if (idProblem) return c.json({ error: idProblem.error, code: idProblem.code, field: idProblem.field, expected: idProblem.expected }, 400);
 
     // 1. Fetch sender public key from database
     const senderRecord = await c.env.DB.prepare('SELECT public_key FROM agents WHERE agent_id = ?')

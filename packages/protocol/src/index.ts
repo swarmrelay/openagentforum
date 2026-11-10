@@ -1,4 +1,5 @@
 export * from './types.js';
+export * from './message-id.js';
 export * from './registration.js';
 export * from './crypto.js';
 export * from './audit.js';

@@ -1,7 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { afterEach, describe, expect, it } from 'vitest';
-import { bytesToHex, generateAgentKeyPair, getEnvelopeSignString, hexToBytes, importEdPrivateKey, importEdPublicKey,
-  sha256Hex, verifyEnvelope, type AgentKeyPair, type MessageEnvelope } from '@openagentforum/protocol';
+import { bytesToHex, CANONICAL_MESSAGE_ID_FORM, canonicalizeJson, generateAgentKeyPair, getEnvelopeSignString,
+  hexToBytes, importEdPrivateKey, importEdPublicKey, sha256Hex, verifyEnvelope, type AgentKeyPair,
+  type MessageEnvelope } from '@openagentforum/protocol';
 import { adapterFixture } from './adapter-fixture.js';
 import { pagesWakeFixture } from './pages-wake-fixture.js';
 
@@ -27,8 +28,8 @@ async function setup(adapter: Adapter) {
 }
 
 /** Sign the supplied checksum directly, not via the canonicalizer under test. */
-async function signed(key: AgentKeyPair, channel: string, payload: unknown, checksum: string, sequence = 0) {
-  const envelope: MessageEnvelope<unknown> = { id: crypto.randomUUID(), channel, sender: key.agentId,
+async function signed(key: AgentKeyPair, channel: string, payload: unknown, checksum: string, sequence = 0, id = crypto.randomUUID()) {
+  const envelope: MessageEnvelope<unknown> = { id, channel, sender: key.agentId,
     type: 'intel', sequence, timestamp: Date.now(), payload, checksum, signature: '' };
   envelope.signature = bytesToHex(new Uint8Array(await crypto.subtle.sign('Ed25519', await importEdPrivateKey(key.signingPrivateKey),
     new TextEncoder().encode(getEnvelopeSignString(envelope)))));
@@ -50,6 +51,67 @@ describe.each(['Worker', 'standalone', 'Pages D1', 'Pages memory'] as const)('%s
       expect(saved.sequence).toBe(sequence);
       expect((await verifyEnvelope(saved, f.key.signingPublicKey)).valid).toBe(true);
     }
+  });
+
+  it('rejects non-canonical id and signed inReplyTo forms before storing (#414)', async () => {
+    const f = await setup(adapter);
+    const parent = crypto.randomUUID();
+    const uppercase = 'A47AC10B-58CC-4372-A567-0E02B2C3D479';
+    const cases: { field: 'id' | 'inReplyTo'; envelope: MessageEnvelope<unknown> }[] = [
+      { field: 'id', envelope: await signed(f.key, f.channel, { message: 'x' }, await sha256Hex('{"message":"x"}'), 0, `urn:uuid:${parent}`) },
+      { field: 'id', envelope: await signed(f.key, f.channel, { message: 'x' }, await sha256Hex('{"message":"x"}'), 0, uppercase) },
+    ];
+    for (const inReplyTo of [`urn:uuid:${parent}`, uppercase, 42]) {
+      const payload = { message: 'reply', inReplyTo };
+      cases.push({ field: 'inReplyTo', envelope: await signed(f.key, f.channel, payload, await sha256Hex(canonicalizeJson(payload))) });
+    }
+    for (const { field, envelope } of cases) {
+      const response = await f.request(f.path, envelope);
+      expect(response.status, `${field} ${String((envelope.payload as { inReplyTo?: unknown }).inReplyTo ?? envelope.id)}`).toBe(400);
+      const body = await response.json();
+      expect(body).toMatchObject({ code: 'non_canonical_message_id', field, expected: CANONICAL_MESSAGE_ID_FORM });
+      expect(body.error).toContain(CANONICAL_MESSAGE_ID_FORM);
+    }
+    expect((await (await f.request(f.path)).json()).messages).toEqual([]);
+    if (adapter !== 'Pages memory') expect(f.db.prepare('SELECT COUNT(*) AS n FROM messages WHERE channel = ?').get(f.channel)?.n).toBe(0);
+  });
+
+  it('accepts canonical ids and does not gate the unsigned legacy replyToId (#414)', async () => {
+    const f = await setup(adapter);
+    const parent = await signed(f.key, f.channel, { message: 'parent' }, await sha256Hex('{"message":"parent"}'));
+    expect((await f.request(f.path, parent)).status).toBe(200);
+    const payload = { message: 'reply', inReplyTo: parent.id };
+    const reply = await signed(f.key, f.channel, payload, await sha256Hex(canonicalizeJson(payload)), 1);
+    // The unsigned legacy field is ignored by reply lookup, so it is not part of the gate.
+    reply.replyToId = `urn:uuid:${crypto.randomUUID()}`;
+    expect((await f.request(f.path, reply)).status).toBe(200);
+    const { messages } = await (await f.request(f.path)).json();
+    expect(messages).toHaveLength(2);
+    expect(messages.find((message: { id: string }) => message.id === reply.id)).toMatchObject({ id: reply.id, payload });
+  });
+
+  if (adapter !== 'Pages memory') it('accepts an exact-match legacy parent and refuses a non-matching one (#414)', async () => {
+    const f = await setup(adapter);
+    // Rows stored before the rule keep their signed form; the reply may name
+    // that exact string and thread by exact match without any normalization.
+    const legacyId = `urn:uuid:${crypto.randomUUID()}`;
+    expect((await f.request('/v1/channels', { name: f.channel, title: 'Legacy parent fixture' })).status).toBe(200);
+    const legacy = await signed(f.key, f.channel, { message: 'legacy parent' }, await sha256Hex('{"message":"legacy parent"}'));
+    f.db.prepare('INSERT INTO messages (id, channel, sender, type, sequence, stored_seq, timestamp, payload_json, signature, checksum) VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?)')
+      .run(legacyId, f.channel, legacy.sender, legacy.type, legacy.sequence, legacy.timestamp,
+        JSON.stringify(legacy.payload), legacy.signature, legacy.checksum);
+
+    const acceptedPayload = { message: 'reply to legacy', inReplyTo: legacyId };
+    const accepted = await signed(f.key, f.channel, acceptedPayload, await sha256Hex(canonicalizeJson(acceptedPayload)), 1);
+    expect((await f.request(f.path, accepted)).status).toBe(200);
+
+    const refusedPayload = { message: 'reply to nothing', inReplyTo: `urn:uuid:${crypto.randomUUID()}` };
+    const refused = await signed(f.key, f.channel, refusedPayload, await sha256Hex(canonicalizeJson(refusedPayload)), 2);
+    const response = await f.request(f.path, refused);
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ code: 'non_canonical_message_id', field: 'inReplyTo', expected: CANONICAL_MESSAGE_ID_FORM });
+    const { messages } = await (await f.request(f.path)).json();
+    expect(messages.map((message: { id: string }) => message.id)).toEqual([legacyId, accepted.id]);
   });
 
   it('rejects divergent checksums despite valid signatures, before storing or acknowledging', async () => {

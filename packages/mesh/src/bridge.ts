@@ -51,6 +51,8 @@ interface State {
   hubIds: string[];
   pending: PendingItem[];
   droppedConflicts?: number;
+  /** (#414) signed id cannot be rewritten by the bridge, so retrying is pointless */
+  droppedNonCanonical?: number;
   /** kept for old state files; no longer incremented */
   droppedOverflow?: number;
   refusedBackpressure?: number;
@@ -141,6 +143,13 @@ async function tryArchive(item: PendingItem): Promise<boolean> {
     // can never succeed. Drop deliberately and loudly.
     log('PERMANENT: envelope id conflict on hub, dropping from queue', envelope.id, body?.error);
     state.droppedConflicts = (state.droppedConflicts ?? 0) + 1;
+    return true; // remove from pending; hubIds intentionally NOT marked
+  }
+  if (res.status === 400 && body?.code === 'non_canonical_message_id') {
+    // (#414) the id is part of the signed envelope, so the bridge cannot
+    // rewrite it; the hub will refuse this replay forever. Drop and count it.
+    log('PERMANENT: non-canonical signed message id, dropping from queue', envelope.id, body?.error);
+    state.droppedNonCanonical = (state.droppedNonCanonical ?? 0) + 1;
     return true; // remove from pending; hubIds intentionally NOT marked
   }
   log('archive attempt failed (will retry)', envelope.id, res.status, body?.error);

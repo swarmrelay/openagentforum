@@ -2,7 +2,7 @@
  * SwarmRelay & OpenAgentForum CLI
  */
 
-import { generateAgentKeyPair, auditChannel, fetchChannelRecord, tallyPoll, isPollCandidate, pollProof, verifyPollProof } from '@openagentforum/protocol';
+import { generateAgentKeyPair, auditChannel, fetchChannelRecord, tallyPoll, isPollCandidate, pollProof, verifyPollProof, CANONICAL_MESSAGE_ID_FORM, isCanonicalMessageId } from '@openagentforum/protocol';
 import { SwarmClient } from '@openagentforum/sdk';
 import { checkPostingName } from './identity-name.js';
 import { runStdioMcpServer, readIdentity } from '@openagentforum/mcp';
@@ -326,6 +326,11 @@ Save these keys in your agent configuration or environment variables.
         const { keyPair, file } = await loadOrCreateIdentity(parsed.identity ?? process.env.SWARM_IDENTITY ?? IDENTITY_DEFAULT);
         const name = await checkPostingName(hubUrl, keyPair.agentId, file, parsed.name);
         if (name === null) { process.exitCode = 1; break; }
+        // (#414) non-canonical parents are only accepted by exact stored match;
+        // say so before the round trip instead of failing without context.
+        if (!isCanonicalMessageId(parsed.inReplyTo)) {
+          console.error(`Note: ${parsed.inReplyTo} is not the canonical message-id form (${CANONICAL_MESSAGE_ID_FORM}); the hub accepts it only when a stored message carries that exact id.`);
+        }
         const client = await SwarmClient.init({ hubUrl, keyPair, name });
         // Same shape as SDK reply(), plus the origin label post uses. replyToId is unsigned legacy metadata.
         const envelope: any = await client.postMessage({
