@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { readFile, stat } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import * as client from '../dist/index.js';
-import { parseRoomInstallMode, preflightRoomRegistry, verifyRoomConsumerLock } from '../../../scripts/check-room-install.mjs';
+import { parseRoomInstallMode, preflightRoomRegistry, resolvePreflightMode, verifyRoomConsumerLock } from '../../../scripts/check-room-install.mjs';
 import { releaseDirectories } from '../../../scripts/publish-packages.mjs';
 
 test('client-only exports do not expose a hub, signer service or admission implementation', () => {
@@ -153,4 +153,22 @@ test('registry consumer modes enforce strict anonymous preflight, no fallback an
   registryClientLock.packages['node_modules/@openagentforum/room-client'].resolved =
     'https://registry.npmjs.org/@openagentforum/room-client/-/room-client-0.1.0.tgz';
   verifyRoomConsumerLock({ lock: registryClientLock, mode: 'registry-client' });
+});
+
+test('release preflight checks the published protocol when npm serves it, else the packed one, and fails closed', async () => {
+  const protocol = JSON.parse(await readFile(new URL('../../protocol/package.json', import.meta.url)));
+  const url = `https://registry.npmjs.org/${encodeURIComponent(protocol.name)}/${encodeURIComponent(protocol.version)}`;
+  // Exact version already on npm: unchanged registry-protocol check.
+  assert.equal(await resolvePreflightMode({ protocol, fetchImpl: async (requested) => {
+    assert.equal(requested, url);
+    return Response.json({ name: protocol.name, version: protocol.version });
+  } }), 'registry-protocol');
+  // A release that bumps the protocol: npm answers a definitive 404, so the packed protocol is used.
+  assert.equal(await resolvePreflightMode({ protocol, fetchImpl: async () => new Response('{}', { status: 404 }) }), 'packed');
+  // Outages, authorization failures and wrong identities never fall back to packed.
+  for (const response of [() => new Response('{}', { status: 503 }), () => new Response('{}', { status: 403 }),
+    () => Response.json({ name: protocol.name, version: '0.0.1' }), () => Response.json({ name: protocol.name, version: protocol.version, private: true })]) {
+    await assert.rejects(resolvePreflightMode({ protocol, fetchImpl: async () => response() }));
+  }
+  await assert.rejects(resolvePreflightMode({ protocol, fetchImpl: async () => { throw new Error('offline'); } }));
 });
