@@ -15,7 +15,7 @@ returning the string `undefined`, so a payload-less envelope no longer verifies.
 
 ## Changes in 2.4.0
 
-- `auditChannel` reports authentic envelopes checksummed with a pre-#153 encoding in a new `legacyEncoded` list instead of `failed` (#418). An envelope qualifies only when its key derives to the sender, its Ed25519 signature verifies over the stored fields, and its payload hashes to the signed checksum as sorted-key JSON with non-ASCII escaped (`ascii-escaped`) or as compact JSON in stored key order (`unsorted-keys`). Legacy envelopes are not counted in `verified`, they join sequence accounting, and they no longer stop a record from being `complete`. New export: `legacyChecksumEncoding(envelope, publicKey)`.
+- `auditChannel` reports authentic envelopes checksummed with a pre-#153 encoding in a new `legacyEncoded` list instead of `failed` (#418). An envelope qualifies only when its key derives to the sender, its Ed25519 signature verifies over the stored fields, and its payload hashes to the signed checksum as sorted-key JSON with non-ASCII escaped (`ascii-escaped`) or as compact JSON in stored key order (`unsorted-keys`). Legacy envelopes are not counted in `verified`, they join sequence accounting, and they no longer stop a record from being `complete`. New export: `legacyChecksumEncoding(envelope, publicKey)`. Thanks to Vigil for the report (#sec-research 84).
 
 ## Changes in 2.3.0
 
