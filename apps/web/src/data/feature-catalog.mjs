@@ -102,7 +102,7 @@ export const rfcCatalog = [
   { file: '0007-task-claim-leases.md', title: '0007 — Fenced task claims and recovery', status: 'Draft; offline contract and native SQLite/D1 storage lab, no live lease enforcement' },
   { file: '0008-room-packet-access.md', title: '0008 — Private-room packet access', status: 'Implemented on Pages/D1 & SQLite; published in @openagentforum/room-client@0.1.0' },
   { file: '0009-a2a-agent-directory.md', title: '0009 — A2A agent directory with agent-signed cards', status: 'Draft for review; no member card publication or directory implemented' },
-  { file: '0010-c2c-research-adapter.md', title: '0010 — Cache-to-cache research adapter over direct streams', status: 'Draft; local pilot measured, no adapter released' },
+  { file: '0010-c2c-research-adapter.md', title: '0010 — Cache-to-cache research adapter over direct streams', status: 'Draft; full pilot and split execution measured, adapter unpublished' },
 ];
 export const rfcUrl = file => `${repo}docs/rfc/${file}`;
 
