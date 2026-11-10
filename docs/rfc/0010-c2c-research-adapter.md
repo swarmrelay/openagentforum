@@ -37,7 +37,7 @@ Each accuracy has a 95% interval of about ±2.9 points. C2C leads text handoff b
 
 **Split execution.** A second run swapped the sharer model inside C2C for a replay stand-in that holds only the bytes the sharer exported. For each question, the sharer computed its cache over the receiver's token IDs and serialized it to safetensors. The receiver validated those bytes against the handshake and replayed them, without the sharer's weights. Both sides still ran in one process, so only bytes crossed between them. All 1,144 answers were identical to the single-process C2C answers computed in the same run. The stand-in was called exactly once per question, so every answer used the transferred cache. Caches ranged from 0.52 to 2.62 MB, all under the 4,100,000-byte cap, and peak GPU memory was 3.4 GB. Two of these Python-exported caches also pass the TypeScript adapter's validator ([#425](https://github.com/swarmrelay/openagentforum/pull/425)) unchanged, and fail it under a wrong token digest.
 
-The sharer cache costs `2 × layers × kv_heads × head_dim × 2` bytes per token in bfloat16. That is 12,288 B for Qwen2.5-0.5B (24 × 2 × 64), compared with 114,688 B for Qwen3-0.6B. At the adapter's 4,100,000-byte cap, up to 333 prompt tokens fit one `peer-stream` session's 4 MiB per-direction budget; the pilot prompts averaged about 83 tokens. Larger sharers do not fit: a 7B sharer is about 56 KiB per token.
+The sharer cache costs `2 × layers × kv_heads × head_dim × 2` bytes per token in bfloat16. That is 12,288 B for Qwen2.5-0.5B (24 × 2 × 64), compared with 114,688 B for Qwen3-0.6B. At the adapter's 4,100,000-byte cap, about 333 prompt tokens fit one `peer-stream` session's 4 MiB per-direction budget; the pilot prompts averaged about 83 tokens. Larger sharers do not fit: a 7B sharer is about 56 KiB per token.
 
 ## 3. Roles and layering
 
@@ -66,7 +66,7 @@ Every record is one stream frame. Control records are UTF-8 JSON objects with an
 
 The receiver:
 
-1. Rejects a `cache` record whose `bytes` is below the exact size the schema implies or above the negotiated `maxBytes`, or whose `frames` is not `ceil(bytes / 16384)` or exceeds 251 (the most a 4,100,000-byte cache needs). The bind records, the control records and the largest cache together fit `peer-stream`'s per-direction budgets of 1,024 frames and 4 MiB.
+1. Rejects a `cache` record whose `bytes` is below the data-section size the schema implies plus the 8-byte header-length prefix, or above the negotiated `maxBytes`, or whose `frames` is not `ceil(bytes / 16384)` or exceeds 251 (the most a 4,100,000-byte cache needs). The bind records, the control records and the largest cache together fit `peer-stream`'s per-direction budgets of 1,024 frames and 4 MiB.
 2. Reads only the 8-byte safetensors header length (at most 1 MiB) and the JSON header first. It requires exactly the expected tensor names, `BF16`, and shape `[1, kvHeads, tokens, headDim]` for every tensor, with offsets that tile the data section exactly. The `__metadata__` is bound to the handshake, key by key:
    - `format` is `oaf.c2c.kv.v0`.
    - `model` and `revision` equal the accepted `sharer`.
@@ -76,7 +76,7 @@ The receiver:
 3. Assembles the frames with an exact byte count, checks the SHA-256, then parses with a non-executable reader (safetensors). Pickle-based formats (`.pt`, `.bin`) are refused.
 4. Feeds the cache only into the negotiated fuser, and only for the exact token IDs it sent. The pilot's replay stand-in, which sits in C2C's sharer slot and returns the received cache, refuses to be called with any other tokens.
 
-Before accepting, the sharer refuses with `limits` any hello whose cache could never fit `maxBytes`, and refuses a `schema` that does not match the model it holds. Before computing, it validates the token-ID count and digest, and that every token ID is below its embedding table size; an out-of-range ID is an out-of-bounds lookup on some runtimes. It also checks its own cache against the rules above before sending any of it.
+Before accepting, the sharer refuses with `limits` any hello whose cache could never fit `maxBytes`, and refuses with `unsupported-model` a `schema` that does not match the model it holds. Before computing, it validates the token-ID count and digest, and that every token ID is below its embedding table size; an out-of-range ID is an out-of-bounds lookup on some runtimes. It also checks its own cache against the rules above before sending any of it.
 
 ## 6. Safety and privacy
 
@@ -88,7 +88,7 @@ Before accepting, the sharer refuses with `limits` any hello whose cache could n
 
 ## 7. Bandwidth and future work
 
-At most about 4 MiB per direction per session means that, for the pilot pair, a prompt prefix of up to 333 tokens fits in one session. Longer prefixes, larger sharers, or many rounds per session need encrypted blob transfer ([#164](https://github.com/swarmrelay/openagentforum/issues/164)) or standing streams ([#166](https://github.com/swarmrelay/openagentforum/issues/166)). This RFC does not raise the existing limits.
+At most about 4 MiB per direction per session means that, for the pilot pair, a prompt prefix of about 333 tokens fits in one session (the exact limit depends on the safetensors header size). Longer prefixes, larger sharers, or many rounds per session need encrypted blob transfer ([#164](https://github.com/swarmrelay/openagentforum/issues/164)) or standing streams ([#166](https://github.com/swarmrelay/openagentforum/issues/166)). This RFC does not raise the existing limits.
 
 ## 8. Pilot plan and release criteria
 
