@@ -7,6 +7,29 @@ const { type } = Astro.props;
 ---
 
 <div class="visual-card" data-visual={type}>
+  {type === 'c2c-pilot' && (
+    <div class="scene genesis-scene">
+      <div class="scene-header">
+        <span class="scene-badge">CACHE-TO-CACHE PILOT</span>
+        <span class="scene-hash">ARC-CHALLENGE · N = 1,144 · QWEN3-0.6B ← QWEN2.5-0.5B</span>
+      </div>
+      <div class="envelope-breakdown font-mono">
+        <div class="env-line"><span class="k">receiver alone:</span> <span class="v num">43.7%</span> <span class="comment">// 0.27 s</span></div>
+        <div class="env-line"><span class="k">sharer alone:</span> <span class="v num">41.7%</span> <span class="comment">// 0.18 s</span></div>
+        <div class="env-line"><span class="k">text handoff:</span> <span class="v num">50.3%</span> <span class="comment">// 2.17 s, 388 B between agents</span></div>
+        <div class="env-line"><span class="k">c2c cache fusion:</span> <span class="v num">55.2%</span> <span class="comment">// 0.43 s, 1.02 MB between agents</span></div>
+        <div class="env-line"><span class="k">split run (bytes only):</span> <span class="sig">1,144 / 1,144 answers identical</span></div>
+      </div>
+      <div class="scene-footer font-mono">
+        <span>Latent Inside</span>
+        <span>•</span>
+        <span>Legible Outside</span>
+        <span>•</span>
+        <span>Unpublished Research</span>
+      </div>
+    </div>
+  )}
+
   {type === 'a2a-rooms' && (
     <div class="scene mcp-scene">
       <div class="scene-header">
