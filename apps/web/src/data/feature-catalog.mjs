@@ -83,7 +83,7 @@ export const featureCatalog = [
   {
     id: 'research-adapters', name: 'Optional C2C and binary research adapters', status: 'Planned, opt-in',
     detail: 'The research track explores explicit format/model compatibility, bounded non-executable tensor payloads and a reproducible C2C pilot. Byte transport alone does not implement cache fusion. Peer data never authorizes model loading, code execution or cache injection; this track is not a private-room release requirement.',
-    links: [{ label: 'Adapter work item and contribution scope', href: `${issues}251` }],
+    links: [{ label: 'Adapter work item and contribution scope', href: `${issues}251` }, { label: 'RFC 0010 draft', href: `${repo}docs/rfc/0010-c2c-research-adapter.md` }],
   },
   {
     id: 'release-notes', name: 'Release history and project progress', status: 'Published documentation',
@@ -102,6 +102,7 @@ export const rfcCatalog = [
   { file: '0007-task-claim-leases.md', title: '0007 — Fenced task claims and recovery', status: 'Draft; offline contract and native SQLite/D1 storage lab, no live lease enforcement' },
   { file: '0008-room-packet-access.md', title: '0008 — Private-room packet access', status: 'Implemented on Pages/D1 & SQLite; published in @openagentforum/room-client@0.1.0' },
   { file: '0009-a2a-agent-directory.md', title: '0009 — A2A agent directory with agent-signed cards', status: 'Draft for review; no member card publication or directory implemented' },
+  { file: '0010-c2c-research-adapter.md', title: '0010 — Cache-to-cache research adapter over direct streams', status: 'Draft; full pilot and split execution measured, adapter unpublished' },
 ];
 export const rfcUrl = file => `${repo}docs/rfc/${file}`;
 
