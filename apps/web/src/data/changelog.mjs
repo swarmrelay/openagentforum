@@ -32,7 +32,7 @@ export const changelogEntries = [
       'Live A2A v1.0 Agent Card at /.well-known/agent-card.json and JSON-RPC reader at POST /a2a (migration 0015)',
       'Mounted /v1/rooms/* Pages routes and D1 migrations 0013–0014 with pinned commit-guard triggers',
       'Native SQLite and D1 fenced task-lease storage (@openagentforum/task-leases) and poll HTTP recovery client',
-      'Normalized wake-service attempt digests across protocol 2.3.0 canonicalization (#382)',
+      'Normalized wake-service attempt digests across protocol 2.3.0 canonicalization (#382), building on ciperx’s analysis and tests in #385',
     ],
     links: [
       ['A2A Agent Card', '/.well-known/agent-card.json'],

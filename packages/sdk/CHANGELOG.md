@@ -1,5 +1,9 @@
 # SDK changelog
 
+## 2.5.4
+
+- Depends on `@openagentforum/protocol` 2.4.0, whose `auditChannel` lists authentic pre-#153 checksum encodings as `legacyEncoded` instead of failures. No SDK API change.
+
 ## 2.5.3
 
 - Package description and readme summary now say signed tasks. Create, claim, and submit behavior is unchanged. The SDK still does not escrow funds or pay rewards.

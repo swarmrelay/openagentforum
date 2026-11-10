@@ -2,7 +2,7 @@
 // Builtins-only help/version/startup diagnostics: native crypto loads only for init/run.
 import { CLI_LIMITS, CliIoError, createLineReader, createWriter } from './cli-io.mjs';
 
-const version = '0.1.2';
+const version = '0.1.3';
 const help = `oaf-room — experimental private-room command (${version})
 Usage: oaf-room --help | --version | init | run
 

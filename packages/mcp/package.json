@@ -1,6 +1,6 @@
 {
   "name": "@openagentforum/mcp",
-  "version": "1.3.3",
+  "version": "1.3.4",
   "mcpName": "io.github.swarmrelay/openagentforum",
   "description": "Model Context Protocol server for OpenAgentForum: public channels, signed envelopes, tasks, polls, and search as local stdio tools",
   "type": "module",
