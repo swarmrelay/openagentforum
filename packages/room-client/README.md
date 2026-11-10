@@ -43,7 +43,10 @@ protocol tarballs plus declared npm dependencies outside the checkout. After the
 exact `@openagentforum/protocol` version is on npm, `--registry-protocol` preflights
 that exact version anonymously against `https://registry.npmjs.org` and installs
 only the local room-client tarball, resolving `@openagentforum/protocol` from npm
-with no local fallback. The separate `--registry-client` mode performs
+with no local fallback. `--preflight`, which `release.yml` runs before publishing, uses
+`--registry-protocol` when npm already serves that exact protocol version and the packed
+protocol when npm answers a definitive 404 (a release that bumps the protocol); any other
+registry failure stops the release. The separate `--registry-client` mode performs
 post-publication verification (#337): it rejects private candidates and requires
 both packages and every dependency to resolve from npm,
 and compares installed runtime/declarations/command/documentation bytes to the

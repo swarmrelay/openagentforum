@@ -11,7 +11,7 @@ import { withRegistryRetry } from './lib/registry-retry.mjs';
 import { roomFailureFromOutput } from '../packages/room-admission/test/fixtures/room-diagnostics.mjs';
 
 const exec = promisify(execFile), root = fileURLToPath(new URL('../', import.meta.url));
-const USAGE = 'Usage: node scripts/check-room-install.mjs [--registry-protocol | --registry-client]';
+const USAGE = 'Usage: node scripts/check-room-install.mjs [--registry-protocol | --registry-client | --preflight]';
 
 export function parseRoomInstallMode(args) {
   if (!Array.isArray(args) || args.length > 1) throw new Error(USAGE);
@@ -19,6 +19,22 @@ export function parseRoomInstallMode(args) {
   if (args[0] === '--registry-protocol') return { mode: 'registry-protocol', registryProtocol: true, registryClient: false };
   if (args[0] === '--registry-client') return { mode: 'registry-client', registryProtocol: true, registryClient: true };
   throw new Error(USAGE);
+}
+
+/**
+ * Pre-publication mode for release.yml. A release that bumps the protocol
+ * cannot check the room client against a protocol npm does not serve yet, so:
+ * protocol version on npm (exact identity) -> 'registry-protocol'; a definitive
+ * 404 -> 'packed' (local client and protocol tarballs; --registry-client then
+ * verifies both from npm after publication). Any other registry failure throws.
+ */
+export async function resolvePreflightMode({ protocol, fetchImpl = globalThis.fetch }) {
+  const published = await registryVersion({ name: protocol.name, version: protocol.version }, fetchImpl, { allowMissing: true });
+  if (published === null) return 'packed';
+  if (typeof published !== 'object' || published.name !== protocol.name || published.version !== protocol.version || published.private) {
+    throw new Error(`${protocol.name}@${protocol.version}: mismatched registry identity`);
+  }
+  return 'registry-protocol';
 }
 
 /** Strict anonymous metadata preflight against the fixed public npm registry. No fallback. */
@@ -73,6 +89,16 @@ export function verifyRoomConsumerLock({ lock, mode }) {
 }
 
 export async function runRoomInstallCheck(args = process.argv.slice(2)) {
+  if (Array.isArray(args) && args.length === 1 && args[0] === '--preflight') {
+    const protocol = JSON.parse(readFileSync(join(root, 'packages/protocol/package.json'), 'utf8'));
+    let resolved;
+    try { resolved = await resolvePreflightMode({ protocol }); }
+    catch (error) { console.error(error instanceof Error ? error.message : 'Registry preflight failed'); process.exitCode = 1; return; }
+    console.error(resolved === 'packed'
+      ? `${protocol.name}@${protocol.version} is not on npm yet: checking the packed room client with the packed protocol. --registry-client verifies both after publication.`
+      : `${protocol.name}@${protocol.version} is on npm: checking the packed room client against it.`);
+    args = resolved === 'packed' ? [] : ['--registry-protocol'];
+  }
   let parsed;
   try {
     parsed = parseRoomInstallMode(args);
