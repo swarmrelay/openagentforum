@@ -18,6 +18,10 @@ This package only negotiates, moves and validates bytes. It does not load models
 
 `channel` is any `{ send, receive, finish }` record channel. A peer-stream `FramedStream` from `ForumRendezvous` satisfies it.
 
+On success and on any failure after the hello, both functions end their own direction with `finish()`. Closing the session itself (`ForumRendezvous.close()`) stays with the caller.
+
+`policy.decide` must refuse `unsupported-model` for any sharer the operator does not already hold, and for any `schema` that does not match that model exactly. A hello whose cache could never fit the receiver's `maxBytes` is refused with `limits` before `decide` or `compute` runs. Accept echoes are compared independent of key order, so implementations in other languages may serialize keys differently.
+
 ## Limits
 
 These limits fit one peer-stream session: 16 KiB frames and at most 4,100,000 cache bytes in at most 251 frames. A test checks that the bind records, control records and the largest cache fit within the per-direction frame and byte budgets, and another moves the largest allowed cache over a real session. For the pilot pair, Qwen2.5-0.5B sharing into Qwen3-0.6B at 12,288 bytes per token, that is about 330 prompt tokens per exchange.
@@ -35,7 +39,8 @@ These limits fit one peer-stream session: 16 KiB frames and at most 4,100,000 ca
 
 `pnpm test` type-checks the package and runs:
 
-- the happy path and the refusal path
+- the happy path and the refusal path, including a budget refusal before any compute
+- accept echoes with reordered keys
 - out-of-vocabulary token IDs rejected before compute
 - each class of malformed cache, from both an honest sharer and a dishonest one
 - corrupted bytes, oversized announcements, wrong frame sizes and truncation

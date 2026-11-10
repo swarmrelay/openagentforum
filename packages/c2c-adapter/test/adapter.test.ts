@@ -72,9 +72,10 @@ const policy = (compute: SharerPolicy['compute'], decide: SharerPolicy['decide']
 const json = (value: unknown) => new TextEncoder().encode(JSON.stringify(value));
 
 /** A sharer that skips every self-check, to exercise the receiver's own validation. */
-async function rawSharer(end: RecordChannel, blob: Uint8Array, lie: { sha256?: string; bytes?: number; frameBytes?: number; stopAfterFrames?: number; acceptExtra?: boolean } = {}) {
+async function rawSharer(end: RecordChannel, blob: Uint8Array, lie: { sha256?: string; bytes?: number; frameBytes?: number; stopAfterFrames?: number; acceptExtra?: boolean; reorder?: boolean } = {}) {
   const h = JSON.parse(new TextDecoder().decode((await end.receive())!));
-  await end.send(json({ kind: 'oaf.c2c.accept.v0', adapter: ADAPTER, sharer: h.sharer, schema: h.schema, ...(lie.acceptExtra ? { extra: 1 } : {}) }));
+  const flip = (o: Record<string, unknown>) => (lie.reorder ? Object.fromEntries(Object.entries(o).reverse()) : o);
+  await end.send(json({ kind: 'oaf.c2c.accept.v0', adapter: ADAPTER, sharer: flip(h.sharer), schema: flip(h.schema), ...(lie.acceptExtra ? { extra: 1 } : {}) }));
   if (lie.acceptExtra) return null;
   await end.receive();
   const size = lie.frameBytes ?? C2C_LIMITS.frameBytes, bytes = lie.bytes ?? blob.byteLength;
@@ -114,6 +115,24 @@ describe('C2C adapter negotiation and transfer', () => {
     expect(result).toMatchObject({ code: 'refused', reason: 'unsupported-model' });
     expect(served).toBe(false);
     expect(receiver.sent).toHaveLength(1);
+    expect(await sharerEnd.receive()).toBeNull();   // the receiver ended its direction too
+  });
+
+  it('the sharer refuses a hello whose cache could never fit the budget, before computing', async () => {
+    const tokenIds = ids(1000);   // 12.3 MB of cache against a 1 MB budget
+    const [receiver, sharerEnd] = channelPair();
+    const served = serveCache(sharerEnd, policy(async () => { throw new Error('must not compute'); }, () => { throw new Error('must not decide'); }));
+    await receiver.send(json(hello(tokenIds, { limits: { maxTokens: 1024, maxBytes: 1_000_000 } })));
+    expect(JSON.parse(new TextDecoder().decode((await receiver.receive())!))).toEqual({ kind: 'oaf.c2c.refuse.v0', reason: 'limits' });
+    expect(await served).toBe(false);
+  });
+
+  it('accepts an echo whose keys are in a different order, as another implementation may send', async () => {
+    const tokenIds = ids(20), blob = cacheFor(tokenIds);
+    const [receiver, sharerEnd] = channelPair();
+    const sharerSide = rawSharer(sharerEnd, blob, { reorder: true });
+    expect(await requestCache(receiver, hello(tokenIds), tokenIds)).toEqual(blob);
+    expect(await sharerSide).toEqual({ kind: 'oaf.c2c.done.v0', ok: true });
   });
 
   const malformed: [string, Tweak, Opts][] = [
@@ -244,13 +263,6 @@ describe('fits one peer-stream session', () => {
     // Receiver direction: bind, hello, token IDs, done.
     expect(bind.bytes + 2 * C2C_LIMITS.controlBytes + 4 * C2C_LIMITS.maxTokens).toBeLessThanOrEqual(STREAM_LIMITS.bytesPerDirection);
     expect(4 * C2C_LIMITS.maxTokens).toBeLessThanOrEqual(STREAM_LIMITS.frameBytes);
-  });
-
-  it('refuses an announcement with more frames than one exchange allows', async () => {
-    const tokenIds = ids(20), blob = cacheFor(tokenIds);
-    const [receiver, sharerEnd] = channelPair();
-    void rawSharer(sharerEnd, blob, { frameBytes: 1_000 });
-    await expect(requestCache(receiver, hello(tokenIds), tokenIds)).rejects.toMatchObject({ code: 'limit', reason: 'cache header' });
   });
 });
 

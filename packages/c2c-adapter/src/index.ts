@@ -66,7 +66,13 @@ function modelRef(v: unknown): v is ModelRef {
 function schemaOk(v: unknown): v is KvSchema {
   return exact(v, ['layers', 'kvHeads', 'headDim', 'dtype']) && int(v.layers, 1, 256) && int(v.kvHeads, 1, 256) && int(v.headDim, 1, 1024) && v.dtype === 'bfloat16';
 }
-const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+/** Key-order-independent equality for plain JSON values, so an implementation in another language may reorder keys. */
+function canonical(v: unknown): unknown {
+  if (Array.isArray(v)) return v.map(canonical);
+  if (plain(v)) return Object.fromEntries(Object.keys(v).sort().map(k => [k, canonical(v[k])]));
+  return v;
+}
+const same = (a: unknown, b: unknown) => JSON.stringify(canonical(a)) === JSON.stringify(canonical(b));
 
 export function validateHello(v: unknown): Hello {
   if (!exact(v, ['kind', 'adapter', 'receiver', 'sharer', 'fuser', 'schema', 'limits', 'tokenIds']) || v.kind !== 'oaf.c2c.hello.v0' || v.adapter !== ADAPTER) fail('protocol', 'hello');
@@ -129,7 +135,7 @@ export function checkCacheHeader(prefix: Uint8Array, totalBytes: number, expect:
     layers: String(schema.layers), kv_heads: String(schema.kvHeads), head_dim: String(schema.headDim),
     tokens: String(tokens), token_ids_sha256: expect.tokenIdsSha256,
   };
-  if (!plain(h.__metadata__) || !same(Object.fromEntries(Object.entries(h.__metadata__).sort()), Object.fromEntries(Object.entries(metadata).sort()))) fail('integrity', 'metadata');
+  if (!plain(h.__metadata__) || !same(h.__metadata__, metadata)) fail('integrity', 'metadata');
   const names = Object.keys(h).filter(k => k !== '__metadata__');
   const want = new Set(Array.from({ length: schema.layers }, (_, i) => [`k.${i}`, `v.${i}`]).flat());
   if (names.length !== want.size || !names.every(n => want.has(n))) fail('integrity', 'tensor names');
@@ -159,6 +165,16 @@ export async function requestCache(ch: RecordChannel, hello: Hello, tokenIds: Ui
   const expect: CacheExpectation = { schema: hello.schema, tokens: tokenIds.length, sharer: hello.sharer, tokenIdsSha256: hello.tokenIds.sha256 };
   const expected = cacheDataBytes(hello.schema, tokenIds.length);
   if (8 + expected > hello.limits.maxBytes) fail('limit', 'cache would exceed maxBytes');
+  try {
+    return await exchange(ch, hello, ids, expect, expected);
+  } catch (error) {
+    // Any failure ends our direction; closing the session itself stays with the caller.
+    await ch.finish().catch(() => {});
+    throw error;
+  }
+}
+
+async function exchange(ch: RecordChannel, hello: Hello, ids: Uint8Array, expect: CacheExpectation, expected: number): Promise<Uint8Array> {
   await sendControl(ch, hello);
   const reply = await receiveControl(ch);
   if (reply.kind === 'oaf.c2c.refuse.v0') {
@@ -201,7 +217,11 @@ export async function requestCache(ch: RecordChannel, hello: Hello, tokenIds: Ui
 export interface SharerPolicy {
   /** Rows in the sharer's embedding table; any token ID at or above it is rejected before compute. */
   vocabSize: number;
-  /** Return null to accept, or a fixed refusal. Never download a model because a peer asked. */
+  /**
+   * Return null to accept, or a fixed refusal. Refuse `unsupported-model` for any sharer you do not
+   * already hold and any `schema` that does not match it exactly; never download a model because a
+   * peer asked. Budget checks (`limits`) happen before this is called.
+   */
   decide(hello: Hello): RefusalReason | null;
   /** Compute the sharer cache for exactly these token IDs, as a safetensors file. */
   compute(tokenIds: Uint32Array, hello: Hello): Promise<Uint8Array>;
@@ -211,7 +231,8 @@ export interface SharerPolicy {
 export async function serveCache(ch: RecordChannel, policy: SharerPolicy): Promise<boolean> {
   if (!int(policy.vocabSize, 1, 2 ** 32)) fail('protocol', 'vocabSize');
   const hello = validateHello(await receiveControl(ch));
-  const refusal = policy.decide(hello);
+  // Refuse before any compute when the cache could never be sent within the receiver's budget.
+  const refusal = 8 + cacheDataBytes(hello.schema, hello.tokenIds.count) > hello.limits.maxBytes ? 'limits' : policy.decide(hello);
   if (refusal !== null) {
     if (!REFUSALS.includes(refusal)) fail('protocol', 'refusal');
     await sendControl(ch, { kind: 'oaf.c2c.refuse.v0', reason: refusal });
