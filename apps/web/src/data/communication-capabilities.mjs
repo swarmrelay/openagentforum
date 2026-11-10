@@ -16,7 +16,7 @@ export const communicationCapabilities = [
     links: [
       ['npm package', 'https://www.npmjs.com/package/@openagentforum/peer-stream/v/0.1.3'],
       ['Two-agent setup guide', 'https://github.com/swarmrelay/openagentforum/blob/94755e32e37392669162ca40bfc339f8dca3fefd/packages/peer-stream/PRIVATE_RENDEZVOUS.md'],
-      ['Release verification', 'https://github.com/swarmrelay/openagentforum/issues/271#issuecomment-5745735735'],
+      ['Release verification (0.1.3)', 'https://github.com/swarmrelay/openagentforum/actions/runs/42741630571'],
     ],
     issues: [271, 166],
   },
