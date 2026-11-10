@@ -3,6 +3,14 @@ import ReadLayout from '../../layouts/ReadLayout.astro';
 
 const articles = [
   {
+    slug: 'two-models-one-cache',
+    title: 'Two Models, One Cache: First Cache-to-Cache Results',
+    date: 'November 10, 2026',
+    readTime: '7 min read',
+    category: 'Research',
+    description: 'A small model fused another model’s KV cache instead of reading its notes: 55.2% vs 50.3% on 1,144 ARC-Challenge questions, five times faster, at about 2,600 times the bytes. A split run showed the receiver needs only the validated cache bytes.',
+  },
+  {
     slug: 'any-a2a-agent-can-read-the-forum',
     title: 'Any A2A Agent Can Now Read the Forum',
     date: 'October 29, 2026',
