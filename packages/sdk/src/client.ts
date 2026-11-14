@@ -312,7 +312,7 @@ export class SwarmClient {
     payload: Record<string, unknown> | string
   ): Promise<MessageEnvelope> {
     const { ciphertext, nonce } = await encryptForPrivateChannel(payload, channelKeyHex);
-    const sequence = await this.nextSequence(channelSlug);
+    const { sequence, advanced } = await this.reserveSequence(channelSlug);
 
     const envelope = await signEnvelope(
       {
@@ -335,7 +335,9 @@ export class SwarmClient {
 
     if (!res.ok) {
       const err = await res.text();
-      await this.releaseSequence(channelSlug, sequence);
+      if (advanced && res.status >= 400 && res.status < 500) {
+        await this.releaseSequence(channelSlug, sequence);
+      }
       throw new Error(`Failed to post to private vault: ${err}`);
     }
 
@@ -382,7 +384,7 @@ export class SwarmClient {
     /** explicit signed counter; by default the next one after this key's last stored envelope in the channel */
     sequence?: number;
   }): Promise<MessageEnvelope<T>> {
-    const sequence = await this.reserveSequence(params.channel, params.sequence);
+    const { sequence, advanced } = await this.reserveSequence(params.channel, params.sequence);
     const envelope = await signEnvelope(
       {
         channel: params.channel,
@@ -403,7 +405,9 @@ export class SwarmClient {
 
     if (!res.ok) {
       const err = await res.text();
-      await this.releaseSequence(params.channel, sequence);
+      if (advanced && res.status >= 400 && res.status < 500) {
+        await this.releaseSequence(params.channel, sequence);
+      }
       // status lets callers report the failure class without echoing the body.
       throw Object.assign(new Error(`Failed to post message: ${err}`), { status: res.status });
     }
@@ -444,16 +448,19 @@ export class SwarmClient {
    * and the counter advances at reservation time, not after the POST
    * returns. Overlapping posts used to observe the same cached counter (or
    * compute the same base from one record fetch) and sign the same counter
-   * twice. A post the relay rejects hands its counter back when no later
-   * counter is out, since the envelope was never stored; a post whose
-   * request itself fails leaves a gap, never a reuse, because the envelope
-   * may have been stored. Gaps are visible in the audit; reuse weakens it.
+   * twice. A post the relay rejects with a 4xx hands its counter back when
+   * no later counter is out and this reservation advanced the counter, since
+   * the envelope was never stored; a 5xx keeps the gap like a post whose
+   * request itself fails, because the envelope may already be stored (the
+   * relay inserts the message before its follow-up updates, and a gateway
+   * 5xx can arrive after the commit). Gaps are visible in the audit; reuse
+   * weakens it.
    *
    * Calling this method consumes a counter whether or not the caller posts
    * with it. Do not call it to peek: a peeked counter becomes a gap.
    */
   async nextSequence(channel: string): Promise<number> {
-    return this.reserveSequence(channel);
+    return (await this.reserveSequence(channel)).sequence;
   }
 
   /**
@@ -462,18 +469,26 @@ export class SwarmClient {
    * reserved position advances the local counter past it, so later automatic
    * counters cannot collide with it; an explicit counter below it is the
    * caller's retry and leaves the counter alone.
+   *
+   * Returns whether this reservation advanced the counter. Only a
+   * reservation that advanced it may ever be handed back: a retry below the
+   * reserved position signs a counter that may already be stored, so
+   * rolling the counter back onto it would re-sign a stored counter.
    */
-  private async reserveSequence(channel: string, explicit?: number): Promise<number> {
+  private async reserveSequence(channel: string, explicit?: number): Promise<{ sequence: number; advanced: boolean }> {
     return this.withSequenceLock(channel, async () => {
       if (explicit !== undefined) {
         const known = this.sequences.get(channel);
-        if (known === undefined || known <= explicit) this.sequences.set(channel, explicit + 1);
-        return explicit;
+        if (known === undefined || known <= explicit) {
+          this.sequences.set(channel, explicit + 1);
+          return { sequence: explicit, advanced: true };
+        }
+        return { sequence: explicit, advanced: false };
       }
       const known = this.sequences.get(channel);
       if (known !== undefined) {
         this.sequences.set(channel, known + 1);
-        return known;
+        return { sequence: known, advanced: true };
       }
       // Fail closed: an unreachable or truncated record is exactly when this key
       // may already have history, and signing 0 there is counter reuse. Only an
@@ -482,23 +497,27 @@ export class SwarmClient {
       try {
         rec = await fetchChannelRecord(this.hubUrl, channel, { fetchImpl: this.fetchImpl as any });
       } catch (e) {
-        if (/ 404$/.test((e as Error).message)) { this.sequences.set(channel, 1); return 0; }
+        if (/ 404$/.test((e as Error).message)) { this.sequences.set(channel, 1); return { sequence: 0, advanced: true }; }
         throw new Error(`cannot determine the next signed sequence for #${channel}: ${(e as Error).message}; pass sequence explicitly only if you know it`);
       }
       if (rec.truncated) throw new Error(`cannot determine the next signed sequence for #${channel}: record truncated (${rec.reason})`);
       const next = nextSequenceFor(this.agentId, rec.messages);
       this.sequences.set(channel, next + 1);
-      return next;
+      return { sequence: next, advanced: true };
     });
   }
 
   /**
-   * Hand a reserved counter back after the relay answered with a rejection:
-   * the envelope was never stored, so reusing the counter is not reuse in
-   * the record. Only safe when no later reservation has been made on the
-   * channel; otherwise the gap stays, since a later counter is already out.
-   * Call only when the relay answered — if `fetch` itself threw, the
-   * envelope may have been stored and the gap is the honest outcome.
+   * Hand a reserved counter back after the relay answered with a 4xx
+   * rejection: the envelope was never stored, so reusing the counter is not
+   * reuse in the record. Only safe when no later reservation has been made
+   * on the channel; otherwise the gap stays, since a later counter is
+   * already out. Callers must only call this when the reservation advanced
+   * the counter and the relay answered 4xx: a retry below the reserved
+   * position signs a counter that may already be stored, and a 5xx can
+   * arrive after the envelope was stored, so in both cases the gap is the
+   * honest outcome. Call only when the relay answered — if `fetch` itself
+   * threw, the envelope may have been stored and the gap stays too.
    */
   private async releaseSequence(channel: string, sequence: number): Promise<void> {
     await this.withSequenceLock(channel, () => {
@@ -544,7 +563,7 @@ export class SwarmClient {
 
     const participants = [this.agentId, recipientAgentId].sort();
     const dmChannel = `dm-${participants[0].slice(6, 14)}-${participants[1].slice(6, 14)}`;
-    const sequence = await this.nextSequence(dmChannel);
+    const { sequence, advanced } = await this.reserveSequence(dmChannel);
 
     const envelope = await signEnvelope(
       {
@@ -568,7 +587,9 @@ export class SwarmClient {
 
     if (!res.ok) {
       const err = await res.text();
-      await this.releaseSequence(dmChannel, sequence);
+      if (advanced && res.status >= 400 && res.status < 500) {
+        await this.releaseSequence(dmChannel, sequence);
+      }
       throw new Error(`Failed to post encrypted DM: ${err}`);
     }
 
