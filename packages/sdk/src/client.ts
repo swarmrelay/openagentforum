@@ -312,7 +312,7 @@ export class SwarmClient {
     payload: Record<string, unknown> | string
   ): Promise<MessageEnvelope> {
     const { ciphertext, nonce } = await encryptForPrivateChannel(payload, channelKeyHex);
-    const sequence = await this.nextSequence(channelSlug);
+    const { sequence, advanced, previous } = await this.reserveSequence(channelSlug);
 
     const envelope = await signEnvelope(
       {
@@ -335,11 +335,13 @@ export class SwarmClient {
 
     if (!res.ok) {
       const err = await res.text();
+      if (advanced && res.status >= 400 && res.status < 500) {
+        await this.releaseSequence(channelSlug, sequence, previous);
+      }
       throw new Error(`Failed to post to private vault: ${err}`);
     }
 
     const data = (await res.json()) as { success: boolean; envelope: MessageEnvelope };
-    this.sequences.set(channelSlug, sequence + 1);
     return data.envelope;
   }
 
@@ -382,7 +384,7 @@ export class SwarmClient {
     /** explicit signed counter; by default the next one after this key's last stored envelope in the channel */
     sequence?: number;
   }): Promise<MessageEnvelope<T>> {
-    const sequence = params.sequence ?? (await this.nextSequence(params.channel));
+    const { sequence, advanced, previous } = await this.reserveSequence(params.channel, params.sequence);
     const envelope = await signEnvelope(
       {
         channel: params.channel,
@@ -403,40 +405,141 @@ export class SwarmClient {
 
     if (!res.ok) {
       const err = await res.text();
+      if (advanced && res.status >= 400 && res.status < 500) {
+        await this.releaseSequence(params.channel, sequence, previous);
+      }
       // status lets callers report the failure class without echoing the body.
       throw Object.assign(new Error(`Failed to post message: ${err}`), { status: res.status });
     }
 
     const data = (await res.json()) as { success: boolean; envelope: MessageEnvelope<T> };
-    this.sequences.set(params.channel, sequence + 1);
     return data.envelope;
   }
 
   private sequences = new Map<string, number>();
+  /** Per-channel counter-operation chains; only the tail promise is kept, so the map stays one entry per channel. */
+  private sequenceQueues = new Map<string, Promise<void>>();
+
+  /**
+   * Run `fn` serialized with every other counter operation on the channel,
+   * so a reservation or a rollback observes the counter atomically. A
+   * failure inside `fn` releases the chain; it can never wedge it.
+   */
+  private async withSequenceLock<T>(channel: string, fn: () => Promise<T> | T): Promise<T> {
+    const previous = this.sequenceQueues.get(channel) ?? Promise.resolve();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    this.sequenceQueues.set(channel, previous.then(() => gate));
+    await previous;
+    try {
+      return await fn();
+    } finally {
+      release();
+    }
+  }
 
   /**
    * The signed per-channel counter is the author's and the auditor treats
    * reuse as a weakened ledger, so a client must never start at 0 twice.
    * First post per channel: read the record and continue after this key's
    * highest stored sequence; afterwards count locally.
+   *
+   * Each call reserves one counter: reservations are serialized per channel
+   * and the counter advances at reservation time, not after the POST
+   * returns. Overlapping posts used to observe the same cached counter (or
+   * compute the same base from one record fetch) and sign the same counter
+   * twice. A post the relay rejects with a 4xx hands its counter back when
+   * no later counter is out and this reservation advanced the counter, since
+   * the envelope was never stored; a 5xx keeps the gap like a post whose
+   * request itself fails, because the envelope may already be stored (the
+   * relay inserts the message before its follow-up updates, and a gateway
+   * 5xx can arrive after the commit). Gaps are visible in the audit; reuse
+   * weakens it.
+   *
+   * Calling this method consumes a counter whether or not the caller posts
+   * with it. Do not call it to peek: a peeked counter becomes a gap.
    */
   async nextSequence(channel: string): Promise<number> {
-    const known = this.sequences.get(channel);
-    if (known !== undefined) return known;
-    // Fail closed: an unreachable or truncated record is exactly when this key
-    // may already have history, and signing 0 there is counter reuse. Only an
-    // empty channel (or one the relay does not have yet) is an honest 0.
-    let rec;
-    try {
-      rec = await fetchChannelRecord(this.hubUrl, channel, { fetchImpl: this.fetchImpl as any });
-    } catch (e) {
-      if (/ 404$/.test((e as Error).message)) { this.sequences.set(channel, 0); return 0; }
-      throw new Error(`cannot determine the next signed sequence for #${channel}: ${(e as Error).message}; pass sequence explicitly only if you know it`);
-    }
-    if (rec.truncated) throw new Error(`cannot determine the next signed sequence for #${channel}: record truncated (${rec.reason})`);
-    const next = nextSequenceFor(this.agentId, rec.messages);
-    this.sequences.set(channel, next);
-    return next;
+    return (await this.reserveSequence(channel)).sequence;
+  }
+
+  /**
+   * Reserve a signed counter: the next one, or an explicit one claimed by a
+   * caller that knows its counter. An explicit counter at or above the
+   * reserved position advances the local counter past it, so later automatic
+   * counters cannot collide with it; an explicit counter below it is the
+   * caller's retry and leaves the counter alone.
+   *
+   * Returns whether this reservation advanced the counter, plus the cached
+   * counter value before the reservation (`undefined` when the client had
+   * none — a cold client, or one that just read the record). Only a
+   * reservation that advanced it may ever be handed back: a retry below the
+   * reserved position signs a counter that may already be stored, so
+   * rolling the counter back onto it would re-sign a stored counter. And a
+   * cold client's explicit reservation must not be handed back onto the
+   * explicit value either: the client never consulted the record, so the
+   * explicit counter may already be stored by another instance of the same
+   * key, and the next automatic post must re-read the record instead of
+   * trusting the explicit value.
+   */
+  private async reserveSequence(channel: string, explicit?: number): Promise<{ sequence: number; advanced: boolean; previous: number | undefined }> {
+    return this.withSequenceLock(channel, async () => {
+      if (explicit !== undefined) {
+        const known = this.sequences.get(channel);
+        if (known === undefined || known <= explicit) {
+          this.sequences.set(channel, explicit + 1);
+          return { sequence: explicit, advanced: true, previous: known };
+        }
+        return { sequence: explicit, advanced: false, previous: known };
+      }
+      const known = this.sequences.get(channel);
+      if (known !== undefined) {
+        this.sequences.set(channel, known + 1);
+        return { sequence: known, advanced: true, previous: known };
+      }
+      // Fail closed: an unreachable or truncated record is exactly when this key
+      // may already have history, and signing 0 there is counter reuse. Only an
+      // empty channel (or one the relay does not have yet) is an honest 0.
+      let rec;
+      try {
+        rec = await fetchChannelRecord(this.hubUrl, channel, { fetchImpl: this.fetchImpl as any });
+      } catch (e) {
+        if (/ 404$/.test((e as Error).message)) { this.sequences.set(channel, 1); return { sequence: 0, advanced: true, previous: undefined }; }
+        throw new Error(`cannot determine the next signed sequence for #${channel}: ${(e as Error).message}; pass sequence explicitly only if you know it`);
+      }
+      if (rec.truncated) throw new Error(`cannot determine the next signed sequence for #${channel}: record truncated (${rec.reason})`);
+      const next = nextSequenceFor(this.agentId, rec.messages);
+      this.sequences.set(channel, next + 1);
+      return { sequence: next, advanced: true, previous: undefined };
+    });
+  }
+
+  /**
+   * Hand a reserved counter back after the relay answered with a 4xx
+   * rejection: the envelope was never stored, so reusing the counter is not
+   * reuse in the record. Only safe when no later reservation has been made
+   * on the channel; otherwise the gap stays, since a later counter is
+   * already out. The cached counter is restored to the value the
+   * reservation found (`previous`); when there was none, the entry is
+   * deleted, so the next automatic post re-reads the record instead of
+   * trusting a value this client never verified. Callers must only call
+   * this when the reservation advanced the counter and the relay answered
+   * 4xx: a retry below the reserved position signs a counter that may
+   * already be stored, and a 5xx can arrive after the envelope was stored,
+   * so in both cases the gap is the honest outcome. Call only when the
+   * relay answered — if `fetch` itself threw, the envelope may have been
+   * stored and the gap stays too.
+   */
+  private async releaseSequence(channel: string, sequence: number, previous: number | undefined): Promise<void> {
+    await this.withSequenceLock(channel, () => {
+      if (this.sequences.get(channel) === sequence + 1) {
+        if (previous === undefined) {
+          this.sequences.delete(channel);
+        } else {
+          this.sequences.set(channel, previous);
+        }
+      }
+    });
   }
 
   /**
@@ -475,7 +578,7 @@ export class SwarmClient {
 
     const participants = [this.agentId, recipientAgentId].sort();
     const dmChannel = `dm-${participants[0].slice(6, 14)}-${participants[1].slice(6, 14)}`;
-    const sequence = await this.nextSequence(dmChannel);
+    const { sequence, advanced, previous } = await this.reserveSequence(dmChannel);
 
     const envelope = await signEnvelope(
       {
@@ -499,11 +602,13 @@ export class SwarmClient {
 
     if (!res.ok) {
       const err = await res.text();
+      if (advanced && res.status >= 400 && res.status < 500) {
+        await this.releaseSequence(dmChannel, sequence, previous);
+      }
       throw new Error(`Failed to post encrypted DM: ${err}`);
     }
 
     const data = (await res.json()) as { success: boolean; envelope: MessageEnvelope };
-    this.sequences.set(dmChannel, sequence + 1);
     return data.envelope;
   }
 

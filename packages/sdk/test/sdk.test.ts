@@ -258,6 +258,158 @@ describe('SwarmClient End-to-End SDK', () => {
     expect(forced.sequence).toBe(3);
   });
 
+  it('never reuses a signed sequence across concurrent posts from one client', async () => {
+    const a = await SwarmClient.init({ hubUrl, name: 'Seq-Race', fetch: customFetch });
+    // cold cache: every call fetches the same record before any cache entry exists
+    const cold = await Promise.all([0, 1, 2, 3, 4].map((n) =>
+      a.postMessage({ channel: 'race-cold', type: 'intel', payload: { n } })));
+    expect(cold.map((e) => e.sequence).sort((x, y) => x - y)).toEqual([0, 1, 2, 3, 4]);
+    // warm cache: the counter must advance at reservation time, not after each POST returns
+    const warm = await Promise.all([0, 1, 2].map((n) =>
+      a.postMessage({ channel: 'race-cold', type: 'intel', payload: { n: n + 5 } })));
+    expect(warm.map((e) => e.sequence).sort((x, y) => x - y)).toEqual([5, 6, 7]);
+    // the stored record agrees: no sequence appears twice for this sender
+    const stored = await a.getMessages('race-cold', { limit: 200 });
+    const mine = stored.filter((m) => m.sender === a.agentId).map((m) => m.sequence);
+    expect(mine).toHaveLength(8);
+    expect(new Set(mine).size).toBe(mine.length);
+  });
+
+  it('reserves distinct counters for concurrent nextSequence calls and keeps explicit overrides ahead of them', async () => {
+    const a = await SwarmClient.init({ hubUrl, name: 'Seq-Race-2', fetch: customFetch });
+    const reserved = await Promise.all([
+      a.nextSequence('race-reserve'), a.nextSequence('race-reserve'), a.nextSequence('race-reserve'),
+    ]);
+    expect([...reserved].sort((x, y) => x - y)).toEqual([0, 1, 2]);
+    // an explicit counter at or above the reserved position moves later automatic counters past it
+    const forced = await a.postMessage({ channel: 'race-reserve', type: 'intel', payload: { n: 0 }, sequence: 10 });
+    expect(forced.sequence).toBe(10);
+    expect(await a.nextSequence('race-reserve')).toBe(11);
+  });
+
+  it('hands a rejected counter back, and keeps the gap when the request itself fails', async () => {
+    const a = await SwarmClient.init({ hubUrl, name: 'Seq-Race-3', fetch: customFetch });
+    // the relay rejected the envelope with a 4xx, so nothing was stored and the counter is reusable
+    const rejecting = await SwarmClient.init({ hubUrl, keyPair: a.keyPair, name: 'Seq-Race-3', fetch: async (input: any, init?: RequestInit) => {
+      const u = String(typeof input === 'string' ? input : input.url);
+      if (init?.method === 'POST' && u.includes('/messages')) return new Response('boom', { status: 429 });
+      return customFetch(input, init);
+    } });
+    await expect(rejecting.postMessage({ channel: 'race-reject', type: 'intel', payload: { n: 0 } })).rejects.toThrow('Failed to post message');
+    expect(await rejecting.nextSequence('race-reject')).toBe(0);
+    // fetch threw: the envelope may have been stored, so the gap stays rather than risk reuse
+    const throwing = await SwarmClient.init({ hubUrl, keyPair: a.keyPair, name: 'Seq-Race-3', fetch: async (input: any, init?: RequestInit) => {
+      const u = String(typeof input === 'string' ? input : input.url);
+      if (init?.method === 'POST' && u.includes('/messages')) throw new Error('network down');
+      return customFetch(input, init);
+    } });
+    await expect(throwing.postMessage({ channel: 'race-throw', type: 'intel', payload: { n: 0 } })).rejects.toThrow('network down');
+    expect(await throwing.nextSequence('race-throw')).toBe(1);
+  });
+
+  it('never repeats a counter when a rejected post overlaps a later successful one', async () => {
+    const delayed = async (input: any, init?: RequestInit): Promise<Response> => {
+      const u = String(typeof input === 'string' ? input : input.url);
+      if (init?.method === 'POST' && u.includes('race-overlap')) {
+        const body = JSON.parse(String(init.body));
+        if ((body.payload as any)?.n === 0) {
+          // the first post is slow and the relay rejects it with a 4xx; the second post lands first
+          await new Promise((r) => setTimeout(r, 100));
+          return new Response('boom', { status: 429 });
+        }
+      }
+      return customFetch(input, init);
+    };
+    const a = await SwarmClient.init({ hubUrl, name: 'Seq-Race-4', fetch: delayed });
+    const [first, second] = await Promise.allSettled([
+      a.postMessage({ channel: 'race-overlap', type: 'intel', payload: { n: 0 } }),
+      a.postMessage({ channel: 'race-overlap', type: 'intel', payload: { n: 1 } }),
+    ]);
+    expect(first.status).toBe('rejected');
+    expect(second.status).toBe('fulfilled');
+    expect((second as any).value.sequence).toBe(1);
+    // the rejected counter stays a gap: a later counter is already out, so no
+    // rollback, even though a 4xx on its own would hand the counter back
+    expect(await a.nextSequence('race-overlap')).toBe(2);
+    const stored = await a.getMessages('race-overlap', { limit: 200 });
+    const mine = stored.filter((m) => m.sender === a.agentId).map((m) => m.sequence);
+    expect(mine).toEqual([1]);
+  });
+
+  it('never rolls the counter back onto a stored counter for an explicit retry below it', async () => {
+    // The first post stores seq 0, so the counter is 1. A retry with explicit
+    // sequence 0 did not advance the counter, so its rejection must not hand
+    // 0 back: the next counter is 1, not a re-signing of the stored 0. The
+    // rejection is a 4xx on purpose: 4xx is the only class that releases, so
+    // a 5xx here would keep the gap even without the advanced gate.
+    let posts = 0;
+    const flaky = async (input: any, init?: RequestInit): Promise<Response> => {
+      const u = String(typeof input === 'string' ? input : input.url);
+      if (init?.method === 'POST' && u.includes('/messages')) {
+        posts += 1;
+        if (posts > 1) return new Response('duplicate', { status: 409 });
+      }
+      return customFetch(input, init);
+    };
+    const a = await SwarmClient.init({ hubUrl, name: 'Seq-Race-5', fetch: flaky });
+    const first = await a.postMessage({ channel: 'race-retry', type: 'intel', payload: { n: 0 } });
+    expect(first.sequence).toBe(0);
+    await expect(a.postMessage({ channel: 'race-retry', type: 'intel', payload: { n: 1 }, sequence: 0 })).rejects.toThrow('Failed to post message');
+    const record = await a.getMessages('race-retry', { limit: 200 });
+    expect(record.filter((m) => m.sender === a.agentId).map((m) => m.sequence)).toEqual([0]);
+    expect(await a.nextSequence('race-retry')).toBe(1);
+  });
+
+  it('never re-signs a stored counter after a cold explicit retry is rejected', async () => {
+    // Review 5906859257: a fresh client with no cached counter must not trust
+    // an explicit value it never verified against the record. Seq 0 is
+    // already stored by another instance of the same key; the fresh client's
+    // explicit retry of seq 0 is rejected with a 4xx, so the rollback must
+    // drop the cache entry entirely — the next automatic post re-reads the
+    // record (fail-closed) and signs 1, not 0 again.
+    const a = await SwarmClient.init({ hubUrl, name: 'Seq-Race-7', fetch: customFetch });
+    const first = await a.postMessage({ channel: 'race-cold-explicit', type: 'intel', payload: { n: 0 } });
+    expect(first.sequence).toBe(0);
+    let rejectedOnce = false;
+    const rejecting = await SwarmClient.init({ hubUrl, keyPair: a.keyPair, name: 'Seq-Race-7', fetch: async (input: any, init?: RequestInit) => {
+      const u = String(typeof input === 'string' ? input : input.url);
+      if (init?.method === 'POST' && u.includes('/messages') && !rejectedOnce) {
+        rejectedOnce = true;
+        return new Response('duplicate', { status: 409 });
+      }
+      return customFetch(input, init);
+    } });
+    await expect(rejecting.postMessage({ channel: 'race-cold-explicit', type: 'intel', payload: { n: 1 }, sequence: 0 })).rejects.toThrow('Failed to post message');
+    const second = await rejecting.postMessage({ channel: 'race-cold-explicit', type: 'intel', payload: { n: 2 } });
+    expect(second.sequence).toBe(1);
+    const record = await a.getMessages('race-cold-explicit', { limit: 200 });
+    expect(record.filter((m) => m.sender === a.agentId).map((m) => m.sequence)).toEqual([0, 1]);
+  });
+
+  it('keeps the gap when the relay stores the envelope and then answers 500', async () => {
+    // The relay inserts the message before its follow-up updates, so a 500
+    // can arrive after the envelope is stored. Like a thrown fetch, a 5xx
+    // must never hand the counter back: the next post signs 1, not 0 again.
+    let posts = 0;
+    const storingThenFailing = async (input: any, init?: RequestInit): Promise<Response> => {
+      const u = String(typeof input === 'string' ? input : input.url);
+      if (init?.method === 'POST' && u.includes('/messages')) {
+        posts += 1;
+        if (posts === 1) {
+          await customFetch(input, init); // stored, then the 500 arrives
+          return new Response('boom', { status: 500 });
+        }
+      }
+      return customFetch(input, init);
+    };
+    const a = await SwarmClient.init({ hubUrl, name: 'Seq-Race-6', fetch: storingThenFailing });
+    await expect(a.postMessage({ channel: 'race-store-500', type: 'intel', payload: { n: 0 } })).rejects.toThrow('Failed to post message');
+    const second = await a.postMessage({ channel: 'race-store-500', type: 'intel', payload: { n: 1 } });
+    expect(second.sequence).toBe(1);
+    const record = await a.getMessages('race-store-500', { limit: 200 });
+    expect(record.filter((m) => m.sender === a.agentId).map((m) => m.sequence)).toEqual([0, 1]);
+  });
+
   it('resumes signed sequences for DMs and private vault posts with the same key', async () => {
     const alice = await SwarmClient.init({ hubUrl, name: 'Seq-DM-Alice', fetch: customFetch });
     const bob = await SwarmClient.init({ hubUrl, name: 'Seq-DM-Bob', fetch: customFetch });
