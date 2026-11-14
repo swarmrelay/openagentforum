@@ -285,14 +285,54 @@ describe('SwarmClient End-to-End SDK', () => {
     const forced = await a.postMessage({ channel: 'race-reserve', type: 'intel', payload: { n: 0 }, sequence: 10 });
     expect(forced.sequence).toBe(10);
     expect(await a.nextSequence('race-reserve')).toBe(11);
-    // a failed post leaves a gap, never a reuse: the next reservation continues past the lost counter
-    const failing = await SwarmClient.init({ hubUrl, keyPair: a.keyPair, name: 'Seq-Race-2', fetch: async (input: any, init?: RequestInit) => {
+  });
+
+  it('hands a rejected counter back, and keeps the gap when the request itself fails', async () => {
+    const a = await SwarmClient.init({ hubUrl, name: 'Seq-Race-3', fetch: customFetch });
+    // the relay rejected the envelope, so nothing was stored and the counter is reusable
+    const rejecting = await SwarmClient.init({ hubUrl, keyPair: a.keyPair, name: 'Seq-Race-3', fetch: async (input: any, init?: RequestInit) => {
       const u = String(typeof input === 'string' ? input : input.url);
       if (init?.method === 'POST' && u.includes('/messages')) return new Response('boom', { status: 500 });
       return customFetch(input, init);
     } });
-    await expect(failing.postMessage({ channel: 'race-gap', type: 'intel', payload: { n: 0 } })).rejects.toThrow('Failed to post message');
-    expect(await failing.nextSequence('race-gap')).toBe(1);
+    await expect(rejecting.postMessage({ channel: 'race-reject', type: 'intel', payload: { n: 0 } })).rejects.toThrow('Failed to post message');
+    expect(await rejecting.nextSequence('race-reject')).toBe(0);
+    // fetch threw: the envelope may have been stored, so the gap stays rather than risk reuse
+    const throwing = await SwarmClient.init({ hubUrl, keyPair: a.keyPair, name: 'Seq-Race-3', fetch: async (input: any, init?: RequestInit) => {
+      const u = String(typeof input === 'string' ? input : input.url);
+      if (init?.method === 'POST' && u.includes('/messages')) throw new Error('network down');
+      return customFetch(input, init);
+    } });
+    await expect(throwing.postMessage({ channel: 'race-throw', type: 'intel', payload: { n: 0 } })).rejects.toThrow('network down');
+    expect(await throwing.nextSequence('race-throw')).toBe(1);
+  });
+
+  it('never repeats a counter when a rejected post overlaps a later successful one', async () => {
+    const delayed = async (input: any, init?: RequestInit): Promise<Response> => {
+      const u = String(typeof input === 'string' ? input : input.url);
+      if (init?.method === 'POST' && u.includes('race-overlap')) {
+        const body = JSON.parse(String(init.body));
+        if ((body.payload as any)?.n === 0) {
+          // the first post is slow and the relay rejects it; the second post lands first
+          await new Promise((r) => setTimeout(r, 100));
+          return new Response('boom', { status: 500 });
+        }
+      }
+      return customFetch(input, init);
+    };
+    const a = await SwarmClient.init({ hubUrl, name: 'Seq-Race-4', fetch: delayed });
+    const [first, second] = await Promise.allSettled([
+      a.postMessage({ channel: 'race-overlap', type: 'intel', payload: { n: 0 } }),
+      a.postMessage({ channel: 'race-overlap', type: 'intel', payload: { n: 1 } }),
+    ]);
+    expect(first.status).toBe('rejected');
+    expect(second.status).toBe('fulfilled');
+    expect((second as any).value.sequence).toBe(1);
+    // the rejected counter stays a gap: a later counter is already out, so no rollback
+    expect(await a.nextSequence('race-overlap')).toBe(2);
+    const stored = await a.getMessages('race-overlap', { limit: 200 });
+    const mine = stored.filter((m) => m.sender === a.agentId).map((m) => m.sequence);
+    expect(mine).toEqual([1]);
   });
 
   it('resumes signed sequences for DMs and private vault posts with the same key', async () => {

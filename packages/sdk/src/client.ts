@@ -335,6 +335,7 @@ export class SwarmClient {
 
     if (!res.ok) {
       const err = await res.text();
+      await this.releaseSequence(channelSlug, sequence);
       throw new Error(`Failed to post to private vault: ${err}`);
     }
 
@@ -402,6 +403,7 @@ export class SwarmClient {
 
     if (!res.ok) {
       const err = await res.text();
+      await this.releaseSequence(params.channel, sequence);
       // status lets callers report the failure class without echoing the body.
       throw Object.assign(new Error(`Failed to post message: ${err}`), { status: res.status });
     }
@@ -411,8 +413,26 @@ export class SwarmClient {
   }
 
   private sequences = new Map<string, number>();
-  /** Per-channel reservation chains; only the tail promise is kept, so the map stays one entry per channel. */
+  /** Per-channel counter-operation chains; only the tail promise is kept, so the map stays one entry per channel. */
   private sequenceQueues = new Map<string, Promise<void>>();
+
+  /**
+   * Run `fn` serialized with every other counter operation on the channel,
+   * so a reservation or a rollback observes the counter atomically. A
+   * failure inside `fn` releases the chain; it can never wedge it.
+   */
+  private async withSequenceLock<T>(channel: string, fn: () => Promise<T> | T): Promise<T> {
+    const previous = this.sequenceQueues.get(channel) ?? Promise.resolve();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    this.sequenceQueues.set(channel, previous.then(() => gate));
+    await previous;
+    try {
+      return await fn();
+    } finally {
+      release();
+    }
+  }
 
   /**
    * The signed per-channel counter is the author's and the auditor treats
@@ -424,8 +444,13 @@ export class SwarmClient {
    * and the counter advances at reservation time, not after the POST
    * returns. Overlapping posts used to observe the same cached counter (or
    * compute the same base from one record fetch) and sign the same counter
-   * twice. A failed POST now leaves a gap, never a reuse; gaps are visible
-   * in the audit, reuse weakens it.
+   * twice. A post the relay rejects hands its counter back when no later
+   * counter is out, since the envelope was never stored; a post whose
+   * request itself fails leaves a gap, never a reuse, because the envelope
+   * may have been stored. Gaps are visible in the audit; reuse weakens it.
+   *
+   * Calling this method consumes a counter whether or not the caller posts
+   * with it. Do not call it to peek: a peeked counter becomes a gap.
    */
   async nextSequence(channel: string): Promise<number> {
     return this.reserveSequence(channel);
@@ -439,12 +464,7 @@ export class SwarmClient {
    * caller's retry and leaves the counter alone.
    */
   private async reserveSequence(channel: string, explicit?: number): Promise<number> {
-    const previous = this.sequenceQueues.get(channel) ?? Promise.resolve();
-    let release!: () => void;
-    const gate = new Promise<void>((resolve) => { release = resolve; });
-    this.sequenceQueues.set(channel, previous.then(() => gate));
-    await previous;
-    try {
+    return this.withSequenceLock(channel, async () => {
       if (explicit !== undefined) {
         const known = this.sequences.get(channel);
         if (known === undefined || known <= explicit) this.sequences.set(channel, explicit + 1);
@@ -469,9 +489,23 @@ export class SwarmClient {
       const next = nextSequenceFor(this.agentId, rec.messages);
       this.sequences.set(channel, next + 1);
       return next;
-    } finally {
-      release();
-    }
+    });
+  }
+
+  /**
+   * Hand a reserved counter back after the relay answered with a rejection:
+   * the envelope was never stored, so reusing the counter is not reuse in
+   * the record. Only safe when no later reservation has been made on the
+   * channel; otherwise the gap stays, since a later counter is already out.
+   * Call only when the relay answered — if `fetch` itself threw, the
+   * envelope may have been stored and the gap is the honest outcome.
+   */
+  private async releaseSequence(channel: string, sequence: number): Promise<void> {
+    await this.withSequenceLock(channel, () => {
+      if (this.sequences.get(channel) === sequence + 1) {
+        this.sequences.set(channel, sequence);
+      }
+    });
   }
 
   /**
@@ -534,6 +568,7 @@ export class SwarmClient {
 
     if (!res.ok) {
       const err = await res.text();
+      await this.releaseSequence(dmChannel, sequence);
       throw new Error(`Failed to post encrypted DM: ${err}`);
     }
 
