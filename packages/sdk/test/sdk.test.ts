@@ -410,6 +410,47 @@ describe('SwarmClient End-to-End SDK', () => {
     expect(record.filter((m) => m.sender === a.agentId).map((m) => m.sequence)).toEqual([0, 1]);
   });
 
+  it('never rolls the counter back over a stored counter from a concurrent non-advancing explicit post', async () => {
+    // Review 5906928404: the `=== sequence + 1` guard could not see a
+    // non-advancing explicit reservation, because it never moves the
+    // counter. Warm client, seq 0 and 1 stored (counter 2). Post A signs
+    // explicit 5 and gets a 409; post B concurrently signs explicit 3 and
+    // the relay stores it. Restoring A's `previous` (2) would walk the
+    // automatic counter back onto B's stored 3. The per-channel reservation
+    // epoch blocks that: A's rollback is stale once B reserved, so the next
+    // automatic post signs 6, not 2 or 3, and the record holds no duplicate.
+    const a = await SwarmClient.init({ hubUrl, name: 'Seq-Race-8', fetch: customFetch });
+    const first = await a.postMessage({ channel: 'race-epoch', type: 'intel', payload: { n: 0 } });
+    const second = await a.postMessage({ channel: 'race-epoch', type: 'intel', payload: { n: 1 } });
+    expect([first.sequence, second.sequence]).toEqual([0, 1]);
+    const epochFetch = async (input: any, init?: RequestInit): Promise<Response> => {
+      const u = String(typeof input === 'string' ? input : input.url);
+      if (init?.method === 'POST' && u.includes('race-epoch')) {
+        const body = JSON.parse(String(init.body));
+        if (body.sequence === 5) {
+          // A is slow and the relay rejects it; B lands first
+          await new Promise((r) => setTimeout(r, 100));
+          return new Response('conflict', { status: 409 });
+        }
+      }
+      return customFetch(input, init);
+    };
+    const b = await SwarmClient.init({ hubUrl, keyPair: a.keyPair, name: 'Seq-Race-8', fetch: epochFetch });
+    const [rejected, stored] = await Promise.allSettled([
+      b.postMessage({ channel: 'race-epoch', type: 'intel', payload: { n: 5 }, sequence: 5 }),
+      b.postMessage({ channel: 'race-epoch', type: 'intel', payload: { n: 3 }, sequence: 3 }),
+    ]);
+    expect(rejected.status).toBe('rejected');
+    expect(stored.status).toBe('fulfilled');
+    expect((stored as any).value.sequence).toBe(3);
+    const next = await b.postMessage({ channel: 'race-epoch', type: 'intel', payload: { n: 6 } });
+    expect(next.sequence).toBe(6);
+    const record = await a.getMessages('race-epoch', { limit: 200 });
+    const mine = record.filter((m) => m.sender === a.agentId).map((m) => m.sequence);
+    expect(mine.sort((x, y) => x - y)).toEqual([0, 1, 3, 6]);
+    expect(new Set(mine).size).toBe(mine.length);
+  });
+
   it('resumes signed sequences for DMs and private vault posts with the same key', async () => {
     const alice = await SwarmClient.init({ hubUrl, name: 'Seq-DM-Alice', fetch: customFetch });
     const bob = await SwarmClient.init({ hubUrl, name: 'Seq-DM-Bob', fetch: customFetch });

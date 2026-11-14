@@ -312,7 +312,7 @@ export class SwarmClient {
     payload: Record<string, unknown> | string
   ): Promise<MessageEnvelope> {
     const { ciphertext, nonce } = await encryptForPrivateChannel(payload, channelKeyHex);
-    const { sequence, advanced, previous } = await this.reserveSequence(channelSlug);
+    const { sequence, advanced, previous, epoch } = await this.reserveSequence(channelSlug);
 
     const envelope = await signEnvelope(
       {
@@ -336,7 +336,7 @@ export class SwarmClient {
     if (!res.ok) {
       const err = await res.text();
       if (advanced && res.status >= 400 && res.status < 500) {
-        await this.releaseSequence(channelSlug, sequence, previous);
+        await this.releaseSequence(channelSlug, previous, epoch);
       }
       throw new Error(`Failed to post to private vault: ${err}`);
     }
@@ -384,7 +384,7 @@ export class SwarmClient {
     /** explicit signed counter; by default the next one after this key's last stored envelope in the channel */
     sequence?: number;
   }): Promise<MessageEnvelope<T>> {
-    const { sequence, advanced, previous } = await this.reserveSequence(params.channel, params.sequence);
+    const { sequence, advanced, previous, epoch } = await this.reserveSequence(params.channel, params.sequence);
     const envelope = await signEnvelope(
       {
         channel: params.channel,
@@ -406,7 +406,7 @@ export class SwarmClient {
     if (!res.ok) {
       const err = await res.text();
       if (advanced && res.status >= 400 && res.status < 500) {
-        await this.releaseSequence(params.channel, sequence, previous);
+        await this.releaseSequence(params.channel, previous, epoch);
       }
       // status lets callers report the failure class without echoing the body.
       throw Object.assign(new Error(`Failed to post message: ${err}`), { status: res.status });
@@ -417,6 +417,8 @@ export class SwarmClient {
   }
 
   private sequences = new Map<string, number>();
+  /** Per-channel reservation epoch, bumped by every `reserveSequence` call — advancing or not — so a rollback can tell whether any later reservation happened since this one. */
+  private sequenceEpochs = new Map<string, number>();
   /** Per-channel counter-operation chains; only the tail promise is kept, so the map stays one entry per channel. */
   private sequenceQueues = new Map<string, Promise<void>>();
 
@@ -472,8 +474,11 @@ export class SwarmClient {
    *
    * Returns whether this reservation advanced the counter, plus the cached
    * counter value before the reservation (`undefined` when the client had
-   * none — a cold client, or one that just read the record). Only a
-   * reservation that advanced it may ever be handed back: a retry below the
+   * none — a cold client, or one that just read the record), plus the
+   * reservation epoch for this channel: a per-channel counter bumped by
+   * every reservation, advancing or not, so a rollback can tell whether
+   * any later reservation happened since this one. Only a reservation
+   * that advanced the counter may ever be handed back: a retry below the
    * reserved position signs a counter that may already be stored, so
    * rolling the counter back onto it would re-sign a stored counter. And a
    * cold client's explicit reservation must not be handed back onto the
@@ -482,20 +487,29 @@ export class SwarmClient {
    * key, and the next automatic post must re-read the record instead of
    * trusting the explicit value.
    */
-  private async reserveSequence(channel: string, explicit?: number): Promise<{ sequence: number; advanced: boolean; previous: number | undefined }> {
+  private async reserveSequence(channel: string, explicit?: number): Promise<{ sequence: number; advanced: boolean; previous: number | undefined; epoch: number }> {
     return this.withSequenceLock(channel, async () => {
+      // Every reservation — advancing or not — bumps the per-channel epoch,
+      // so a later rollback can tell whether any reservation happened since
+      // this one. A non-advancing explicit reservation does not move the
+      // counter, so the old `sequences.get(channel) === sequence + 1` guard
+      // could not see it: an advancing reservation rejected after such a
+      // post was stored could roll the counter back onto that stored
+      // counter. The epoch replaces that guard entirely.
+      const epoch = (this.sequenceEpochs.get(channel) ?? 0) + 1;
+      this.sequenceEpochs.set(channel, epoch);
       if (explicit !== undefined) {
         const known = this.sequences.get(channel);
         if (known === undefined || known <= explicit) {
           this.sequences.set(channel, explicit + 1);
-          return { sequence: explicit, advanced: true, previous: known };
+          return { sequence: explicit, advanced: true, previous: known, epoch };
         }
-        return { sequence: explicit, advanced: false, previous: known };
+        return { sequence: explicit, advanced: false, previous: known, epoch };
       }
       const known = this.sequences.get(channel);
       if (known !== undefined) {
         this.sequences.set(channel, known + 1);
-        return { sequence: known, advanced: true, previous: known };
+        return { sequence: known, advanced: true, previous: known, epoch };
       }
       // Fail closed: an unreachable or truncated record is exactly when this key
       // may already have history, and signing 0 there is counter reuse. Only an
@@ -504,13 +518,13 @@ export class SwarmClient {
       try {
         rec = await fetchChannelRecord(this.hubUrl, channel, { fetchImpl: this.fetchImpl as any });
       } catch (e) {
-        if (/ 404$/.test((e as Error).message)) { this.sequences.set(channel, 1); return { sequence: 0, advanced: true, previous: undefined }; }
+        if (/ 404$/.test((e as Error).message)) { this.sequences.set(channel, 1); return { sequence: 0, advanced: true, previous: undefined, epoch }; }
         throw new Error(`cannot determine the next signed sequence for #${channel}: ${(e as Error).message}; pass sequence explicitly only if you know it`);
       }
       if (rec.truncated) throw new Error(`cannot determine the next signed sequence for #${channel}: record truncated (${rec.reason})`);
       const next = nextSequenceFor(this.agentId, rec.messages);
       this.sequences.set(channel, next + 1);
-      return { sequence: next, advanced: true, previous: undefined };
+      return { sequence: next, advanced: true, previous: undefined, epoch };
     });
   }
 
@@ -518,21 +532,23 @@ export class SwarmClient {
    * Hand a reserved counter back after the relay answered with a 4xx
    * rejection: the envelope was never stored, so reusing the counter is not
    * reuse in the record. Only safe when no later reservation has been made
-   * on the channel; otherwise the gap stays, since a later counter is
-   * already out. The cached counter is restored to the value the
-   * reservation found (`previous`); when there was none, the entry is
-   * deleted, so the next automatic post re-reads the record instead of
-   * trusting a value this client never verified. Callers must only call
-   * this when the reservation advanced the counter and the relay answered
-   * 4xx: a retry below the reserved position signs a counter that may
-   * already be stored, and a 5xx can arrive after the envelope was stored,
-   * so in both cases the gap is the honest outcome. Call only when the
-   * relay answered — if `fetch` itself threw, the envelope may have been
-   * stored and the gap stays too.
+   * on the channel since this one — checked with the reservation epoch, not
+   * the counter value: a non-advancing explicit reservation leaves no trace
+   * in the counter, yet a post it stored still makes a rollback unsafe.
+   * Otherwise the gap stays, since a later counter is already out. The
+   * cached counter is restored to the value the reservation found
+   * (`previous`); when there was none, the entry is deleted, so the next
+   * automatic post re-reads the record instead of trusting a value this
+   * client never verified. Callers must only call this when the reservation
+   * advanced the counter and the relay answered 4xx: a retry below the
+   * reserved position signs a counter that may already be stored, and a 5xx
+   * can arrive after the envelope was stored, so in both cases the gap is
+   * the honest outcome. Call only when the relay answered — if `fetch`
+   * itself threw, the envelope may have been stored and the gap stays too.
    */
-  private async releaseSequence(channel: string, sequence: number, previous: number | undefined): Promise<void> {
+  private async releaseSequence(channel: string, previous: number | undefined, epoch: number): Promise<void> {
     await this.withSequenceLock(channel, () => {
-      if (this.sequences.get(channel) === sequence + 1) {
+      if (this.sequenceEpochs.get(channel) === epoch) {
         if (previous === undefined) {
           this.sequences.delete(channel);
         } else {
@@ -578,7 +594,7 @@ export class SwarmClient {
 
     const participants = [this.agentId, recipientAgentId].sort();
     const dmChannel = `dm-${participants[0].slice(6, 14)}-${participants[1].slice(6, 14)}`;
-    const { sequence, advanced, previous } = await this.reserveSequence(dmChannel);
+    const { sequence, advanced, previous, epoch } = await this.reserveSequence(dmChannel);
 
     const envelope = await signEnvelope(
       {
@@ -603,7 +619,7 @@ export class SwarmClient {
     if (!res.ok) {
       const err = await res.text();
       if (advanced && res.status >= 400 && res.status < 500) {
-        await this.releaseSequence(dmChannel, sequence, previous);
+        await this.releaseSequence(dmChannel, previous, epoch);
       }
       throw new Error(`Failed to post encrypted DM: ${err}`);
     }
