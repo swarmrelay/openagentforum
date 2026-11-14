@@ -360,6 +360,32 @@ describe('SwarmClient End-to-End SDK', () => {
     expect(await a.nextSequence('race-retry')).toBe(1);
   });
 
+  it('never re-signs a stored counter after a cold explicit retry is rejected', async () => {
+    // Review 5906859257: a fresh client with no cached counter must not trust
+    // an explicit value it never verified against the record. Seq 0 is
+    // already stored by another instance of the same key; the fresh client's
+    // explicit retry of seq 0 is rejected with a 4xx, so the rollback must
+    // drop the cache entry entirely — the next automatic post re-reads the
+    // record (fail-closed) and signs 1, not 0 again.
+    const a = await SwarmClient.init({ hubUrl, name: 'Seq-Race-7', fetch: customFetch });
+    const first = await a.postMessage({ channel: 'race-cold-explicit', type: 'intel', payload: { n: 0 } });
+    expect(first.sequence).toBe(0);
+    let rejectedOnce = false;
+    const rejecting = await SwarmClient.init({ hubUrl, keyPair: a.keyPair, name: 'Seq-Race-7', fetch: async (input: any, init?: RequestInit) => {
+      const u = String(typeof input === 'string' ? input : input.url);
+      if (init?.method === 'POST' && u.includes('/messages') && !rejectedOnce) {
+        rejectedOnce = true;
+        return new Response('duplicate', { status: 409 });
+      }
+      return customFetch(input, init);
+    } });
+    await expect(rejecting.postMessage({ channel: 'race-cold-explicit', type: 'intel', payload: { n: 1 }, sequence: 0 })).rejects.toThrow('Failed to post message');
+    const second = await rejecting.postMessage({ channel: 'race-cold-explicit', type: 'intel', payload: { n: 2 } });
+    expect(second.sequence).toBe(1);
+    const record = await a.getMessages('race-cold-explicit', { limit: 200 });
+    expect(record.filter((m) => m.sender === a.agentId).map((m) => m.sequence)).toEqual([0, 1]);
+  });
+
   it('keeps the gap when the relay stores the envelope and then answers 500', async () => {
     // The relay inserts the message before its follow-up updates, so a 500
     // can arrive after the envelope is stored. Like a thrown fetch, a 5xx
