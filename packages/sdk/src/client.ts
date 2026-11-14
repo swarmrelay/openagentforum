@@ -339,7 +339,6 @@ export class SwarmClient {
     }
 
     const data = (await res.json()) as { success: boolean; envelope: MessageEnvelope };
-    this.sequences.set(channelSlug, sequence + 1);
     return data.envelope;
   }
 
@@ -382,7 +381,7 @@ export class SwarmClient {
     /** explicit signed counter; by default the next one after this key's last stored envelope in the channel */
     sequence?: number;
   }): Promise<MessageEnvelope<T>> {
-    const sequence = params.sequence ?? (await this.nextSequence(params.channel));
+    const sequence = await this.reserveSequence(params.channel, params.sequence);
     const envelope = await signEnvelope(
       {
         channel: params.channel,
@@ -408,35 +407,71 @@ export class SwarmClient {
     }
 
     const data = (await res.json()) as { success: boolean; envelope: MessageEnvelope<T> };
-    this.sequences.set(params.channel, sequence + 1);
     return data.envelope;
   }
 
   private sequences = new Map<string, number>();
+  /** Per-channel reservation chains; only the tail promise is kept, so the map stays one entry per channel. */
+  private sequenceQueues = new Map<string, Promise<void>>();
 
   /**
    * The signed per-channel counter is the author's and the auditor treats
    * reuse as a weakened ledger, so a client must never start at 0 twice.
    * First post per channel: read the record and continue after this key's
    * highest stored sequence; afterwards count locally.
+   *
+   * Each call reserves one counter: reservations are serialized per channel
+   * and the counter advances at reservation time, not after the POST
+   * returns. Overlapping posts used to observe the same cached counter (or
+   * compute the same base from one record fetch) and sign the same counter
+   * twice. A failed POST now leaves a gap, never a reuse; gaps are visible
+   * in the audit, reuse weakens it.
    */
   async nextSequence(channel: string): Promise<number> {
-    const known = this.sequences.get(channel);
-    if (known !== undefined) return known;
-    // Fail closed: an unreachable or truncated record is exactly when this key
-    // may already have history, and signing 0 there is counter reuse. Only an
-    // empty channel (or one the relay does not have yet) is an honest 0.
-    let rec;
+    return this.reserveSequence(channel);
+  }
+
+  /**
+   * Reserve a signed counter: the next one, or an explicit one claimed by a
+   * caller that knows its counter. An explicit counter at or above the
+   * reserved position advances the local counter past it, so later automatic
+   * counters cannot collide with it; an explicit counter below it is the
+   * caller's retry and leaves the counter alone.
+   */
+  private async reserveSequence(channel: string, explicit?: number): Promise<number> {
+    const previous = this.sequenceQueues.get(channel) ?? Promise.resolve();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    this.sequenceQueues.set(channel, previous.then(() => gate));
+    await previous;
     try {
-      rec = await fetchChannelRecord(this.hubUrl, channel, { fetchImpl: this.fetchImpl as any });
-    } catch (e) {
-      if (/ 404$/.test((e as Error).message)) { this.sequences.set(channel, 0); return 0; }
-      throw new Error(`cannot determine the next signed sequence for #${channel}: ${(e as Error).message}; pass sequence explicitly only if you know it`);
+      if (explicit !== undefined) {
+        const known = this.sequences.get(channel);
+        if (known === undefined || known <= explicit) this.sequences.set(channel, explicit + 1);
+        return explicit;
+      }
+      const known = this.sequences.get(channel);
+      if (known !== undefined) {
+        this.sequences.set(channel, known + 1);
+        return known;
+      }
+      // Fail closed: an unreachable or truncated record is exactly when this key
+      // may already have history, and signing 0 there is counter reuse. Only an
+      // empty channel (or one the relay does not have yet) is an honest 0.
+      let rec;
+      try {
+        rec = await fetchChannelRecord(this.hubUrl, channel, { fetchImpl: this.fetchImpl as any });
+      } catch (e) {
+        if (/ 404$/.test((e as Error).message)) { this.sequences.set(channel, 1); return 0; }
+        throw new Error(`cannot determine the next signed sequence for #${channel}: ${(e as Error).message}; pass sequence explicitly only if you know it`);
+      }
+      if (rec.truncated) throw new Error(`cannot determine the next signed sequence for #${channel}: record truncated (${rec.reason})`);
+      const next = nextSequenceFor(this.agentId, rec.messages);
+      this.sequences.set(channel, next + 1);
+      return next;
+    } finally {
+      release();
     }
-    if (rec.truncated) throw new Error(`cannot determine the next signed sequence for #${channel}: record truncated (${rec.reason})`);
-    const next = nextSequenceFor(this.agentId, rec.messages);
-    this.sequences.set(channel, next);
-    return next;
   }
 
   /**
@@ -503,7 +538,6 @@ export class SwarmClient {
     }
 
     const data = (await res.json()) as { success: boolean; envelope: MessageEnvelope };
-    this.sequences.set(dmChannel, sequence + 1);
     return data.envelope;
   }
 

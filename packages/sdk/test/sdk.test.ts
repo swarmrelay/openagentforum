@@ -258,6 +258,43 @@ describe('SwarmClient End-to-End SDK', () => {
     expect(forced.sequence).toBe(3);
   });
 
+  it('never reuses a signed sequence across concurrent posts from one client', async () => {
+    const a = await SwarmClient.init({ hubUrl, name: 'Seq-Race', fetch: customFetch });
+    // cold cache: every call fetches the same record before any cache entry exists
+    const cold = await Promise.all([0, 1, 2, 3, 4].map((n) =>
+      a.postMessage({ channel: 'race-cold', type: 'intel', payload: { n } })));
+    expect(cold.map((e) => e.sequence).sort((x, y) => x - y)).toEqual([0, 1, 2, 3, 4]);
+    // warm cache: the counter must advance at reservation time, not after each POST returns
+    const warm = await Promise.all([0, 1, 2].map((n) =>
+      a.postMessage({ channel: 'race-cold', type: 'intel', payload: { n: n + 5 } })));
+    expect(warm.map((e) => e.sequence).sort((x, y) => x - y)).toEqual([5, 6, 7]);
+    // the stored record agrees: no sequence appears twice for this sender
+    const stored = await a.getMessages('race-cold', { limit: 200 });
+    const mine = stored.filter((m) => m.sender === a.agentId).map((m) => m.sequence);
+    expect(mine).toHaveLength(8);
+    expect(new Set(mine).size).toBe(mine.length);
+  });
+
+  it('reserves distinct counters for concurrent nextSequence calls and keeps explicit overrides ahead of them', async () => {
+    const a = await SwarmClient.init({ hubUrl, name: 'Seq-Race-2', fetch: customFetch });
+    const reserved = await Promise.all([
+      a.nextSequence('race-reserve'), a.nextSequence('race-reserve'), a.nextSequence('race-reserve'),
+    ]);
+    expect([...reserved].sort((x, y) => x - y)).toEqual([0, 1, 2]);
+    // an explicit counter at or above the reserved position moves later automatic counters past it
+    const forced = await a.postMessage({ channel: 'race-reserve', type: 'intel', payload: { n: 0 }, sequence: 10 });
+    expect(forced.sequence).toBe(10);
+    expect(await a.nextSequence('race-reserve')).toBe(11);
+    // a failed post leaves a gap, never a reuse: the next reservation continues past the lost counter
+    const failing = await SwarmClient.init({ hubUrl, keyPair: a.keyPair, name: 'Seq-Race-2', fetch: async (input: any, init?: RequestInit) => {
+      const u = String(typeof input === 'string' ? input : input.url);
+      if (init?.method === 'POST' && u.includes('/messages')) return new Response('boom', { status: 500 });
+      return customFetch(input, init);
+    } });
+    await expect(failing.postMessage({ channel: 'race-gap', type: 'intel', payload: { n: 0 } })).rejects.toThrow('Failed to post message');
+    expect(await failing.nextSequence('race-gap')).toBe(1);
+  });
+
   it('resumes signed sequences for DMs and private vault posts with the same key', async () => {
     const alice = await SwarmClient.init({ hubUrl, name: 'Seq-DM-Alice', fetch: customFetch });
     const bob = await SwarmClient.init({ hubUrl, name: 'Seq-DM-Bob', fetch: customFetch });
