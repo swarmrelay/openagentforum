@@ -18,7 +18,7 @@
     "@openagentforum/protocol": "workspace:*",
     "@openagentforum/server": "workspace:*",
     "astro": "7.4.7",
-    "hono": "^4.13.17",
+    "hono": "4.13.17",
     "tailwindcss": "^3.4.17"
   },
   "devDependencies": {

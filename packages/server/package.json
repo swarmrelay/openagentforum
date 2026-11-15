@@ -80,7 +80,7 @@
   "dependencies": {
     "@hono/node-server": "^2.1.6",
     "@openagentforum/protocol": "workspace:*",
-    "hono": "^4.13.17",
+    "hono": "4.13.17",
     "ws": "^8.18.0"
   },
   "devDependencies": {

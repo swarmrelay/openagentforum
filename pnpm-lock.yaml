@@ -10,6 +10,7 @@ overrides:
   postcss-selector-parser@6.1.4: 7.1.6
   sharp@0.35.4: 0.35.5
   astro@7.4.7>http-cache-semantics: '-'
+  hono: 4.13.17
 
 patchedDependencies:
   astro@7.4.7:
@@ -57,8 +58,8 @@ importers:
         specifier: 7.4.7
         version: 7.4.7(patch_hash=bd19c7e21a287179661bb85051b903a9456180c14ebcae648235c4eba25f715e)(@types/node@22.20.1)(esbuild@0.28.2)(jiti@1.21.7)(tsx@4.23.13)(yaml@2.9.1)
       hono:
-        specifier: ^4.13.17
-        version: 4.13.18
+        specifier: 4.13.17
+        version: 4.13.17
       tailwindcss:
         specifier: ^3.4.17
         version: 3.4.19(tsx@4.23.13)(yaml@2.9.1)
@@ -150,7 +151,7 @@ importers:
     dependencies:
       '@hono/node-server':
         specifier: ^2.1.6
-        version: 2.1.6(hono@4.13.18)
+        version: 2.1.6(hono@4.13.17)
       '@openagentforum/mcp':
         specifier: workspace:*
         version: link:../mcp
@@ -320,7 +321,7 @@ importers:
     devDependencies:
       '@hono/node-server':
         specifier: 2.1.6
-        version: 2.1.6(hono@4.13.18)
+        version: 2.1.6(hono@4.13.17)
       '@openagentforum/server':
         specifier: workspace:*
         version: link:../server
@@ -435,7 +436,7 @@ importers:
     devDependencies:
       '@hono/node-server':
         specifier: ^2.1.6
-        version: 2.1.6(hono@4.13.18)
+        version: 2.1.6(hono@4.13.17)
       '@openagentforum/server':
         specifier: workspace:*
         version: link:../server
@@ -453,13 +454,13 @@ importers:
     dependencies:
       '@hono/node-server':
         specifier: ^2.1.6
-        version: 2.1.6(hono@4.13.18)
+        version: 2.1.6(hono@4.13.17)
       '@openagentforum/protocol':
         specifier: workspace:*
         version: link:../protocol
       hono:
-        specifier: ^4.13.17
-        version: 4.13.18
+        specifier: 4.13.17
+        version: 4.13.17
       ws:
         specifier: ^8.18.0
         version: 8.21.3
@@ -1142,7 +1143,7 @@ packages:
     resolution: {integrity: sha512-p/KH9MnfNcsm3sR6x4lNgm5j+QN4Et8srKredl9DZfXiyZ1UQ3aQ2YVpFLbqktYN5JI+DB+VZFKM2PqE5hLKjQ==}
     engines: {node: '>=20'}
     peerDependencies:
-      hono: ^4 || ^5.0.0-0
+      hono: 4.13.17
 
   '@img/colour@1.1.0':
     resolution: {integrity: sha512-Td76q7j57o/tLVdgS746cYARfSyxk8iEfRxewL9h4OMzYhbW4TAcppl0mT4eyqXddh6L/jwoM75mo7ixa/pCeQ==}
@@ -2396,8 +2397,8 @@ packages:
   hast-util-whitespace@3.0.0:
     resolution: {integrity: sha512-88JUN06ipLwsnv+dVn+OIYOvAuvBMy/Qoi6O7mQHxdPXpjy+Cd6xRkWwux7DKO+4sYILtLBRIKgsdpS2gQc7qw==}
 
-  hono@4.13.18:
-    resolution: {integrity: sha512-H9q/E1XizaWstJxUW881dmLxEj+t/TrGGnyxINkm4+sK0qUwsMtFdo2BWI9Vs3cIS19MU6b6iCijoUoEf4f3DA==}
+  hono@4.13.17:
+    resolution: {integrity: sha512-vZIcbkvjOR5hHRWERbGkr8fGfF0GGM1ooYkuH448iO3b2AdVEr3AXZSw4Z3Kn+1L5z0CVoVeyV29VGYmFh05kQ==}
     engines: {node: '>=16.9.0'}
 
   html-escaper@3.0.3:
@@ -4101,9 +4102,9 @@ snapshots:
   '@esbuild/win32-x64@0.28.2':
     optional: true
 
-  '@hono/node-server@2.1.6(hono@4.13.18)':
+  '@hono/node-server@2.1.6(hono@4.13.17)':
     dependencies:
-      hono: 4.13.18
+      hono: 4.13.17
 
   '@img/colour@1.1.0': {}
 
@@ -4427,7 +4428,7 @@ snapshots:
 
   '@modelcontextprotocol/sdk@1.32.1(zod@4.6.7)':
     dependencies:
-      '@hono/node-server': 2.1.6(hono@4.13.18)
+      '@hono/node-server': 2.1.6(hono@4.13.17)
       ajv: 8.20.0
       ajv-formats: 3.0.1(ajv@8.20.0)
       content-type: 1.0.5
@@ -4437,7 +4438,7 @@ snapshots:
       eventsource-parser: 3.1.1
       express: 5.2.1
       express-rate-limit: 8.7.0(express@5.2.1)
-      hono: 4.13.18
+      hono: 4.13.17
       jose: 6.2.12
       json-schema-typed: 8.0.2
       pkce-challenge: 5.0.1
@@ -5520,7 +5521,7 @@ snapshots:
     dependencies:
       '@types/hast': 3.0.5
 
-  hono@4.13.18: {}
+  hono@4.13.17: {}
 
   html-escaper@3.0.3: {}
 
