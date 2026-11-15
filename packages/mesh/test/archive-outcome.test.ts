@@ -2,24 +2,78 @@ import { describe, expect, it } from 'vitest';
 import { classifyArchiveFailure } from '../src/archive-outcome.js';
 
 describe('classifyArchiveFailure (#240)', () => {
-  // The hub refuses these exact bytes deterministically: re-posting the
-  // same signed envelope can never succeed, so the bridges drop it.
-  for (const status of [400, 403, 413, 415]) {
-    it(`drops ${status} permanently`, () => {
-      expect(classifyArchiveFailure(status)).toBe('permanent');
-    });
-  }
-
-  it('keeps the 409 id conflict distinct (#35)', () => {
+  it('keeps the 409 id conflict distinct (#35), whatever the body', () => {
     expect(classifyArchiveFailure(409)).toBe('conflict');
+    expect(classifyArchiveFailure(409, { error: 'Envelope id is already bound to a different envelope' })).toBe('conflict');
+    expect(classifyArchiveFailure(409, '<html>edge</html>')).toBe('conflict');
+  });
+
+  // 400: every hub error on this route is a function of the bytes —
+  // invalid input, malformed envelope, sequence/timestamp types,
+  // channel mismatch, malformed encryption metadata.
+  it.each([
+    ['input-policy code', { error: 'invalid_public_input', code: 'invalid_public_input' }],
+    ['malformed envelope (Worker wording)', { error: 'Malformed MessageEnvelope. Required fields: id, sender, type, payload, signature, checksum' }],
+    ['malformed envelope (Pages wording)', { error: 'Malformed MessageEnvelope. Required: id, sender, type, payload, signature, checksum' }],
+    ['sequence/timestamp types', { error: 'sequence and timestamp must be numbers and are part of the sign string' }],
+    ['channel mismatch', { error: 'Envelope channel general does not match URL channel intel-exchange' }],
+    ['invalid encryption metadata', { error: 'Encrypted envelopes require ciphertext and valid encryption metadata', reason: 'invalid_encryption_metadata' }],
+    ['invalid envelope metadata', { error: 'Encrypted envelopes require ciphertext and valid encryption metadata', reason: 'invalid_envelope_metadata' }],
+  ])('drops a 400 permanently: %s', (_name, body) => {
+    expect(classifyArchiveFailure(400, body)).toBe('permanent');
+  });
+
+  // 403: only the verification signals are permanent — the Pages exact
+  // strings and the Worker / standalone verifyEnvelope wraps.
+  it.each([
+    ['Pages checksum mismatch', { error: 'Payload checksum mismatch (payload does not match signed checksum)' }],
+    ['Pages invalid signature', { error: 'Invalid Ed25519 signature' }],
+    ['Worker verification wrap', { error: 'Cryptographic validation failed: Payload checksum mismatch (data was modified in transit)' }],
+    ['standalone verification wrap', { error: 'Validation failed: Payload checksum mismatch (data was modified in transit)' }],
+  ])('drops a 403 permanently: %s', (_name, body) => {
+    expect(classifyArchiveFailure(403, body)).toBe('permanent');
+  });
+
+  // The blocking review cases: an edge/WAF 403 (HTML body), an empty
+  // body, and a hub JSON policy 403 must all retry — dropping on any
+  // of them would silently lose valid signed envelopes.
+  it('retries a 403 with an HTML body (edge/WAF refusal)', () => {
+    expect(classifyArchiveFailure(403, '<html><body>Error 1010</body></html>')).toBe('retry');
+  });
+  it('retries a 403 with an empty body', () => {
+    expect(classifyArchiveFailure(403, undefined)).toBe('retry');
+    expect(classifyArchiveFailure(403, '')).toBe('retry');
+  });
+  it('retries a hub JSON policy 403', () => {
+    expect(classifyArchiveFailure(403, { error: 'Channel now requires encryption', reason: 'encryption_required' })).toBe('retry');
+    expect(classifyArchiveFailure(403, { error: 'Encrypted envelopes require ciphertext and valid encryption metadata', reason: 'encryption_required' })).toBe('retry');
+  });
+
+  // Unknown or state-dependent evidence never drops.
+  it.each([
+    ['403 with an empty JSON object', 403, {}],
+    ['403 with an unknown error string', 403, { error: 'Forbidden' }],
+    ['403 with an unknown code', 403, { error: 'Forbidden', code: 'something_else' }],
+    ['403 with an unknown reason', 403, { error: 'Forbidden', reason: 'something_else' }],
+    ['403 with a JSON array body', 403, []],
+    ['400 with an unknown code', 400, { error: 'Bad input', code: 'unknown_code' }],
+    ['400 with an unknown reason', 400, { error: 'Bad input', reason: 'unknown_reason' }],
+    ['400 with no parsed body', 400, undefined],
+    ['400 with a non-object body', 400, 'bad request'],
+    ['413 bounds refusal (bounds can change)', 413, { error: 'public_input_too_large', code: 'public_input_too_large' }],
+    ['415 framing refusal (request framing, not bytes)', 415, { error: 'unsupported_public_input', code: 'unsupported_public_input' }],
+    ['408 input timeout', 408, { error: 'public_input_timeout', code: 'public_input_timeout' }],
+  ])('retries: %s', (_name, status, body) => {
+    expect(classifyArchiveFailure(status, body)).toBe('retry');
   });
 
   // 401 stays retryable: both bridges re-register the sender before every
   // archive attempt, so a later attempt can succeed. Timeouts, rate
   // limits, hub failures and unlisted statuses keep current behaviour.
-  for (const status of [401, 404, 408, 422, 429, 500, 502, 503]) {
+  for (const status of [401, 404, 422, 429, 500, 502, 503]) {
     it(`retries ${status}`, () => {
       expect(classifyArchiveFailure(status)).toBe('retry');
+      expect(classifyArchiveFailure(status, { error: 'hub error' })).toBe('retry');
     });
   }
 });

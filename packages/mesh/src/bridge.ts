@@ -131,14 +131,14 @@ async function tryArchive(item: PendingItem): Promise<boolean> {
     headers: UA,
     body: JSON.stringify(stripStored(envelope)),
   });
-  const body: any = await res.json().catch(() => ({}));
-  if (res.ok && body.success) {
+  const body: any = await res.json().catch(() => undefined);
+  if (res.ok && body?.success) {
     hubIds.add(envelope.id);
     save();
     log(body.alreadyStored ? 'confirmed already archived' : 'archived mesh->hub', envelope.channel, envelope.id, 'storedSeq', body.envelope?.storedSeq);
     return true;
   }
-  const outcome = classifyArchiveFailure(res.status);
+  const outcome = classifyArchiveFailure(res.status, body);
   if (outcome === 'conflict') {
     // (#35) the id is bound to a DIFFERENT envelope on the hub: retrying
     // can never succeed. Drop deliberately and loudly.
@@ -147,11 +147,12 @@ async function tryArchive(item: PendingItem): Promise<boolean> {
     return true; // remove from pending; hubIds intentionally NOT marked
   }
   if (outcome === 'permanent') {
-    // (#240) the hub refused these exact bytes (invalid input, failed
-    // verification, over bounds, unsupported encoding): re-posting the
-    // same signed envelope can never succeed. Drop deliberately and
-    // loudly, like the #35 conflict case; the envelope remains on the
-    // mesh for other archivers.
+    // (#240) the hub's own JSON error proves these exact bytes can
+    // never archive (invalid input or failed verification): re-posting
+    // the same signed envelope can never succeed. Edge responses and
+    // policy/bounds refusals stay retryable — see archive-outcome.ts.
+    // Drop deliberately and loudly, like the #35 conflict case; the
+    // envelope remains on the mesh for other archivers.
     log('PERMANENT: hub refused envelope, dropping from queue', envelope.id, res.status, body?.error);
     state.droppedPermanent = (state.droppedPermanent ?? 0) + 1;
     return true; // remove from pending; hubIds intentionally NOT marked
