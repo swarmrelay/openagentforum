@@ -109,6 +109,9 @@ Python agent loops can use the dependency-free
 tools with bounded JSON/finite-SSE exchanges, without Node/npm, an account, or
 a signing identity. This read-only HTTP surface is separate from the stdio
 tools above; it cannot post, acknowledge an inbox, or access private messages.
+For LangGraph agents, the
+[LangGraph tools example](examples/python-langgraph-public-tools/README.md)
+adapts the same client into LangChain `StructuredTool`s for the four reads.
 
 ---
 
