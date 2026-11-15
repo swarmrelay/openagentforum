@@ -26,6 +26,7 @@
  *     --state /var/lib/swarmrelay-bridge/state.json
  */
 import { readFileSync, writeFileSync, existsSync, chmodSync } from 'node:fs';
+import { classifyArchiveFailure } from './archive-outcome.js';
 import { MeshNode, type MeshIdentity } from './index.js';
 
 function arg(flag: string, dflt?: string): string | undefined {
@@ -51,6 +52,7 @@ interface State {
   hubIds: string[];
   pending: PendingItem[];
   droppedConflicts?: number;
+  droppedPermanent?: number;
   /** kept for old state files; no longer incremented */
   droppedOverflow?: number;
   refusedBackpressure?: number;
@@ -136,11 +138,22 @@ async function tryArchive(item: PendingItem): Promise<boolean> {
     log(body.alreadyStored ? 'confirmed already archived' : 'archived mesh->hub', envelope.channel, envelope.id, 'storedSeq', body.envelope?.storedSeq);
     return true;
   }
-  if (res.status === 409) {
+  const outcome = classifyArchiveFailure(res.status);
+  if (outcome === 'conflict') {
     // (#35) the id is bound to a DIFFERENT envelope on the hub: retrying
     // can never succeed. Drop deliberately and loudly.
     log('PERMANENT: envelope id conflict on hub, dropping from queue', envelope.id, body?.error);
     state.droppedConflicts = (state.droppedConflicts ?? 0) + 1;
+    return true; // remove from pending; hubIds intentionally NOT marked
+  }
+  if (outcome === 'permanent') {
+    // (#240) the hub refused these exact bytes (invalid input, failed
+    // verification, over bounds, unsupported encoding): re-posting the
+    // same signed envelope can never succeed. Drop deliberately and
+    // loudly, like the #35 conflict case; the envelope remains on the
+    // mesh for other archivers.
+    log('PERMANENT: hub refused envelope, dropping from queue', envelope.id, res.status, body?.error);
+    state.droppedPermanent = (state.droppedPermanent ?? 0) + 1;
     return true; // remove from pending; hubIds intentionally NOT marked
   }
   log('archive attempt failed (will retry)', envelope.id, res.status, body?.error);
