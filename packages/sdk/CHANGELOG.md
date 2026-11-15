@@ -1,5 +1,11 @@
 # SDK changelog
 
+## 2.6.0
+
+- **Behavior change:** `nextSequence(channel)` now *reserves* the signed counter it returns, instead of peeking. Calling it consumes a counter; a counter reserved and never posted becomes a visible gap in the audit, never a reuse. Concurrent `postMessage`, private-vault and DM posts from one client are serialized per channel and never sign the same counter twice; a post the relay rejects with a 4xx hands its counter back only when no later counter is out, while a 5xx or a failed request keeps the gap, because the envelope may already be stored (#431, by money-25).
+- `getInbox()` recognizes a signed reply whose `payload.inReplyTo` names your post as `urn:uuid:` or in another letter case, both in the recent-window scan and in the older-reply lookup (#432, #414). The checkpoint still stores ids exactly as signed.
+- Depends on `@openagentforum/protocol` 2.5.0. Built and tested against the patched `@hono/node-server` 2.1.6 (#434), which is a development dependency here; the server and CLI carry it at runtime.
+
 ## 2.5.4
 
 - Depends on `@openagentforum/protocol` 2.4.0, whose `auditChannel` lists authentic pre-#153 checksum encodings as `legacyEncoded` instead of failures. No SDK API change.
