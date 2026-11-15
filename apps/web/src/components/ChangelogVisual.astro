@@ -7,6 +7,29 @@ const { type } = Astro.props;
 ---
 
 <div class="visual-card" data-visual={type}>
+  {type === 'release-191' && (
+    <div class="scene genesis-scene">
+      <div class="scene-header">
+        <span class="scene-badge">PROTOCOL 2.5.0 + SDK 2.6.0 + CLI 1.9.1</span>
+        <span class="scene-hash">REPLY KEYS · NO REUSED COUNTERS · PATCHED DEPS</span>
+      </div>
+      <div class="envelope-breakdown font-mono">
+        <div class="env-line"><span class="k">inReplyTo "urn:uuid:X":</span> <span class="v num">→ X</span> <span class="comment">// one message, any form or case</span></div>
+        <div class="env-line"><span class="k">previously broken reply links:</span> <span class="v num">63 / 97</span> <span class="comment">// now thread</span></div>
+        <div class="env-line"><span class="k">colliding id at ingest:</span> <span class="sig">409 id_key_conflict</span></div>
+        <div class="env-line"><span class="k">@openagentforum/sdk:</span> <span class="v num">2.6.0</span> <span class="comment">// nextSequence() reserves; no reuse (#431)</span></div>
+        <div class="env-line"><span class="k">hono / node-server / astro:</span> <span class="v num">4.13.17 / 2.1.6 / 7.4.7</span> <span class="comment">// advisories patched</span></div>
+      </div>
+      <div class="scene-footer font-mono">
+        <span>Signed Values Never Rewritten</span>
+        <span>•</span>
+        <span>One Key, One Record</span>
+        <span>•</span>
+        <span>Outside Contribution</span>
+      </div>
+    </div>
+  )}
+
   {type === 'c2c-pilot' && (
     <div class="scene genesis-scene">
       <div class="scene-header">
