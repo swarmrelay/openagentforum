@@ -45,6 +45,13 @@ export const idKey = (value: string) => {
   WHEN ${bareUuid(low)} THEN ${low} ELSE ${value} END)`;
 };
 export const SIGNED_PARENT_KEY = idKey(SIGNED_PARENT);
+// (#432) The one record a parent link names: the exact stored form first, then
+// the earliest stored record with that key, over every record. Two seeks, no
+// sort: the key index is ordered by (key, rowid). `chain` supplies
+// parent_key/parent_raw.
+const resolveParent = (chain: string) => `COALESCE(
+  (SELECT k.rowid FROM messages AS k WHERE k.id = ${chain}.parent_raw),
+  (SELECT k.rowid FROM messages AS k INDEXED BY idx_messages_id_key WHERE ${idKey('k.id')} = ${chain}.parent_key ORDER BY k.rowid LIMIT 1))`;
 export const ID_KEY = idKey('id');
 // The idx_messages_public_author predicate on author timestamps (migration 0012).
 export const POST_TIME = `typeof(timestamp) = 'integer' AND timestamp BETWEEN 0 AND 9007199254740991`;
@@ -152,16 +159,20 @@ export async function readPublicBrowse(db: D1Database, route: Exclude<BrowseRout
   if (route.kind === 'message') {
     // (#359) Ancestors by signed parent: one primary-key step per level, at most
     // THREAD_ANCESTORS, and a hidden record ends the walk rather than being crossed.
-    // (#414) Each level follows the parent's message-id key, one indexed seek per level.
+    // (#414, #432) Each level follows its parent's message-id key with one
+    // bounded scalar seek. One key names one record: the exact form first, then
+    // the earliest stored, chosen over EVERY record before the public filters
+    // apply. A later record in a colliding form can never stand in for the
+    // message a signed reply answered, and a private original stays hidden.
     statements.push(db.prepare(`SELECT ${MESSAGE_COLUMNS}, chain.depth AS depth FROM (
-        WITH RECURSIVE chain(parent_key, depth) AS (
-          SELECT ${SIGNED_PARENT_KEY}, 1 FROM messages WHERE id = ? AND channel = ? AND ${PUBLIC_MESSAGE} AND ${HAS_PARENT}
+        WITH RECURSIVE chain(parent_key, parent_raw, depth) AS (
+          SELECT ${SIGNED_PARENT_KEY}, ${SIGNED_PARENT}, 1 FROM messages WHERE id = ? AND channel = ? AND ${PUBLIC_MESSAGE} AND ${HAS_PARENT}
           UNION ALL
-          SELECT ${SIGNED_PARENT_KEY}, chain.depth + 1 FROM chain JOIN messages INDEXED BY idx_messages_id_key ON ${ID_KEY} = chain.parent_key
+          SELECT ${SIGNED_PARENT_KEY}, ${SIGNED_PARENT}, chain.depth + 1 FROM chain JOIN messages ON messages.rowid = ${resolveParent('chain')}
             WHERE chain.depth < ? AND ${PUBLIC_MESSAGE} AND ${PUBLIC_NAME} AND ${HAS_PARENT} AND ${visible('messages.channel')}
-        ) SELECT parent_key, depth FROM chain WHERE parent_key IS NOT NULL
-      ) AS chain CROSS JOIN messages AS m INDEXED BY idx_messages_id_key LEFT JOIN agents AS a ON a.agent_id = m.sender
-      WHERE ${idKey('m.id')} = chain.parent_key AND ${PUBLIC_MESSAGE} AND ${PUBLIC_NAME} AND ${visible('m.channel')}`)
+        ) SELECT parent_key, parent_raw, depth FROM chain WHERE parent_key IS NOT NULL
+      ) AS chain CROSS JOIN messages AS m LEFT JOIN agents AS a ON a.agent_id = m.sender
+      WHERE m.rowid = ${resolveParent('chain')} AND ${PUBLIC_MESSAGE} AND ${PUBLIC_NAME} AND ${visible('m.channel')}`)
       .bind(route.id, route.channel, THREAD_ANCESTORS));
     // Direct replies: one seek into the signed-parent index, in its own order,
     // continuing after an exclusive (channel, relay position) cursor.

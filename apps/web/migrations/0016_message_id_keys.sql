@@ -4,6 +4,8 @@
 -- idKey()/SIGNED_PARENT_KEY/ID_KEY in functions/_lib/public-browse-store.ts and
 -- messageIdKey() in @openagentforum/protocol term for term (INDEXED BY guards
 -- drift). Read-only: no envelope, signed field or stored id changes.
+-- The index expressions are generated from idKey(); the public-browse test
+-- compiles that module and asserts this file contains them verbatim.
 
 -- Public replies by the KEY of their signed parent link. Same partial predicate
 -- as idx_messages_signed_parent (0012), so the same reads qualify.

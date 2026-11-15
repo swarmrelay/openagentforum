@@ -917,7 +917,7 @@ test('thread and channel reply probes seek the signed-parent and id key indexes 
   const reply = await message(2, { signer: peer, payload: { message: 'Reply', inReplyTo: post.id } });
   for (const [path, needles] of [
     // The ancestor walk follows each parent's id key, one indexed seek per level.
-    [`/channels/general/messages/${reply.id}/`, ['USING INDEX idx_messages_id_key (<expr>=?)']],
+    [`/channels/general/messages/${reply.id}/`, ['SEARCH k USING COVERING INDEX idx_messages_id_key (<expr>=?)']],
     [`/channels/general/messages/${post.id}/`, ['SEARCH m USING INDEX idx_messages_signed_parent_key (<expr>=? AND (channel,stored_seq)>(?,?))', 'SEARCH messages USING INDEX sqlite_autoindex_messages_1 (id=?)']],
     ['/channels/general/', ['SEARCH r USING INDEX idx_messages_signed_parent_key (<expr>=?)']],
   ]) {
@@ -968,6 +968,61 @@ test('replies match their parent by message-id key: urn:uuid: and letter case na
   for (const reply of thread.replies) assert.ok((await verifyEnvelope(reply, peer.signingPublicKey)).valid);
   assert.deepEqual(body.threads.find(t => t.post.id === urnParent.id).replies.map(r => r.id), [bareAnswer.id]);
   assert.equal(body.threads.find(t => t.post.id === exact.id), undefined);
+});
+
+test('a later record in a colliding id form never displaces the original parent (#432)', async () => {
+  const peer = await registerPeer();
+  const u = crypto.randomUUID();
+  const original = await message(1, { id: u, payload: { message: 'The original question' } });
+  const answer = await message(2, { signer: peer, payload: { message: 'An answer', inReplyTo: `urn:uuid:${u}` } });
+  // Simulate a legacy or bypassed collision: stored AFTER the original, by another key.
+  const squatter = await message(3, { id: `URN:UUID:${u.toUpperCase()}`, signer: peer, payload: { message: 'Squatting in another form' } });
+  // The ancestor walk shows the original, never the later collider.
+  let page = await get(`/channels/general/messages/${answer.id}/`);
+  assert.deepEqual(threadIds(page.text, 'thread-ancestors'), [original.id]);
+  assert.doesNotMatch(page.text, /Squatting in another form/);
+  // An exact signed link to the collider still names the collider (exact form first).
+  const exactReply = await message(4, { payload: { message: 'Replying to the exact form', inReplyTo: squatter.id } });
+  page = await get(`/channels/general/messages/${exactReply.id}/`);
+  assert.deepEqual(threadIds(page.text, 'thread-ancestors'), [squatter.id]);
+});
+
+test('ingest refuses an id that names an existing message in another form, private records included (#432)', async () => {
+  const author2 = await generateAgentKeyPair();
+  const post = (path, body) => worker.fetch(`https://fixture.invalid/v1/${path}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  assert.equal((await post('agents/register', { name: 'Collision fixture', publicKey: author2.signingPublicKey })).status, 200);
+  const u = crypto.randomUUID();
+  const first = await signEnvelope({ id: u, channel: 'general', sender: author2.agentId, type: 'intel', sequence: 1, payload: { message: 'first' } }, author2.signingPrivateKey);
+  assert.equal((await post('channels/general/messages', first)).status, 200);
+  for (const [n, form] of [`urn:uuid:${u}`, u.toUpperCase(), `URN:UUID:${u.toUpperCase()}`].entries()) {
+    const collider = await signEnvelope({ id: form, channel: 'general', sender: author2.agentId, type: 'intel', sequence: 2 + n, payload: { message: `collider ${n}` } }, author2.signingPrivateKey);
+    const response = await post('channels/general/messages', collider);
+    assert.equal(response.status, 409, form);
+    assert.equal((await response.json()).reason, 'id_key_conflict');
+  }
+  // A byte-identical replay of the original is still an idempotent success.
+  const replay = await post('channels/general/messages', first);
+  assert.equal(replay.status, 200);
+  assert.equal((await replay.json()).alreadyStored, true);
+  // A private record's key is protected too.
+  const v = crypto.randomUUID();
+  await channel('locked', { private: 1 });
+  await message(1, { channel: 'locked', id: `urn:uuid:${v}`, payload: { message: 'Private original' } });
+  const publicCollider = await signEnvelope({ id: v, channel: 'general', sender: author2.agentId, type: 'intel', sequence: 9, payload: { message: 'public collider' } }, author2.signingPrivateKey);
+  assert.equal((await post('channels/general/messages', publicCollider)).status, 409);
+  // Distinct UUIDs and non-UUID ids that differ only in case are unaffected.
+  const other = await signEnvelope({ id: crypto.randomUUID(), channel: 'general', sender: author2.agentId, type: 'intel', sequence: 10, payload: { message: 'unrelated' } }, author2.signingPrivateKey);
+  assert.equal((await post('channels/general/messages', other)).status, 200);
+});
+
+test('migration 0016 contains the reader key expressions verbatim (#432)', async () => {
+  const out = join(scratch, 'key-expressions.mjs');
+  await build({ entryPoints: [fileURLToPath(new URL('../functions/_lib/public-browse-store.ts', import.meta.url))], bundle: true,
+    format: 'esm', platform: 'node', outfile: out, logLevel: 'silent' });
+  const { SIGNED_PARENT_KEY, ID_KEY } = await import(out);
+  const migration = await readFile(new URL('../migrations/0016_message_id_keys.sql', import.meta.url), 'utf8');
+  assert.ok(migration.includes(`ON messages (${SIGNED_PARENT_KEY}, channel, stored_seq)`), 'signed-parent key index drifted from idKey()');
+  assert.ok(migration.includes(`ON messages (${ID_KEY});`), 'id key index drifted from idKey()');
 });
 
 test('bylines show when the hub registered each key and a capped count of its public posts (#345)', async () => {

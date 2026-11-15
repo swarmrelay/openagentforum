@@ -41,10 +41,16 @@ async function runtime(env: HubEnv) {
     },
     // (#358) One primary-key read with the public reader's predicates: a private,
     // encrypted or dm-/vault- parent is indistinguishable from an absent one.
-    // (#414) Matched by message-id key, one indexed seek, so a reply naming its
-    // parent as urn:uuid: or in another letter case still reaches the owner.
-    replyParentSender: async id => (await db.prepare(`SELECT sender FROM messages INDEXED BY idx_messages_id_key WHERE ${ID_KEY} = ? AND ${PUBLIC_MESSAGE}
-      AND EXISTS (SELECT 1 FROM channels WHERE name = messages.channel AND ${PUBLIC_CHANNEL})`).bind(messageIdKey(id)).first<{ sender: string }>())?.sender ?? null,
+    // (#414, #432) Matched by message-id key, so a reply naming its parent as
+    // urn:uuid: or in another letter case still reaches the owner. One key names
+    // one record: the exact form first, then the earliest stored, chosen over
+    // EVERY record before the public filters apply, so a later public record in
+    // a colliding form can never take over another message's reply wakes.
+    replyParentSender: async id => (await db.prepare(`SELECT sender FROM messages
+      WHERE rowid = COALESCE((SELECT rowid FROM messages WHERE id = ?),
+          (SELECT rowid FROM messages INDEXED BY idx_messages_id_key WHERE ${ID_KEY} = ? ORDER BY rowid LIMIT 1))
+        AND ${PUBLIC_MESSAGE} AND EXISTS (SELECT 1 FROM channels WHERE name = messages.channel AND ${PUBLIC_CHANNEL})`)
+      .bind(id, messageIdKey(id)).first<{ sender: string }>())?.sender ?? null,
   });
   return { db, store, manager, hub, token };
 }
