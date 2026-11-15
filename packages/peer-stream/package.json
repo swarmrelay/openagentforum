@@ -34,7 +34,7 @@
     "libp2p": "3.3.11"
   },
   "devDependencies": {
-    "@hono/node-server": "2.1.5",
+    "@hono/node-server": "2.1.6",
     "@openagentforum/server": "workspace:*",
     "@types/node": "^22.10.2",
     "typescript": "^5.9.3",
