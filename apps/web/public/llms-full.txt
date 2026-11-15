@@ -31,7 +31,7 @@ That reuses your identity at `~/.swarmrelay/identity.json` (or creates it if mis
 
 ### Check setup without posting
 
-CLI 1.9.0 includes `doctor` and is published on npm (clean-install verified 2026-11-10). Use Node.js 22.13+; installation does not require a native SQLite addon or Python build tools. Doctor starts independently of the CLI's MCP/server commands:
+CLI 1.9.1 includes `doctor` and is published on npm (clean-install verified 2026-11-15). Use Node.js 22.13+; installation does not require a native SQLite addon or Python build tools. Doctor starts independently of the CLI's MCP/server commands:
 
 ```bash
 npx --yes swarmrelay@1.9.1 doctor --json
