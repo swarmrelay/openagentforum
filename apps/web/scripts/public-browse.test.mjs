@@ -786,7 +786,7 @@ test('reply lookup rejects malformed input, unknown agents and oversize records 
     source: '/v1/channels/general/messages?after=1&limit=1' }]);
 });
 
-test('reply lookup query plans seek both migration 0012 indexes', async () => {
+test('reply lookup query plans seek the author index (0012) and the signed-parent key index (0016)', async () => {
   const peer = await registerPeer();
   const post = await message(1, { timestamp: 10 });
   await message(2, { signer: peer, payload: { message: 'Answer', inReplyTo: post.id } });
@@ -794,7 +794,7 @@ test('reply lookup query plans seek both migration 0012 indexes', async () => {
   const details = JSON.parse(response.headers.get('x-fixture-plans')).flat().join('\n');
   // Seeks, not index scans: an affinity mismatch once degraded the parent probe to an index SCAN.
   assert.ok(details.includes('SEARCH messages USING INDEX idx_messages_public_author (sender=? AND <expr><?)'), details);
-  assert.ok(details.includes('SEARCH messages USING INDEX idx_messages_signed_parent (<expr>=?)'), details);
+  assert.ok(details.includes('SEARCH messages USING INDEX idx_messages_signed_parent_key (<expr>=?)'), details);
   // Each post's replies are a correlated LIMITed list, fetched by rowid.
   assert.ok(details.includes('CORRELATED LIST SUBQUERY'), details);
   assert.ok(details.includes('SEARCH m USING INTEGER PRIMARY KEY (rowid=?)'), details);
@@ -911,19 +911,63 @@ test('thread replies page by an exclusive channel and relay-position cursor with
   assert.equal(after, before, `rows read grew from ${before} to ${after} with 425 replies`);
 });
 
-test('thread and channel reply probes seek the signed-parent index (#359)', async () => {
+test('thread and channel reply probes seek the signed-parent and id key indexes (#359, #414)', async () => {
   const peer = await registerPeer();
   const post = await message(1, { payload: { message: 'Post' } });
-  await message(2, { signer: peer, payload: { message: 'Reply', inReplyTo: post.id } });
+  const reply = await message(2, { signer: peer, payload: { message: 'Reply', inReplyTo: post.id } });
   for (const [path, needles] of [
-    [`/channels/general/messages/${post.id}/`, ['SEARCH m USING INDEX idx_messages_signed_parent (<expr>=? AND (channel,stored_seq)>(?,?))', 'SEARCH messages USING INDEX sqlite_autoindex_messages_1 (id=?)']],
-    ['/channels/general/', ['SEARCH r USING INDEX idx_messages_signed_parent (<expr>=?)']],
+    // The ancestor walk follows each parent's id key, one indexed seek per level.
+    [`/channels/general/messages/${reply.id}/`, ['USING INDEX idx_messages_id_key (<expr>=?)']],
+    [`/channels/general/messages/${post.id}/`, ['SEARCH m USING INDEX idx_messages_signed_parent_key (<expr>=? AND (channel,stored_seq)>(?,?))', 'SEARCH messages USING INDEX sqlite_autoindex_messages_1 (id=?)']],
+    ['/channels/general/', ['SEARCH r USING INDEX idx_messages_signed_parent_key (<expr>=?)']],
   ]) {
     const { response } = await get(path, { headers: { 'x-fixture-plans': '1' } });
     const details = JSON.parse(response.headers.get('x-fixture-plans')).flat().join('\n');
     for (const needle of needles) assert.ok(details.includes(needle), `${path}: ${needle}\n${details}`);
     assert.doesNotMatch(details, /SCAN messages|SCAN m USING|SCAN r\b|SCAN channels|USE TEMP B-TREE/, details);
   }
+});
+
+test('replies match their parent by message-id key: urn:uuid: and letter case name one message, other ids stay exact (#414)', async () => {
+  const peer = await registerPeer();
+  const u = crypto.randomUUID(), v = crypto.randomUUID();
+  const parent = await message(1, { id: u, payload: { message: 'Bare parent' } });
+  const forms = [`urn:uuid:${u}`, u.toUpperCase(), `URN:UUID:${u.toUpperCase()}`, u];
+  const answers = [];
+  for (const [n, form] of forms.entries()) answers.push(await message(2 + n, { signer: peer, payload: { message: `Answer ${n}`, inReplyTo: form } }));
+  const urnParent = await message(10, { id: `urn:uuid:${v}`, payload: { message: 'Parent stored in urn form' } });
+  const bareAnswer = await message(11, { signer: peer, payload: { message: 'Bare reply to a urn parent', inReplyTo: v.toUpperCase() } });
+  const exact = await message(20, { id: 'case-parent', payload: { message: 'Non-UUID parent' } });
+  await message(21, { signer: peer, payload: { message: 'Wrong case on a non-UUID id', inReplyTo: 'CASE-PARENT' } });
+  const child = await message(30, { payload: { message: 'Self reply naming the urn form', inReplyTo: `urn:uuid:${u.toUpperCase()}` } });
+
+  // Thread view: every form of the parent's UUID threads; a non-UUID id stays exact.
+  let page = await get(`/channels/general/messages/${parent.id}/`);
+  assert.equal(page.response.status, 200);
+  assert.deepEqual(threadIds(page.text, 'thread-replies'), [...answers.map(a => a.id), child.id]);
+  page = await get(`/channels/general/messages/${encodeURIComponent(urnParent.id)}/`);
+  assert.deepEqual(threadIds(page.text, 'thread-replies'), [bareAnswer.id]);
+  page = await get(`/channels/general/messages/${exact.id}/`);
+  assert.deepEqual(threadIds(page.text, 'thread-replies'), []);
+  // Ancestor walk crosses forms in both directions.
+  page = await get(`/channels/general/messages/${child.id}/`);
+  assert.deepEqual(threadIds(page.text, 'thread-ancestors'), [parent.id]);
+  page = await get(`/channels/general/messages/${bareAnswer.id}/`);
+  assert.deepEqual(threadIds(page.text, 'thread-ancestors'), [urnParent.id]);
+
+  // Channel listing flags the parents that have replies, and only those.
+  const flagged = links((await get('/channels/general/')).text).filter(href => href?.endsWith('/#replies'));
+  for (const id of [parent.id, urnParent.id]) assert.ok(flagged.includes(`/channels/general/messages/${encodeURIComponent(id)}/#replies`), id);
+  assert.ok(!flagged.includes(`/channels/general/messages/${encodeURIComponent(exact.id)}/#replies`));
+
+  // Replies inbox: matched by key, shown exactly as signed, self-replies still excluded.
+  const body = await (await replies(author.agentId)).json();
+  const thread = body.threads.find(t => t.post.id === parent.id);
+  assert.deepEqual(thread.replies.map(r => r.id), answers.map(a => a.id));
+  assert.equal(thread.replies[0].payload.inReplyTo, `urn:uuid:${u}`, 'the signed parent value is never rewritten');
+  for (const reply of thread.replies) assert.ok((await verifyEnvelope(reply, peer.signingPublicKey)).valid);
+  assert.deepEqual(body.threads.find(t => t.post.id === urnParent.id).replies.map(r => r.id), [bareAnswer.id]);
+  assert.equal(body.threads.find(t => t.post.id === exact.id), undefined);
 });
 
 test('bylines show when the hub registered each key and a capped count of its public posts (#345)', async () => {

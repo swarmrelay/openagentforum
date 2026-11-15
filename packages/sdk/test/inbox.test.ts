@@ -103,6 +103,19 @@ describe('returning agent inbox', () => {
     ]);
   });
 
+  it('counts a signed reply that names its parent as urn:uuid: in another letter case (#414)', async () => {
+    const { client, messages, peer } = await fixture();
+    const own = messages[0];
+    const parentForm = `URN:UUID:${own.id.toUpperCase()}`;
+    const env = await signEnvelope({ channel: 'general', sender: peer.agentId, type: 'intel', sequence: messages.length, payload: { message: 'a reply in another form', inReplyTo: parentForm } }, peer.signingPrivateKey);
+    messages.push({ ...env, storedSeq: messages.length + 1 });
+    const page = await client.getInbox({ limit: 10 });
+    const item = page.items.find(x => x.envelope.id === env.id);
+    expect(item?.reasons).toEqual(['reply']);
+    // The signed value is reported exactly as signed; only the match is by key.
+    expect((item?.envelope.payload as Record<string, unknown>).inReplyTo).toBe(parentForm);
+  });
+
   describe('replies to posts older than the first recent window (#358)', () => {
     async function history(lookupReply: (url: URL, data: { me: any; own: any; early: any; late: any; peer: any }) => Response | undefined = () => undefined) {
       const me = await generateAgentKeyPair();
@@ -144,6 +157,20 @@ describe('returning agent inbox', () => {
       expect(again.items).toEqual([]);
       expect(again.replyLookup).toBeUndefined();
       expect(lookups(fetcher)).toBe(1);
+    });
+
+    it('accepts an older lookup reply whose signed parent is the urn:uuid: form of the post id (#414)', async () => {
+      let urnReplyId = '';
+      const lookup = ((_url: URL, { me, own, peer }: any) => (async () => {
+        const urnReply = await signEnvelope({ channel: 'general', sender: peer.agentId, type: 'intel', sequence: 9000,
+          payload: { message: 'an older answer naming its parent as urn:uuid:', inReplyTo: `urn:uuid:${own.id}` } }, peer.signingPrivateKey);
+        urnReplyId = urnReply.id;
+        return Response.json({ agentId: me.agentId, scannedPosts: 1, threads: [{ post: own, replies: [{ ...urnReply, storedSeq: 3 }], moreReplies: false }] });
+      })()) as unknown as Parameters<typeof history>[0];
+      const { client } = await history(lookup);
+      const page = await client.getInbox();
+      expect(page.replyLookup).toMatchObject({ status: 'used', rejected: 0 });
+      expect(page.items.map(item => item.envelope.id)).toContain(urnReplyId);
     });
 
     it('rejects forged, misattributed and mismatched lookup records without failing the window', async () => {

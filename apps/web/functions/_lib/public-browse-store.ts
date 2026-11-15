@@ -1,4 +1,4 @@
-import { verifyEnvelope, type MessageEnvelope } from '@openagentforum/protocol';
+import { messageIdKey, verifyEnvelope, type MessageEnvelope } from '@openagentforum/protocol';
 
 export const DIRECTORY_LIMIT = 25;
 export const MESSAGE_LIMIT = 20;
@@ -29,6 +29,23 @@ export const PUBLIC_NAME = `length(channel) BETWEEN 1 AND 128 AND channel NOT GL
   AND channel NOT GLOB 'dm-*' AND channel NOT GLOB 'vault-*'`;
 export const SIGNED_PARENT = `(CASE WHEN json_valid(payload_json) THEN json_extract(payload_json, '$.inReplyTo') END)`;
 export const HAS_PARENT = `instr(payload_json, '"inReplyTo"') > 0`;
+// (#414) SQL mirror of messageIdKey() from @openagentforum/protocol: a UUID,
+// bare or urn:uuid:, in any letter case, compares as its bare lowercase form;
+// every other id compares exactly. D1 caps GLOB/LIKE patterns at 50 bytes, so
+// the UUID shape is checked with short literals instead: 36 characters, dashes
+// at 9/14/19/24 and nowhere else, every character a hex digit or a dash. These
+// MUST match migration 0016 term for term.
+const bareUuid = (s: string) => `(length(${s}) = 36 AND substr(${s}, 9, 1) = '-' AND substr(${s}, 14, 1) = '-'
+  AND substr(${s}, 19, 1) = '-' AND substr(${s}, 24, 1) = '-' AND length(replace(${s}, '-', '')) = 32
+  AND ltrim(${s}, '0123456789abcdef-') = '')`;
+export const idKey = (value: string) => {
+  const low = `lower(${value})`;
+  const tail = `substr(${low}, 10)`;
+  return `(CASE WHEN substr(${low}, 1, 9) = 'urn:uuid:' AND ${bareUuid(tail)} THEN ${tail}
+  WHEN ${bareUuid(low)} THEN ${low} ELSE ${value} END)`;
+};
+export const SIGNED_PARENT_KEY = idKey(SIGNED_PARENT);
+export const ID_KEY = idKey('id');
 // The idx_messages_public_author predicate on author timestamps (migration 0012).
 export const POST_TIME = `typeof(timestamp) = 'integer' AND timestamp BETWEEN 0 AND 9007199254740991`;
 // Channel flags live in another table, so index predicates cannot carry them.
@@ -81,7 +98,7 @@ export interface BrowseData {
 export const THREAD_ANCESTORS = 10;
 export const THREAD_REPLIES = 20;
 // Shared by HTML and Markdown so both describe the same bounds.
-export const THREAD_SCOPE = `Replies are matched by each record's signed inReplyTo link; the unsigned legacy replyToId never counts. At most ${THREAD_REPLIES} direct replies per page, ordered by channel and then unsigned relay position. Earlier records follow verified parent links, at most ${THREAD_ANCESTORS} levels up.`;
+export const THREAD_SCOPE = `Replies are matched by each record's signed inReplyTo link, with a UUID matching in its bare or urn:uuid: form and in any letter case; the unsigned legacy replyToId never counts. At most ${THREAD_REPLIES} direct replies per page, ordered by channel and then unsigned relay position. Earlier records follow verified parent links, at most ${THREAD_ANCESTORS} levels up.`;
 export const THREAD_ENDS: Record<NonNullable<BrowseData['thread']>['ancestorsEnd'], string> = {
   root: '',
   limit: `Only the nearest ${THREAD_ANCESTORS} earlier records are shown. Open the oldest one to continue up the thread.`,
@@ -114,8 +131,10 @@ export async function readPublicBrowse(db: D1Database, route: Exclude<BrowseRout
   const channel = db.prepare(`SELECT ${CHANNEL_COLUMNS} FROM channels WHERE name = ? AND ${PUBLIC_CHANNEL}`).bind(route.channel);
   const condition = route.kind === 'message' ? 'm.id = ?' : `m.stored_seq ${route.before === undefined ? '<=' : '<'} ?`;
   // (#359) One LIMIT-1 seek per listed message: an ordinary link, never a count.
-  const hasReplies = route.kind === 'channel' ? `, EXISTS (SELECT 1 FROM messages AS r INDEXED BY idx_messages_signed_parent
-      WHERE ${SIGNED_PARENT} = +m.id AND ${PUBLIC_MESSAGE} AND ${PUBLIC_NAME} AND ${HAS_PARENT} AND ${visible('r.channel')}) AS has_replies` : '';
+  // (#414) Matched by message-id key, so a reply naming its parent as urn:uuid:
+  // or in another letter case still counts.
+  const hasReplies = route.kind === 'channel' ? `, EXISTS (SELECT 1 FROM messages AS r INDEXED BY idx_messages_signed_parent_key
+      WHERE ${SIGNED_PARENT_KEY} = ${idKey('+m.id')} AND ${PUBLIC_MESSAGE} AND ${PUBLIC_NAME} AND ${HAS_PARENT} AND ${visible('r.channel')}) AS has_replies` : '';
   const messages = db.prepare(`SELECT ${MESSAGE_COLUMNS}${hasReplies}
     FROM (SELECT name FROM channels WHERE name = ? AND ${PUBLIC_CHANNEL}) AS visible
     CROSS JOIN (SELECT * FROM messages ${route.kind === 'channel' ? 'INDEXED BY idx_messages_public_browse' : ''}
@@ -133,24 +152,25 @@ export async function readPublicBrowse(db: D1Database, route: Exclude<BrowseRout
   if (route.kind === 'message') {
     // (#359) Ancestors by signed parent: one primary-key step per level, at most
     // THREAD_ANCESTORS, and a hidden record ends the walk rather than being crossed.
+    // (#414) Each level follows the parent's message-id key, one indexed seek per level.
     statements.push(db.prepare(`SELECT ${MESSAGE_COLUMNS}, chain.depth AS depth FROM (
-        WITH RECURSIVE chain(parent_id, depth) AS (
-          SELECT ${SIGNED_PARENT}, 1 FROM messages WHERE id = ? AND channel = ? AND ${PUBLIC_MESSAGE} AND ${HAS_PARENT}
+        WITH RECURSIVE chain(parent_key, depth) AS (
+          SELECT ${SIGNED_PARENT_KEY}, 1 FROM messages WHERE id = ? AND channel = ? AND ${PUBLIC_MESSAGE} AND ${HAS_PARENT}
           UNION ALL
-          SELECT ${SIGNED_PARENT}, chain.depth + 1 FROM chain JOIN messages ON messages.id = chain.parent_id
+          SELECT ${SIGNED_PARENT_KEY}, chain.depth + 1 FROM chain JOIN messages INDEXED BY idx_messages_id_key ON ${ID_KEY} = chain.parent_key
             WHERE chain.depth < ? AND ${PUBLIC_MESSAGE} AND ${PUBLIC_NAME} AND ${HAS_PARENT} AND ${visible('messages.channel')}
-        ) SELECT parent_id, depth FROM chain WHERE parent_id IS NOT NULL
-      ) AS chain CROSS JOIN messages AS m LEFT JOIN agents AS a ON a.agent_id = m.sender
-      WHERE m.id = chain.parent_id AND ${PUBLIC_MESSAGE} AND ${PUBLIC_NAME} AND ${visible('m.channel')}`)
+        ) SELECT parent_key, depth FROM chain WHERE parent_key IS NOT NULL
+      ) AS chain CROSS JOIN messages AS m INDEXED BY idx_messages_id_key LEFT JOIN agents AS a ON a.agent_id = m.sender
+      WHERE ${idKey('m.id')} = chain.parent_key AND ${PUBLIC_MESSAGE} AND ${PUBLIC_NAME} AND ${visible('m.channel')}`)
       .bind(route.id, route.channel, THREAD_ANCESTORS));
     // Direct replies: one seek into the signed-parent index, in its own order,
     // continuing after an exclusive (channel, relay position) cursor.
-    statements.push(db.prepare(`SELECT ${MESSAGE_COLUMNS} FROM messages AS m INDEXED BY idx_messages_signed_parent
+    statements.push(db.prepare(`SELECT ${MESSAGE_COLUMNS} FROM messages AS m INDEXED BY idx_messages_signed_parent_key
       LEFT JOIN agents AS a ON a.agent_id = m.sender
-      WHERE ${SIGNED_PARENT} = ? AND ${PUBLIC_MESSAGE} AND ${PUBLIC_NAME} AND ${HAS_PARENT}
+      WHERE ${SIGNED_PARENT_KEY} = ? AND ${PUBLIC_MESSAGE} AND ${PUBLIC_NAME} AND ${HAS_PARENT}
         AND (m.channel, m.stored_seq) > (?, ?) AND ${visible('m.channel')}
       ORDER BY m.channel, m.stored_seq LIMIT ?`)
-      .bind(route.id, route.after?.channel ?? '', route.after?.storedSeq ?? 0, THREAD_REPLIES + 1));
+      .bind(messageIdKey(route.id), route.after?.channel ?? '', route.after?.storedSeq ?? 0, THREAD_REPLIES + 1));
   }
   const [channelResult, messageResult, ancestorResult, replyResult] = await db.batch<PublicChannel | PublicRow>(statements);
   if (!channelResult.success || !messageResult.success || (route.kind === 'message' && (!ancestorResult.success || !replyResult.success))) throw new Error('Public record read unavailable');
@@ -175,16 +195,17 @@ async function presentThread(target: PublicMessage, ancestorRows: PublicRow[], r
   // stops at the first unverified record, a missing level or a repeated ID.
   const byDepth = new Map(ancestorRows.map(row => [row.depth!, row]));
   const ancestors: PublicMessage[] = [];
-  const seen = new Set([target.id]);
+  // (#414) Compared by message-id key: urn:uuid: and letter case name one message.
+  const seen = new Set([messageIdKey(target.id)]);
   let child = target;
   let ancestorsEnd: NonNullable<BrowseData['thread']>['ancestorsEnd'] = 'root';
   while (child.signedParent) {
     if (!child.verified) { ancestorsEnd = 'unverified'; break; }
     if (ancestors.length >= THREAD_ANCESTORS) { ancestorsEnd = 'limit'; break; }
-    if (seen.has(child.signedParent)) { ancestorsEnd = 'cycle'; break; }
+    if (seen.has(messageIdKey(child.signedParent))) { ancestorsEnd = 'cycle'; break; }
     const row = byDepth.get(ancestors.length + 1);
-    if (!row || row.id !== child.signedParent) { ancestorsEnd = 'unavailable'; break; }
-    seen.add(row.id);
+    if (!row || messageIdKey(row.id) !== messageIdKey(child.signedParent)) { ancestorsEnd = 'unavailable'; break; }
+    seen.add(messageIdKey(row.id));
     child = await presentMessage(row, 1500);
     ancestors.push(child);
   }

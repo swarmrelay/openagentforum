@@ -1,4 +1,4 @@
-import { verifyEnvelope, type Channel, type MessageEnvelope } from '@openagentforum/protocol';
+import { messageIdKey, verifyEnvelope, type Channel, type MessageEnvelope } from '@openagentforum/protocol';
 
 export interface InboxCheckpoint {
   version: 1;
@@ -78,7 +78,9 @@ async function readReplyLookup(hubUrl: string, agentId: string, fetcher: typeof 
         const payload = reply?.payload;
         let key: string | undefined;
         try { key = envelopeShape(reply) && reply.sender !== agentId ? await senderKey(reply.sender) : undefined; } catch { key = undefined; }
-        if (!key || reply.encrypted || reply.type === 'e2ee_blob' || !payload || typeof payload !== 'object' || payload.inReplyTo !== post.id
+        if (!key || reply.encrypted || reply.type === 'e2ee_blob' || !payload || typeof payload !== 'object'
+          // (#414) urn:uuid: and letter case name the same parent; the signed value is kept as is.
+          || typeof payload.inReplyTo !== 'string' || messageIdKey(payload.inReplyTo) !== messageIdKey(post.id)
           || !(await verifies(reply, key))) { lookup.rejected++; continue; }
         replies.push(reply);
       }
@@ -156,7 +158,8 @@ export async function readInbox(hubUrl: string, agentId: string, fetcher: typeof
   for (const [index, channel] of channels.entries()) {
     let recent = !states.has(channel) && !options.fromBeginning;
     const state = states.get(channel) ?? { after: 0, authoredIds: [] };
-    const authored = new Set(state.authoredIds);
+    // (#414) Looked up by message-id key; the checkpoint keeps the ids exactly as signed.
+    const authored = new Set(state.authoredIds.map(messageIdKey));
     for (;;) {
       if (pages >= maxPages) return finish(true, channels.slice(index));
       const response = await fetcher(`${hubUrl}/v1/channels/${encodeURIComponent(channel)}/messages?${recent ? 'limit=50' : `after=${state.after}&limit=200`}`);
@@ -177,9 +180,9 @@ export async function readInbox(hubUrl: string, agentId: string, fetcher: typeof
           const found = await (lookup ??= readReplyLookup(hubUrl, agentId, fetcher, senderKey));
           const summary = result.replyLookup ??= { status: found ? 'used' : 'unavailable', olderReplies: 0, rejected: found?.rejected ?? 0, truncated: found?.truncated ?? false };
           for (const thread of found?.threads ?? []) {
-            if (thread.post.channel === channel && !authored.has(thread.post.id)) {
+            if (thread.post.channel === channel && !authored.has(messageIdKey(thread.post.id))) {
               if (authored.size >= MAX_AUTHORED) throw new Error(`Inbox authored-message index reached ${MAX_AUTHORED}; use a dedicated archival index`);
-              authored.add(thread.post.id);
+              authored.add(messageIdKey(thread.post.id));
               state.authoredIds.push(thread.post.id);
             }
             for (const reply of thread.replies) {
@@ -201,9 +204,9 @@ export async function readInbox(hubUrl: string, agentId: string, fetcher: typeof
         const verified = await verifyEnvelope(envelope, await senderKey(envelope.sender));
         if (!verified.valid) throw new Error(`Inbox envelope does not verify as stored: ${verified.error}`);
         if (envelope.sender === agentId) {
-          if (!authored.has(envelope.id)) {
+          if (!authored.has(messageIdKey(envelope.id))) {
             if (authored.size >= MAX_AUTHORED) throw new Error(`Inbox authored-message index reached ${MAX_AUTHORED}; use a dedicated archival index`);
-            authored.add(envelope.id);
+            authored.add(messageIdKey(envelope.id));
             state.authoredIds.push(envelope.id);
           }
         } else if (!envelope.encrypted && envelope.type !== 'e2ee_blob') {
@@ -211,7 +214,7 @@ export async function readInbox(hubUrl: string, agentId: string, fetcher: typeof
           const parent = payload && typeof payload === 'object' ? payload.inReplyTo ?? payload.replyToId : undefined;
           const reasons: Array<'reply' | 'mention'> = [];
           // Top-level replyToId is unsigned in v1. Only signed payload links count.
-          if (typeof parent === 'string' && authored.has(parent)) reasons.push('reply');
+          if (typeof parent === 'string' && authored.has(messageIdKey(parent))) reasons.push('reply');
           if (mention.test(JSON.stringify(payload))) reasons.push('mention');
           if (reasons.length && !reported.has(envelope.id)) result.items.push({ reasons, envelope });
         }
