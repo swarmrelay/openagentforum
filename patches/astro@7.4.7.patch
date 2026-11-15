@@ -1,0 +1,135 @@
+diff --git a/dist/assets/build/generate.js b/dist/assets/build/generate.js
+index 4a074c0cef0b6b4f7f9b1f407f5cee6fe643a4b3..d46cdf561948686b74f307a4149cf5d34c6509b2 100644
+--- a/dist/assets/build/generate.js
++++ b/dist/assets/build/generate.js
+@@ -59,6 +59,10 @@ function getFullImagePath(originalFilePath, env) {
+ 	return new URL(removeLeadingForwardSlash(originalFilePath), env.serverRoot);
+ }
+ export async function generateImagesForPath(originalFilePath, transformsAndPath, env) {
++	// Reject before a previously generated remote asset can be copied from cache.
++	if (isRemotePath(originalFilePath)) {
++		throw new Error("Remote image optimization is disabled in this static site build");
++	}
+ 	let originalImage;
+ 	for (const [_, transform] of transformsAndPath.transforms) {
+ 		await generateImage(transform.finalPath, transform.transform);
+@@ -86,6 +90,9 @@ export async function generateImagesForPath(originalFilePath, transformsAndPath,
+ 		env.count.current++;
+ 	}
+ 	async function generateImageInternal(filepath, options) {
++		if (typeof options.src === "string" && isRemotePath(options.src)) {
++			throw new Error("Remote image optimization is disabled in this static site build");
++		}
+ 		const isLocalImage = isESMImportedImage(options.src);
+ 		const finalFileURL = new URL("." + filepath, env.clientRoot);
+ 		const finalFolderURL = new URL("./", finalFileURL);
+diff --git a/dist/assets/build/remote.js b/dist/assets/build/remote.js
+index 97f438e81bf52bd2dc1c6356c4f8507fa7bc3164..3c9547ef6845d5910edce3aaa885182fa87d503c 100644
+--- a/dist/assets/build/remote.js
++++ b/dist/assets/build/remote.js
+@@ -1,91 +1,9 @@
+-import CachePolicy from "http-cache-semantics";
+-import { fetchWithRedirects } from "../utils/redirectValidation.js";
+-export async function loadRemoteImage(src, fetchFn = globalThis.fetch, imageConfig = {
+-	remotePatterns: [],
+-	domains: []
+-}) {
+-	const res = await fetchWithRedirects({
+-		url: src,
+-		fetchFn,
+-		imageConfig
+-	});
+-	if (!res.ok) {
+-		throw new Error(`Failed to load remote image ${src}. The request did not return a 200 OK response. (received ${res.status}))`);
+-	}
+-	// calculate an expiration date based on the response's TTL
+-	const req = new Request(src);
+-	const policy = new CachePolicy(webToCachePolicyRequest(req), webToCachePolicyResponse(res));
+-	const expires = policy.storable() ? policy.timeToLive() : 0;
+-	return {
+-		data: Buffer.from(await res.arrayBuffer()),
+-		expires: Date.now() + expires,
+-		etag: res.headers.get("Etag") ?? undefined,
+-		lastModified: res.headers.get("Last-Modified") ?? undefined
+-	};
+-}
+-/**
+-* Revalidate a cached remote asset using its entity-tag or modified date.
+-* Uses the [If-None-Match](https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/If-None-Match) and [If-Modified-Since](https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/If-Modified-Since)
+-* headers to check with the remote server if the cached version of a remote asset is still up to date.
+-* The remote server may respond that the cached asset is still up-to-date if the entity-tag or modification time matches (304 Not Modified), or respond with an updated asset (200 OK)
+-* @param src - url to remote asset
+-* @param revalidationData - an object containing the stored Entity-Tag of the cached asset and/or the Last Modified time
+-* @returns An object containing the refreshed expiry time and cache headers. `data` will be a `Buffer` of the new image if the asset was modified (200 OK), or `null` if the cached version is still valid (304 Not Modified).
+-*/
+-export async function revalidateRemoteImage(src, revalidationData, fetchFn = globalThis.fetch, imageConfig = {
+-	remotePatterns: [],
+-	domains: []
+-}) {
+-	const headers = {
+-		...revalidationData.etag && { "If-None-Match": revalidationData.etag },
+-		...revalidationData.lastModified && { "If-Modified-Since": revalidationData.lastModified }
+-	};
+-	const req = new Request(src, {
+-		headers,
+-		cache: "no-cache"
+-	});
+-	const res = await fetchWithRedirects({
+-		url: src,
+-		headers: new Headers(headers),
+-		imageConfig,
+-		fetchFn
+-	});
+-	// Allow 304 Not Modified: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/304
+-	if (!res.ok && res.status !== 304) {
+-		if (res.status >= 300 && res.status < 400) {
+-			throw new Error(`Failed to revalidate cached remote image ${src}. The request was redirected.`);
+-		}
+-		throw new Error(`Failed to revalidate cached remote image ${src}. The request did not return a 200 OK / 304 NOT MODIFIED response. (received ${res.status} ${res.statusText})`);
+-	}
+-	const data = Buffer.from(await res.arrayBuffer());
+-	if (res.ok && !data.length) {
+-		// Server did not include body but indicated cache was stale
+-		return await loadRemoteImage(src, fetchFn, imageConfig);
+-	}
+-	// calculate an expiration date based on the response's TTL
+-	const policy = new CachePolicy(webToCachePolicyRequest(req), webToCachePolicyResponse(res.ok ? res : new Response(null, {
+-		status: 200,
+-		headers: res.headers
+-	})));
+-	const expires = policy.storable() ? policy.timeToLive() : 0;
+-	return {
+-		data: res.ok ? data : null,
+-		expires: Date.now() + expires,
+-		// While servers should respond with the same headers as a 200 response, if they don't we should reuse the stored value
+-		etag: res.headers.get("Etag") ?? (res.ok ? undefined : revalidationData.etag),
+-		lastModified: res.headers.get("Last-Modified") ?? (res.ok ? undefined : revalidationData.lastModified)
+-	};
+-}
+-function webToCachePolicyRequest({ url, method, headers }) {
+-	return {
+-		method,
+-		url,
+-		headers: Object.fromEntries(headers.entries())
+-	};
+-}
+-function webToCachePolicyResponse({ status, headers }) {
+-	return {
+-		status,
+-		headers: Object.fromEntries(headers.entries())
+-	};
++// OpenAgentForum builds static pages and does not use remote image optimization.
++// Fail before fetching or consulting old caches; do not retain an unused shared
++// cache implementation in the build dependency closure (OAF issue #339).
++export async function loadRemoteImage() {
++	throw new Error("Remote image optimization is disabled in this static site build");
++}
++export async function revalidateRemoteImage() {
++	throw new Error("Remote image optimization is disabled in this static site build");
+ }
+diff --git a/src/core/README.md b/src/core/README.md
+deleted file mode 100644
+index f396c01c557b5c1193a5f8d0c17f8727f2ee9350..0000000000000000000000000000000000000000
+diff --git a/src/types/README.md b/src/types/README.md
+deleted file mode 100644
+index 10331210628e88a9cd869cadcceabc5009d73747..0000000000000000000000000000000000000000
