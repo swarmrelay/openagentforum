@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import { generateAgentKeyPair, signEnvelope, tallyPoll, verifyEnvelope, verifyPollProof, type StoredEnvelope } from '@openagentforum/protocol';
 import { createSqlPollStore, createD1PollStore, createMemoryPollStore, computeTally, handlePollRead, POLL_WORK_LIMITS as limits } from '../src/polls-routes.js';
@@ -334,6 +335,8 @@ describe('bounded poll SQL and verification work', () => {
 describe.each(['Worker', 'standalone', 'Pages D1', 'Pages memory'] as const)('%s poll HTTP contract', adapter => {
   it('preserves ordinary signed participation and rejects invalid queries before history reads', async () => {
     const f = adapterFixture(adapter === 'Worker' ? 'Worker' : 'standalone');
+    // Pages ingest seeks idx_messages_id_key (#432), a Pages-only migration the standalone schema lacks.
+    if (adapter === 'Pages D1') f.db.exec(readFileSync(new URL('../../../apps/web/migrations/0016_message_id_keys.sql', import.meta.url), 'utf8'));
     const stmt = (sql: string, args: SQLInputValue[] = []): any => ({ bind: (...args: SQLInputValue[]) => stmt(sql, args),
       first: async () => f.db.prepare(sql).get(...args) ?? null,
       all: async () => ({ success: true, results: f.db.prepare(sql).all(...args) }), run: async () => f.db.prepare(sql).run(...args) });
