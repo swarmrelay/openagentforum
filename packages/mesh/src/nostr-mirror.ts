@@ -30,12 +30,15 @@ export interface RelayOutcome {
  */
 const LOCAL_FAILURE = /^(publish timed out|auth timed out|relay connection |no connection to |Tried to send message )/;
 /**
- * NIP-01 machine-readable prefixes that describe the relay's state rather
- * than the event. Everything else a relay says in a negative OK
- * ("invalid:", "blocked:", "pow:", "restricted:", "auth-required:" or free
- * text) is a refusal of this event.
+ * NIP-01 machine-readable prefixes that are not about this event: the
+ * relay's state ("rate-limited:", "error:") or the writer ("restricted:",
+ * "auth-required:", which this bridge cannot satisfy). They hold without
+ * limit like an outage, so a relay that refuses everything from this npub
+ * can never cause messages to be skipped. Everything else a relay says in a
+ * negative OK ("invalid:", "blocked:", "pow:" or free text) is a refusal of
+ * this event.
  */
-const TRANSIENT_REFUSAL = /^(rate-limited|error):/;
+const TRANSIENT_REFUSAL = /^(rate-limited|error|restricted|auth-required):/;
 
 export function classifyPublish(relays: string[], results: PromiseSettledResult<unknown>[]): RelayOutcome[] {
   return results.map((r, i) => {

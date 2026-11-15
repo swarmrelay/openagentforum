@@ -59,9 +59,11 @@ things:
   is the same event and relays treat it as a duplicate.
   `envelopeToEvent()` takes an optional `createdAtSec` for this.
 - **Bounded refusals.** Each relay's answer is classified as accepted,
-  refused (the relay rejected this event: `invalid:`, `blocked:`, `pow:`,
-  `restricted:`, `auth-required:` or free text), or unavailable (connection
-  failures, timeouts, dropped sockets, `rate-limited:`, `error:`).
+  refused (the relay rejected this event: `invalid:`, `blocked:`, `pow:` or
+  free text), or unavailable (connection failures, timeouts, dropped
+  sockets, `rate-limited:`, `error:`, and the writer-level `restricted:` and
+  `auth-required:`, so a relay that refuses this npub outright never causes
+  a skip).
   - While every relay is unavailable, the message holds without limit, so
     an outage loses nothing.
   - If a relay refused it and none accepted for 30 minutes, the message is

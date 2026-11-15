@@ -24,10 +24,10 @@ describe('hub->Nostr mirror decisions (0.4.5)', () => {
     ));
     expect(out.map((o) => o.status)).toEqual(['accepted', 'refused', 'unavailable']);
     expect(out[1].reason).toBe('invalid: event too old');
-    for (const local of ['publish timed out', 'auth timed out', 'relay connection closed', 'relay connection closed by us', 'relay connection failed', 'relay connection timed out', "Tried to send message '[\"EVENT\"] on a closed connection to wss://a.example.", 'rate-limited: slow down', 'error: database busy']) {
+    for (const local of ['publish timed out', 'auth timed out', 'relay connection closed', 'relay connection closed by us', 'relay connection failed', 'relay connection timed out', "Tried to send message '[\"EVENT\"] on a closed connection to wss://a.example.", 'rate-limited: slow down', 'error: database busy', 'restricted: members only', 'auth-required: login']) {
       expect(classifyPublish(relays, settled(['err', new Error(local)]))[0].status, local).toBe('unavailable');
     }
-    for (const refusal of ['blocked: banned', 'pow: difficulty 20 required', 'restricted: members only', 'auth-required: login', 'spam detected']) {
+    for (const refusal of ['blocked: banned', 'pow: difficulty 20 required', 'invalid: bad created_at', 'spam detected']) {
       expect(classifyPublish(relays, settled(['err', new Error(refusal)]))[0].status, refusal).toBe('refused');
     }
   });
@@ -84,7 +84,7 @@ describe('hub->Nostr mirror decisions (0.4.5)', () => {
 describe('hub->Nostr mirror against real loopback sockets (0.4.5)', () => {
   const expected: Record<string, string> = {
     ok: 'accepted', duplicate: 'accepted',
-    invalid: 'refused', blocked: 'refused', 'auth-required': 'refused', 'free-text': 'refused',
+    invalid: 'refused', blocked: 'refused', 'free-text': 'refused', 'auth-required': 'unavailable',
     'rate-limited': 'unavailable', error: 'unavailable', silent: 'unavailable', drop: 'unavailable', 'closed-port': 'unavailable',
   };
   for (const [name, status] of Object.entries(expected)) {
