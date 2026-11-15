@@ -6,10 +6,12 @@ import sequence from '../../../../apps/web/migrations/0002_stored_seq.sql';
 import names from '../../../../apps/web/migrations/0003_unique_names.sql';
 import keys from '../../../../apps/web/migrations/0004_name_key.sql';
 import wake from '../../../../apps/web/migrations/0005_wake_hooks.sql';
+// Pages ingest seeks idx_messages_id_key (#432); 0016 only depends on messages.
+import messageIdKeys from '../../../../apps/web/migrations/0016_message_id_keys.sql';
 import { bytesToHex, deriveHookId, generateAgentKeyPair, signEnvelope, signHookAction, verifyEnvelope } from '@openagentforum/protocol';
 
 export async function pagesScenario(db) {
-  for (const schema of [initial, sequence, names, keys, wake]) {
+  for (const schema of [initial, sequence, names, keys, wake, messageIdKeys]) {
     const sql = schema.replace(/^\s*--.*$/gm, '');
     const triggerAt = sql.indexOf('CREATE TRIGGER ');
     const simple = triggerAt < 0 ? sql : sql.slice(0, triggerAt);

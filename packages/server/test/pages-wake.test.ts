@@ -128,6 +128,72 @@ describe('actual Pages wake routes and atomic message outbox', () => {
     expect(Object.keys(job.body).sort()).toEqual(['agentId', 'channel', 'envelopeId', 'hookId', 'hub', 'kind', 'mentioned', 'sender', 'sentAt', 'storedSeq', 'type']);
     expect(JSON.stringify(job)).not.toContain('an answer for you');
   });
+  it('wakes the owner when a signed reply names its parent as urn:uuid: in another letter case (#414)', async () => {
+    const f = await setup();
+    f.spec.mentionsOnly = true;
+    await activate(f);
+    const outbox = () => Number(f.db.prepare('SELECT COUNT(*) AS n FROM wake_message_outbox').get()?.n);
+    const drain = async () => {
+      await new Promise(resolve => setTimeout(resolve, 5));
+      const refs: { kind: string }[] = [];
+      let after: unknown = null;
+      for (let polls = 0, settled = 0; polls < 40 && settled < 2; polls++) {
+        let response = await f.control({ op: 'poll', after });
+        for (let tries = 0; response.status === 429 && tries < 5; tries++) {
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          response = await f.control({ op: 'poll', after });
+        }
+        const polled = await response.json();
+        if (polled.ref) refs.push(polled.ref);
+        after = polled.after ?? null;
+        if (outbox() === 0) settled++;
+      }
+      expect(outbox()).toBe(0);
+      return refs.filter(ref => ref.kind === 'wake');
+    };
+    const { envelope: mine } = await f.post({ message: 'my question' }, 'general', f.owner);
+    expect(mine.id).toMatch(/^[0-9a-f-]{36}$/);
+    const { envelope: reply } = await f.post({ message: 'an answer', inReplyTo: `URN:UUID:${mine.id.toUpperCase()}` });
+    const [wake] = await drain();
+    expect(wake).toBeDefined();
+    const { job } = await (await f.control({ op: 'authorize', ref: wake })).json();
+    expect(job.body).toMatchObject({ kind: 'wake', envelopeId: reply.id, mentioned: true });
+  });
+  it('a later record in a colliding id form never takes over the original owner\'s reply wake (#432)', async () => {
+    const f = await setup();
+    f.spec.mentionsOnly = true;
+    await activate(f);
+    const outbox = () => Number(f.db.prepare('SELECT COUNT(*) AS n FROM wake_message_outbox').get()?.n);
+    const drain = async () => {
+      await new Promise(resolve => setTimeout(resolve, 5));
+      const refs: { kind: string }[] = [];
+      let after: unknown = null;
+      for (let polls = 0, settled = 0; polls < 40 && settled < 2; polls++) {
+        let response = await f.control({ op: 'poll', after });
+        for (let tries = 0; response.status === 429 && tries < 5; tries++) {
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          response = await f.control({ op: 'poll', after });
+        }
+        const polled = await response.json();
+        if (polled.ref) refs.push(polled.ref);
+        after = polled.after ?? null;
+        if (outbox() === 0) settled++;
+      }
+      expect(outbox()).toBe(0);
+      return refs.filter(ref => ref.kind === 'wake');
+    };
+    const { envelope: mine } = await f.post({ message: 'my question' }, 'general', f.owner);
+    // A colliding row from another key, stored AFTER the original (as a legacy row
+    // that predates the ingest guard would be).
+    f.db.prepare(`INSERT INTO messages (id, channel, sender, type, sequence, stored_seq, timestamp, payload_json, signature, checksum)
+      SELECT 'URN:UUID:' || upper(id), channel, ?, type, sequence + 100, (SELECT MAX(stored_seq) + 1 FROM messages WHERE channel = 'general'), timestamp, payload_json, signature, checksum
+      FROM messages WHERE id = ?`).run(f.sender.agentId, mine.id);
+    const { envelope: reply } = await f.post({ message: 'an answer', inReplyTo: `urn:uuid:${mine.id}` });
+    const [wake] = await drain();
+    expect(wake).toBeDefined();
+    const { job } = await (await f.control({ op: 'authorize', ref: wake })).json();
+    expect(job.body).toMatchObject({ kind: 'wake', envelopeId: reply.id, mentioned: true });
+  });
   it.each(['delete', 'renew'] as const)('cancels an existing claim after signed %s', async action => {
     const f = await setup();
     await f.set();
