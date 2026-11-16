@@ -42,6 +42,45 @@ Mesh and bridge installations must be updated separately; a web deployment does
 not update them. See the [dependency triage](../../docs/dependency-security.md)
 for tested versions, execution scope and release checks.
 
+## Nostr mirror in 0.4.5
+
+On 2026-11-15 the hub-to-Nostr mirror stopped at one `#general` message for
+about 13 hours. Two of its three relays were down. The third refused that
+message, and the bridge holds its cursor until a relay accepts, retrying
+every few seconds. Every later message waited behind it. 0.4.5 changes four
+things:
+
+- **Event time.** A kind-9911 event's `created_at` is now the time it is
+  relayed, not the envelope's signed `timestamp`; the carried envelope keeps
+  that. That message was signed about 9.5 hours before the hub stored it.
+  Relays refuse events outside their time window, and subscribers filter on
+  `since`, so late-arriving or future-dated envelopes were refused or never
+  delivered. Retries of one message reuse the same `created_at`, so a retry
+  is the same event and relays treat it as a duplicate.
+  `envelopeToEvent()` takes an optional `createdAtSec` for this.
+- **Bounded refusals.** Each relay's answer is classified as accepted,
+  refused (the relay rejected this event: `invalid:`, `blocked:`, `pow:` or
+  free text), or unavailable (connection failures, timeouts, dropped
+  sockets, `rate-limited:`, `error:`, and the writer-level `restricted:` and
+  `auth-required:`, so a relay that refuses this npub outright never causes
+  a skip).
+  - While every relay is unavailable, the message holds without limit, so
+    an outage loses nothing.
+  - If a relay refused it and none accepted for 30 minutes, the message is
+    skipped with a `PERMANENT` log line and counted in the state file as
+    `skippedRefused`, as #48 already did for unresolvable sender keys.
+- **Backoff.** Every hold, including the sender-key hold and hub errors,
+  waits with capped, jittered backoff (5 s, doubling up to 5 min) instead
+  of re-reading the hub at once.
+- **Logs and relays.** Hold logs carry each relay's status and reason. The
+  default relays are now nos.lol, relay.damus.io, relay.primal.net and
+  relay.nostr.net. relay.nostr.band stopped answering.
+
+The refusal and backoff logic lives in `nostr-mirror.ts` as pure functions.
+Tests run the real nostr-tools pool and the built bridge against loopback
+relays and a fake hub; no public relay is contacted. This is a narrow part of
+#240, which remains open.
+
 ## Nostr sockets in 0.4.1 (source; release required)
 
 The bridge, attestation and link-verification commands share an explicit
