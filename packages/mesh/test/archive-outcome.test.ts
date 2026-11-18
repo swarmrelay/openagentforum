@@ -2,21 +2,21 @@ import { describe, expect, it } from 'vitest';
 import { classifyArchiveFailure } from '../src/archive-outcome.js';
 
 describe('classifyArchiveFailure (#240)', () => {
-  it('keeps the 409 id conflict distinct (#35), whatever the body', () => {
-    expect(classifyArchiveFailure(409)).toBe('conflict');
+  it('drops only identified 409 id conflicts (#35)', () => {
+    expect(classifyArchiveFailure(409)).toBe('retry');
     expect(classifyArchiveFailure(409, { error: 'Envelope id is already bound to a different envelope' })).toBe('conflict');
-    expect(classifyArchiveFailure(409, '<html>edge</html>')).toBe('conflict');
+    expect(classifyArchiveFailure(409, { error: 'Envelope id names an existing message in another form', reason: 'id_key_conflict' })).toBe('conflict');
+    expect(classifyArchiveFailure(409, '<html>edge</html>')).toBe('retry');
+    expect(classifyArchiveFailure(409, { error: 'Ballot refused: poll_not_found', reason: 'poll_not_found' })).toBe('retry');
   });
 
   // 400: every hub error on this route is a function of the bytes —
   // invalid input, malformed envelope, sequence/timestamp types,
   // channel mismatch, malformed encryption metadata.
   it.each([
-    ['input-policy code', { error: 'invalid_public_input', code: 'invalid_public_input' }],
     ['malformed envelope (Worker wording)', { error: 'Malformed MessageEnvelope. Required fields: id, sender, type, payload, signature, checksum' }],
     ['malformed envelope (Pages wording)', { error: 'Malformed MessageEnvelope. Required: id, sender, type, payload, signature, checksum' }],
     ['sequence/timestamp types', { error: 'sequence and timestamp must be numbers and are part of the sign string' }],
-    ['channel mismatch', { error: 'Envelope channel general does not match URL channel intel-exchange' }],
     ['invalid encryption metadata', { error: 'Encrypted envelopes require ciphertext and valid encryption metadata', reason: 'invalid_encryption_metadata' }],
     ['invalid envelope metadata', { error: 'Encrypted envelopes require ciphertext and valid encryption metadata', reason: 'invalid_envelope_metadata' }],
   ])('drops a 400 permanently: %s', (_name, body) => {
@@ -60,6 +60,11 @@ describe('classifyArchiveFailure (#240)', () => {
     ['400 with an unknown reason', 400, { error: 'Bad input', reason: 'unknown_reason' }],
     ['400 with no parsed body', 400, undefined],
     ['400 with a non-object body', 400, 'bad request'],
+    ['400 input policy can include an aborted stream', 400, { error: 'invalid_public_input', code: 'invalid_public_input' }],
+    ['400 unknown JSON edge response', 400, { error: 'Bad Request' }],
+    ['500 cannot become permanent because of its reason', 500, { error: 'error', reason: 'invalid_encryption_metadata' }],
+    ['400 unknown error with a known reason', 400, { error: 'upstream error', reason: 'invalid_encryption_metadata' }],
+    ['403 verification exception is not a known invalid signature', 403, { error: 'Cryptographic validation failed: transient crypto failure' }],
     ['413 bounds refusal (bounds can change)', 413, { error: 'public_input_too_large', code: 'public_input_too_large' }],
     ['415 framing refusal (request framing, not bytes)', 415, { error: 'unsupported_public_input', code: 'unsupported_public_input' }],
     ['408 input timeout', 408, { error: 'public_input_timeout', code: 'public_input_timeout' }],
