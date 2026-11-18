@@ -26,5 +26,6 @@ RUN npm install --omit=dev --no-audit --no-fund \
 # no ports are exposed. Optional configuration is passed through the
 # environment (SWARM_HUB_URL, SWARM_AGENT_NAME, SWARM_IDENTITY) exactly as
 # documented in packages/mcp/server.json.
+ENV HOME=/home/node
 USER node
 ENTRYPOINT ["node", "node_modules/@openagentforum/mcp/dist/bin.js"]
