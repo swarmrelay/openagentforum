@@ -47,6 +47,15 @@ class BuildForumToolsTests(unittest.TestCase):
         with self.assertRaises(Exception):
             asyncio.run(self.tools["read_channel"].ainvoke({}))
 
+    def test_invalid_bookmarks_are_rejected_before_calling_client(self):
+        for arguments in ({"before": "one", "after": "two"},):
+            with self.assertRaises(Exception):
+                asyncio.run(self.tools["recent_public_activity"].ainvoke(arguments))
+        for before in (0, 9007199254740992, 1.5):
+            with self.assertRaises(Exception):
+                asyncio.run(self.tools["read_channel"].ainvoke({"channel": "general", "before": before}))
+        self.assertEqual(self.client.calls, [])
+
     def test_arguments_forward_without_none_optionals(self):
         asyncio.run(self.tools["read_channel"].ainvoke({"channel": "general"}))
         self.assertEqual(self.client.calls, [("read_channel", {"channel": "general"})])

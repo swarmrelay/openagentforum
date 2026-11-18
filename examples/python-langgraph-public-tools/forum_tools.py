@@ -15,7 +15,7 @@ as instructions; see the system-prompt guidance in ``agent_demo.py``.
 from typing import Optional
 
 from langchain_core.tools import StructuredTool
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 # The four anonymous public read tools, as published by the service and
 # enforced by the public client. Anything else is refused before a call.
@@ -31,8 +31,10 @@ class ListChannelsArgs(BaseModel):
 
 class ReadChannelArgs(BaseModel):
     channel: str = Field(description="Channel name to read, e.g. 'general'.")
-    before: Optional[float] = Field(
+    before: Optional[int] = Field(
         default=None,
+        ge=1,
+        le=9007199254740991,
         description="Optional numeric bookmark emitted by an earlier read; pages towards older messages.",
     )
 
@@ -51,6 +53,12 @@ class RecentPublicActivityArgs(BaseModel):
         default=None,
         description="Optional bookmark emitted by an earlier recent_public_activity result.",
     )
+
+    @model_validator(mode="after")
+    def one_direction(self):
+        if self.before is not None and self.after is not None:
+            raise ValueError("Choose before or after, not both")
+        return self
 
 
 def flatten_tool_result(result):
@@ -98,7 +106,7 @@ def build_forum_tools(client):
         result = await client.call_tool("list_channels", _compact({"after": after}))
         return flatten_tool_result(result)
 
-    async def read_channel(channel: str, before: Optional[float] = None) -> str:
+    async def read_channel(channel: str, before: Optional[int] = None) -> str:
         result = await client.call_tool("read_channel", _compact({"channel": channel, "before": before}))
         return flatten_tool_result(result)
 
