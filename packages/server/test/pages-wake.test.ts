@@ -118,9 +118,10 @@ describe('actual Pages wake routes and atomic message outbox', () => {
     // (#414) A legacy prefixed parent stays replyable by exact match; a
     // prefixed id with no stored row is refused at ingest, while a canonical
     // id is accepted without a parent-existence check (lookup just misses).
-    for (const parent of [theirs.id, 'urn:uuid:00000000-0000-4000-8000-00000000abcd', vaulted.id, '00000000-0000-4000-8000-00000000ffff']) {
+    for (const parent of [theirs.id, vaulted.id, '00000000-0000-4000-8000-00000000ffff']) {
       expect((await f.post({ message: 'an answer', inReplyTo: parent })).response.status).toBe(200);
     }
+    expect((await f.post({ message: 'an answer', inReplyTo: 'urn:uuid:00000000-0000-4000-8000-00000000abcd' })).response.status).toBe(400);
     expect((await f.post({ message: 'an answer', inReplyTo: 'urn:uuid:00000000-0000-4000-8000-00000000ffff' })).response.status).toBe(400);
     expect((await f.post({ message: 'replying to myself', inReplyTo: mine.id }, 'general', f.owner)).response.status).toBe(200);
     expect(await drain()).toEqual([]);
@@ -131,6 +132,68 @@ describe('actual Pages wake routes and atomic message outbox', () => {
     expect(job.body).toMatchObject({ kind: 'wake', envelopeId: reply.id, sender: f.sender.agentId, mentioned: true });
     expect(Object.keys(job.body).sort()).toEqual(['agentId', 'channel', 'envelopeId', 'hookId', 'hub', 'kind', 'mentioned', 'sender', 'sentAt', 'storedSeq', 'type']);
     expect(JSON.stringify(job)).not.toContain('an answer for you');
+  });
+  it('does not wake the owner for a different-form parent reference (#414)', async () => {
+    const f = await setup();
+    f.spec.mentionsOnly = true;
+    await activate(f);
+    const outbox = () => Number(f.db.prepare('SELECT COUNT(*) AS n FROM wake_message_outbox').get()?.n);
+    const drain = async () => {
+      await new Promise(resolve => setTimeout(resolve, 5));
+      const refs: { kind: string }[] = [];
+      let after: unknown = null;
+      for (let polls = 0, settled = 0; polls < 40 && settled < 2; polls++) {
+        let response = await f.control({ op: 'poll', after });
+        for (let tries = 0; response.status === 429 && tries < 5; tries++) {
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          response = await f.control({ op: 'poll', after });
+        }
+        const polled = await response.json();
+        if (polled.ref) refs.push(polled.ref);
+        after = polled.after ?? null;
+        if (outbox() === 0) settled++;
+      }
+      expect(outbox()).toBe(0);
+      return refs.filter(ref => ref.kind === 'wake');
+    };
+    const { envelope: mine } = await f.post({ message: 'my question' }, 'general', f.owner);
+    expect(mine.id).toMatch(/^[0-9a-f-]{36}$/);
+    const { response } = await f.post({ message: 'an answer', inReplyTo: `URN:UUID:${mine.id.toUpperCase()}` });
+    expect(response.status).toBe(400);
+    expect(await drain()).toEqual([]);
+  });
+  it('a later record in a colliding id form never takes over the original owner\'s reply wake (#432)', async () => {
+    const f = await setup();
+    f.spec.mentionsOnly = true;
+    await activate(f);
+    const outbox = () => Number(f.db.prepare('SELECT COUNT(*) AS n FROM wake_message_outbox').get()?.n);
+    const drain = async () => {
+      await new Promise(resolve => setTimeout(resolve, 5));
+      const refs: { kind: string }[] = [];
+      let after: unknown = null;
+      for (let polls = 0, settled = 0; polls < 40 && settled < 2; polls++) {
+        let response = await f.control({ op: 'poll', after });
+        for (let tries = 0; response.status === 429 && tries < 5; tries++) {
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          response = await f.control({ op: 'poll', after });
+        }
+        const polled = await response.json();
+        if (polled.ref) refs.push(polled.ref);
+        after = polled.after ?? null;
+        if (outbox() === 0) settled++;
+      }
+      expect(outbox()).toBe(0);
+      return refs.filter(ref => ref.kind === 'wake');
+    };
+    const { envelope: mine } = await f.post({ message: 'my question' }, 'general', f.owner);
+    // A colliding row from another key, stored AFTER the original (as a legacy row
+    // that predates the ingest guard would be).
+    f.db.prepare(`INSERT INTO messages (id, channel, sender, type, sequence, stored_seq, timestamp, payload_json, signature, checksum)
+      SELECT 'URN:UUID:' || upper(id), channel, ?, type, sequence + 100, (SELECT MAX(stored_seq) + 1 FROM messages WHERE channel = 'general'), timestamp, payload_json, signature, checksum
+      FROM messages WHERE id = ?`).run(f.sender.agentId, mine.id);
+    const { response } = await f.post({ message: 'an answer', inReplyTo: `URN:UUID:${mine.id.toUpperCase()}` });
+    expect(response.status).toBe(200);
+    expect(await drain()).toEqual([]);
   });
   it.each(['delete', 'renew'] as const)('cancels an existing claim after signed %s', async action => {
     const f = await setup();

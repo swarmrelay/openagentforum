@@ -1,11 +1,11 @@
-import { canonicalizeJson, type StoredEnvelope } from '@openagentforum/protocol';
-import { ingestMessageIdProblem } from '@openagentforum/server/message-id';
+import { canonicalizeJson, messageIdKey, type StoredEnvelope } from '@openagentforum/protocol';
+import { ingestMessageIdProblem, PUBLIC_LEGACY_PARENT_SQL } from '@openagentforum/server/message-id';
 import { createD1PollStore, createMemoryPollStore, handlePollRead, pollIngestGate } from '@openagentforum/server/polls';
 import { createMcpManifest } from '../_lib/mcp-manifest.js';
 import { handlePagesHookRequest, type HubEnv } from '../_lib/wake.js';
 import { encryptionError, storedEnvelope, type EnvelopeRow } from '../_lib/envelopes.js';
 import { moreRepliesPath, readAgentReplyRows, sourceEnvelope, REPLY_POSTS, REPLIES_PER_POST } from '../_lib/agent-replies-store.js';
-import { AGENT_ID, POST_CURSOR } from '../_lib/public-browse-store.js';
+import { AGENT_ID, ID_KEY, POST_CURSOR } from '../_lib/public-browse-store.js';
 import { ACTIVITY_CAP, readSenderActivity } from '../_lib/sender-activity.js';
 import { AGENT_DIRECTORY_SQL, agentDirectoryPage, parseAgentDirectoryQuery } from '@openagentforum/server/agent-directory';
 import { handleRegistration, handleRegistrationState, memoryRegistrationStore, sqlRegistrationStore, type RegistrationRow } from '@openagentforum/server/registration';
@@ -536,11 +536,26 @@ export const onRequest: PagesFunction<HubEnv> = async (context) => {
         // (#414) Canonical signed id form; reject before any lookup or write.
         // A legacy parent is allowed only when a stored row carries that exact id.
         const idProblem = await ingestMessageIdProblem(envelope, async (id) => {
-          if (env?.DB) return Boolean(await env.DB.prepare('SELECT 1 AS found FROM messages WHERE id = ?').bind(id).first());
-          for (const records of memoryFallback.messages.values()) {
-            if ((records as Array<{ id: string }>).some(message => message.id === id)) return true;
+          if (env?.DB) return Boolean(await env.DB.prepare(PUBLIC_LEGACY_PARENT_SQL).bind(id).first());
+          for (const [channelName, records] of memoryFallback.messages) {
+            const channel = memoryFallback.channels.get(channelName);
+            if (!channel || channel.isPrivate || channel.e2eeRequired || !/^[a-z0-9_-]{1,128}$/.test(channelName)
+                || channelName.startsWith('dm-') || channelName.startsWith('vault-')) continue;
+            if ((records as Array<MessageRecord & { storedSeq: number }>).some(message => message.id === id
+                && /^[a-zA-Z0-9_:-]{1,128}$/.test(message.id) && message.encrypted !== true && message.type !== 'e2ee_blob'
+                && message.nonce == null && message.ephemeralPublicKey == null && message.recipientKeys == null
+                && Number.isSafeInteger(message.storedSeq) && message.storedSeq > 0)) return true;
           }
           return false;
+        }, async () => {
+          if (env?.DB) {
+            const row = await env.DB.prepare('SELECT * FROM messages WHERE id = ?').bind(envelope.id).first<EnvelopeRow>();
+            if (!row) return false;
+            const saved = storedEnvelope(row);
+            return row.signature === envelope.signature && canonicalizeJson(envelopeMetadata(saved)) === canonicalizeJson(envelopeMetadata(envelope));
+          }
+          const saved = Array.from(memoryFallback.messages.values()).flat().find(record => record.id === envelope.id);
+          return Boolean(saved && saved.signature === envelope.signature && canonicalizeJson(envelopeMetadata(saved)) === canonicalizeJson(envelopeMetadata(envelope)));
         });
         if (idProblem) return jsonResponse({ error: idProblem.error, code: idProblem.code, field: idProblem.field, expected: idProblem.expected }, 400);
 
@@ -611,6 +626,15 @@ export const onRequest: PagesFunction<HubEnv> = async (context) => {
             }
             return jsonResponse({ error: 'Envelope id is already bound to a different envelope' }, 409);
           }
+          // (#414, #432) Readers match reply parents by message-id key, so no two
+          // stored records may share one: a later id that names an existing
+          // message in another form (urn:uuid:, letter case) could otherwise take
+          // over that message's replies and wakes. Checked over every record,
+          // private ones included. The insert below repeats this atomically.
+          if (await env.DB.prepare(`SELECT 1 FROM messages INDEXED BY idx_messages_id_key WHERE ${ID_KEY} = ? AND id != ? LIMIT 1`)
+            .bind(messageIdKey(envelope.id), envelope.id).first()) {
+            return jsonResponse({ error: 'Envelope id names an existing message in another form', reason: 'id_key_conflict' }, 409);
+          }
         }
 
         if (env?.DB) {
@@ -633,8 +657,10 @@ export const onRequest: PagesFunction<HubEnv> = async (context) => {
               const saved = await env.DB.prepare(`
                 INSERT INTO messages (id, channel, sender, type, sequence, stored_seq, timestamp, payload_json, signature, checksum, encrypted, reply_to_id, recipient_keys_json, ephemeral_public_key, nonce)
                 SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
-                WHERE ? = 1 OR NOT EXISTS (
+                WHERE (? = 1 OR NOT EXISTS (
                   SELECT 1 FROM channels WHERE name = ? AND (is_private = 1 OR e2ee_required = 1)
+                )) AND NOT EXISTS (
+                  SELECT 1 FROM messages INDEXED BY idx_messages_id_key WHERE ${ID_KEY} = ? AND id != ?
                 )
                 RETURNING *
               `).bind(
@@ -654,9 +680,17 @@ export const onRequest: PagesFunction<HubEnv> = async (context) => {
                 envelope.ephemeralPublicKey ?? null,
                 envelope.nonce ?? null,
                 envelope.encrypted === true ? 1 : 0,
-                chName
+                chName,
+                messageIdKey(envelope.id),
+                envelope.id
               ).first<EnvelopeRow>();
-              if (!saved) return jsonResponse({ error: 'Channel now requires encryption', reason: 'encryption_required' }, 403);
+              if (!saved) {
+                // Either guard can refuse; report the one that did.
+                const conflict = await env.DB.prepare(`SELECT 1 FROM messages INDEXED BY idx_messages_id_key WHERE ${ID_KEY} = ? AND id != ? LIMIT 1`)
+                  .bind(messageIdKey(envelope.id), envelope.id).first();
+                if (conflict) return jsonResponse({ error: 'Envelope id names an existing message in another form', reason: 'id_key_conflict' }, 409);
+                return jsonResponse({ error: 'Channel now requires encryption', reason: 'encryption_required' }, 403);
+              }
               savedEnvelope = storedEnvelope(saved);
             } catch (e: any) {
               if (!String(e?.message || e).includes('UNIQUE')) throw e;

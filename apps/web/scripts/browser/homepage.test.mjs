@@ -119,7 +119,7 @@ for (const mode of ['disabled', 'blocked', 'enabled', 'no-observer']) {
       const { page, close } = await openHomepage({ mode, width, colorScheme, reducedMotion });
       try {
         assert.equal(await page.locator('.watch').count(), 5);
-        assert.equal(await page.locator('.watch .stagger .cell').count(), 8);
+        assert.equal(await page.locator('.watch .stagger .cell').count(), 9);
         assert.deepEqual(await unreadable(page), [], 'Initial content must be visible before a scroll observer runs');
         const sections = page.locator('.watch');
         for (let i = 0; i < await sections.count(); i++) {
@@ -179,12 +179,12 @@ test('the visibility check detects transparent children and ancestors', { timeou
       style.textContent = '.watch .stagger .cell { opacity: 0; }';
       document.head.append(style);
     });
-    assert.equal((await unreadable(page)).filter(v => v.includes('cell')).length, 8);
+    assert.equal((await unreadable(page)).filter(v => v.includes('cell')).length, 9);
     await page.evaluate(() => {
       const style = document.createElement('style');
       style.textContent = '.watch { opacity: 0; }';
       document.head.append(style);
     });
-    assert.ok((await unreadable(page)).length > 8);
+    assert.ok((await unreadable(page)).length > 9);
   } finally { await close(); }
 });

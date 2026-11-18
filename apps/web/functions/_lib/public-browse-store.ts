@@ -29,6 +29,23 @@ export const PUBLIC_NAME = `length(channel) BETWEEN 1 AND 128 AND channel NOT GL
   AND channel NOT GLOB 'dm-*' AND channel NOT GLOB 'vault-*'`;
 export const SIGNED_PARENT = `(CASE WHEN json_valid(payload_json) THEN json_extract(payload_json, '$.inReplyTo') END)`;
 export const HAS_PARENT = `instr(payload_json, '"inReplyTo"') > 0`;
+// (#414) SQL mirror of messageIdKey() from @openagentforum/protocol: a UUID,
+// bare or urn:uuid:, in any letter case, compares as its bare lowercase form;
+// every other id compares exactly. D1 caps GLOB/LIKE patterns at 50 bytes, so
+// the UUID shape is checked with short literals instead: 36 characters, dashes
+// at 9/14/19/24 and nowhere else, every character a hex digit or a dash. These
+// MUST match migration 0016 term for term.
+const bareUuid = (s: string) => `(length(${s}) = 36 AND substr(${s}, 9, 1) = '-' AND substr(${s}, 14, 1) = '-'
+  AND substr(${s}, 19, 1) = '-' AND substr(${s}, 24, 1) = '-' AND length(replace(${s}, '-', '')) = 32
+  AND ltrim(${s}, '0123456789abcdef-') = '')`;
+export const idKey = (value: string) => {
+  const low = `lower(${value})`;
+  const tail = `substr(${low}, 10)`;
+  return `(CASE WHEN substr(${low}, 1, 9) = 'urn:uuid:' AND ${bareUuid(tail)} THEN ${tail}
+  WHEN ${bareUuid(low)} THEN ${low} ELSE ${value} END)`;
+};
+export const SIGNED_PARENT_KEY = idKey(SIGNED_PARENT);
+export const ID_KEY = idKey('id');
 // The idx_messages_public_author predicate on author timestamps (migration 0012).
 export const POST_TIME = `typeof(timestamp) = 'integer' AND timestamp BETWEEN 0 AND 9007199254740991`;
 // Channel flags live in another table, so index predicates cannot carry them.
@@ -50,7 +67,7 @@ export interface PublicRow {
   id: string; channel: string; sender: string; type: MessageEnvelope['type'];
   sequence: number; stored_seq: number; timestamp: number; payload_json: string;
   signature: string; checksum: string; reply_to_id: string | null; public_key: string | null;
-  signed_text_complete: number | null; has_replies?: number | null; depth?: number;
+  signed_text_complete: number | null; has_replies?: number | null; depth?: number; possible_parent_json?: string | null;
 }
 export interface PublicMessage {
   id: string; channel: string; sender: string; type: string; sequence: number; storedSeq: number;
@@ -74,6 +91,8 @@ export interface BrowseData {
     /** Oldest first, ending with the direct parent. Each link is authenticated by the verified child. */
     ancestors: PublicMessage[]; ancestorsEnd: 'root' | 'limit' | 'unverified' | 'unavailable' | 'cycle';
     replies: PublicMessage[]; nextReplies?: ReplyCursor;
+    /** Unauthenticated alternate-form candidates, not replies or delivery. */
+    possibleParents: Array<{ id: string; channel: string }>;
     /** Verified records shown on this page, per sender key, in order of first appearance. */
     participants: Array<{ sender: string; records: number }>;
   };
@@ -81,7 +100,7 @@ export interface BrowseData {
 export const THREAD_ANCESTORS = 10;
 export const THREAD_REPLIES = 20;
 // Shared by HTML and Markdown so both describe the same bounds.
-export const THREAD_SCOPE = `Replies are matched by each record's signed inReplyTo link; the unsigned legacy replyToId never counts. At most ${THREAD_REPLIES} direct replies per page, ordered by channel and then unsigned relay position. Earlier records follow verified parent links, at most ${THREAD_ANCESTORS} levels up.`;
+export const THREAD_SCOPE = `Replies are matched exactly by each record's signed inReplyTo link; the unsigned legacy replyToId never counts. At most ${THREAD_REPLIES} direct replies per page, ordered by channel and then unsigned relay position. Earlier records follow verified parent links, at most ${THREAD_ANCESTORS} levels up.`;
 export const THREAD_ENDS: Record<NonNullable<BrowseData['thread']>['ancestorsEnd'], string> = {
   root: '',
   limit: `Only the nearest ${THREAD_ANCESTORS} earlier records are shown. Open the oldest one to continue up the thread.`,
@@ -116,7 +135,14 @@ export async function readPublicBrowse(db: D1Database, route: Exclude<BrowseRout
   // (#359) One LIMIT-1 seek per listed message: an ordinary link, never a count.
   const hasReplies = route.kind === 'channel' ? `, EXISTS (SELECT 1 FROM messages AS r INDEXED BY idx_messages_signed_parent
       WHERE ${SIGNED_PARENT} = +m.id AND ${PUBLIC_MESSAGE} AND ${PUBLIC_NAME} AND ${HAS_PARENT} AND ${visible('r.channel')}) AS has_replies` : '';
-  const messages = db.prepare(`SELECT ${MESSAGE_COLUMNS}${hasReplies}
+  const rawParent = `(CASE WHEN json_valid(m.payload_json) THEN json_extract(m.payload_json, '$.inReplyTo') END)`;
+  // Inspect at most three key-index entries before checking visibility. These
+  // are only candidates; the signed reference remains authoritative.
+  const possibleParents = route.kind === 'message' ? `, (SELECT json_group_array(json_object('id', candidate.id, 'channel', candidate.channel))
+      FROM messages AS candidate WHERE candidate.rowid IN (SELECT rowid FROM messages INDEXED BY idx_messages_id_key
+        WHERE ${ID_KEY} = ${idKey(rawParent)} ORDER BY rowid LIMIT 3)
+        AND candidate.id != ${rawParent} AND ${PUBLIC_MESSAGE} AND ${PUBLIC_NAME} AND ${visible('candidate.channel')}) AS possible_parent_json` : '';
+  const messages = db.prepare(`SELECT ${MESSAGE_COLUMNS}${hasReplies}${possibleParents}
     FROM (SELECT name FROM channels WHERE name = ? AND ${PUBLIC_CHANNEL}) AS visible
     CROSS JOIN (SELECT * FROM messages ${route.kind === 'channel' ? 'INDEXED BY idx_messages_public_browse' : ''}
       WHERE channel = ? AND ${PUBLIC_MESSAGE}) AS m
@@ -166,11 +192,11 @@ export async function readPublicBrowse(db: D1Database, route: Exclude<BrowseRout
   return {
     channels: [], channel: selected, messages: presented,
     ...(rows.length > MESSAGE_LIMIT ? { olderThan: page[0].stored_seq } : {}),
-    ...(route.kind === 'message' ? { thread: await presentThread(presented[0], ancestorResult.results as PublicRow[], replyResult.results as PublicRow[]) } : {}),
+    ...(route.kind === 'message' ? { thread: await presentThread(presented[0], ancestorResult.results as PublicRow[], replyResult.results as PublicRow[], rows[0].possible_parent_json) } : {}),
   };
 }
 
-async function presentThread(target: PublicMessage, ancestorRows: PublicRow[], replyRows: PublicRow[]): Promise<NonNullable<BrowseData['thread']>> {
+async function presentThread(target: PublicMessage, ancestorRows: PublicRow[], replyRows: PublicRow[], possibleJson?: string | null): Promise<NonNullable<BrowseData['thread']>> {
   // A parent link is authenticated only by its verified child, so the walk
   // stops at the first unverified record, a missing level or a repeated ID.
   const byDepth = new Map(ancestorRows.map(row => [row.depth!, row]));
@@ -194,7 +220,15 @@ async function presentThread(target: PublicMessage, ancestorRows: PublicRow[], r
   for (const message of [...ancestors.slice().reverse(), target, ...replies]) {
     if (message.verified) counts.set(message.sender, (counts.get(message.sender) ?? 0) + 1);
   }
-  return { ancestors: ancestors.reverse(), ancestorsEnd, replies,
+  let possibleParents: Array<{ id: string; channel: string }> = [];
+  if (target.verified && target.signedParent && !ancestorRows.some(row => row.depth === 1 && row.id === target.signedParent)) {
+    try {
+      const candidates: unknown = JSON.parse(possibleJson || '[]');
+      if (Array.isArray(candidates)) possibleParents = candidates.filter((candidate): candidate is { id: string; channel: string } =>
+        typeof candidate?.id === 'string' && MESSAGE_ID.test(candidate.id) && typeof candidate.channel === 'string' && CHANNEL_NAME.test(candidate.channel)).slice(0, 3);
+    } catch { /* A malformed candidate is not a match. */ }
+  }
+  return { ancestors: ancestors.reverse(), ancestorsEnd, replies, possibleParents,
     participants: [...counts].map(([sender, records]) => ({ sender, records })),
     ...(replyRows.length > THREAD_REPLIES ? { nextReplies: { channel: page.at(-1)!.channel, storedSeq: page.at(-1)!.stored_seq } } : {}) };
 }

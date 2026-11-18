@@ -96,8 +96,8 @@ describe.each(['Worker', 'standalone', 'Pages D1', 'Pages memory'] as const)('%s
     // that exact string and thread by exact match without any normalization.
     const legacyId = `urn:uuid:${crypto.randomUUID()}`;
     expect((await f.request('/v1/channels', { name: f.channel, title: 'Legacy parent fixture' })).status).toBe(200);
-    const legacy = await signed(f.key, f.channel, { message: 'legacy parent' }, await sha256Hex('{"message":"legacy parent"}'));
-    f.db.prepare('INSERT INTO messages (id, channel, sender, type, sequence, stored_seq, timestamp, payload_json, signature, checksum) VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?)')
+    const legacy = await signed(f.key, f.channel, { message: 'legacy parent' }, await sha256Hex('{"message":"legacy parent"}'), 0, legacyId);
+    f.db.prepare('INSERT INTO messages (id, channel, sender, type, sequence, stored_seq, timestamp, payload_json, signature, checksum) VALUES (?, ?, ?, ?, ?, 2, ?, ?, ?, ?)')
       .run(legacyId, f.channel, legacy.sender, legacy.type, legacy.sequence, legacy.timestamp,
         JSON.stringify(legacy.payload), legacy.signature, legacy.checksum);
 
@@ -111,7 +111,44 @@ describe.each(['Worker', 'standalone', 'Pages D1', 'Pages memory'] as const)('%s
     expect(response.status).toBe(400);
     expect(await response.json()).toMatchObject({ code: 'non_canonical_message_id', field: 'inReplyTo', expected: CANONICAL_MESSAGE_ID_FORM });
     const { messages } = await (await f.request(f.path)).json();
-    expect(messages.map((message: { id: string }) => message.id)).toEqual([legacyId, accepted.id]);
+    expect(new Set(messages.map((message: { id: string }) => message.id))).toEqual(new Set([legacyId, accepted.id]));
+  });
+
+  if (adapter !== 'Pages memory') it('accepts only the exact verified replay of a historical non-canonical id', async () => {
+    const f = await setup(adapter);
+    expect((await f.request('/v1/channels', { name: f.channel, title: 'Legacy replay fixture' })).status).toBe(200);
+    const legacyId = `urn:uuid:${crypto.randomUUID()}`;
+    const legacy = await signed(f.key, f.channel, { message: 'legacy' }, await sha256Hex('{"message":"legacy"}'), 0, legacyId);
+    f.db.prepare('INSERT INTO messages (id, channel, sender, type, sequence, stored_seq, timestamp, payload_json, signature, checksum) VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?)')
+      .run(legacy.id, legacy.channel, legacy.sender, legacy.type, legacy.sequence, legacy.timestamp,
+        JSON.stringify(legacy.payload), legacy.signature, legacy.checksum);
+    const replay = await f.request(f.path, legacy);
+    expect(replay.status).toBe(200);
+    expect(await replay.json()).toMatchObject({ success: true, alreadyStored: true });
+    const other = await signed(f.key, f.channel, { message: 'different' }, await sha256Hex('{"message":"different"}'), 0, legacyId);
+    const refused = await f.request(f.path, other);
+    expect(refused.status).toBe(400);
+    expect(await refused.json()).toMatchObject({ code: 'non_canonical_message_id', field: 'id' });
+    expect(f.db.prepare('SELECT COUNT(*) AS n FROM messages WHERE channel = ?').get(f.channel)?.n).toBe(1);
+  });
+
+  if (adapter !== 'Pages memory') it('does not reveal a hidden legacy parent through admission', async () => {
+    const f = await setup(adapter);
+    const hiddenChannel = 'hidden-' + crypto.randomUUID();
+    expect((await f.request('/v1/channels', { name: hiddenChannel, title: 'Hidden parent fixture' })).status).toBe(200);
+    f.db.prepare('UPDATE channels SET is_private = 1 WHERE name = ?').run(hiddenChannel);
+    const hiddenId = `urn:uuid:${crypto.randomUUID()}`;
+    const hidden = await signed(f.key, hiddenChannel, { message: 'hidden' }, await sha256Hex('{"message":"hidden"}'), 0, hiddenId);
+    f.db.prepare('INSERT INTO messages (id, channel, sender, type, sequence, stored_seq, timestamp, payload_json, signature, checksum) VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?)')
+      .run(hidden.id, hidden.channel, hidden.sender, hidden.type, hidden.sequence, hidden.timestamp,
+        JSON.stringify(hidden.payload), hidden.signature, hidden.checksum);
+    for (const parent of [hiddenId, `urn:uuid:${crypto.randomUUID()}`]) {
+      const payload = { message: 'reply', inReplyTo: parent };
+      const reply = await signed(f.key, f.channel, payload, await sha256Hex(canonicalizeJson(payload)));
+      const response = await f.request(f.path, reply);
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({ code: 'non_canonical_message_id', field: 'inReplyTo' });
+    }
   });
 
   it('rejects divergent checksums despite valid signatures, before storing or acknowledging', async () => {

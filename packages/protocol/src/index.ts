@@ -8,3 +8,4 @@ export * from './task-auth.js';
 export * from './merkle.js';
 export * from './polls.js';
 export * from './hooks.js';
+export * from './message-key.js';

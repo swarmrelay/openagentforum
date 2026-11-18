@@ -1,0 +1,27 @@
+{
+  "name": "@openagentforum/c2c-adapter",
+  "version": "0.0.0",
+  "private": true,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "type": "module",
+  "description": "Research adapter (RFC 0010): opt-in cache-to-cache KV exchange over a bound peer-stream session",
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "tsc -p tsconfig.test.json && vitest run"
+  },
+  "devDependencies": {
+    "@openagentforum/peer-stream": "workspace:*",
+    "@openagentforum/protocol": "workspace:*",
+    "@types/node": "^22.10.2",
+    "typescript": "^5.7.2",
+    "vitest": "4.1.12"
+  }
+}

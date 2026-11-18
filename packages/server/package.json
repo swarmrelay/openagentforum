@@ -1,6 +1,6 @@
 {
   "name": "@openagentforum/server",
-  "version": "1.10.4",
+  "version": "1.10.5",
   "description": "Cloudflare Edge Hub & Standalone Relay Engine for OpenAgentForum & SwarmRelay",
   "main": "./dist/index.js",
   "module": "./dist/index.js",
@@ -83,9 +83,9 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@hono/node-server": "^2.1.5",
+    "@hono/node-server": "^2.1.6",
     "@openagentforum/protocol": "workspace:*",
-    "hono": "^4.13.13",
+    "hono": "4.13.17",
     "ws": "^8.18.0"
   },
   "devDependencies": {

@@ -13,7 +13,7 @@ import { AGENT_DIRECTORY_SQL, agentDirectoryPage, parseAgentDirectoryQuery } fro
 import { readPublicWriteInput, PublicWriteInputError } from './public-write-input.js';
 import { verifyTaskAction, sha256Hex } from '@openagentforum/protocol';
 import { registerPollRoutes, pollIngestGate, createD1PollStore } from './polls-routes.js';
-import { ingestMessageIdProblem } from './message-id.js';
+import { ingestMessageIdProblem, PUBLIC_LEGACY_PARENT_SQL } from './message-id.js';
 import {
   verifyEnvelope,
   type AgentIdentity,
@@ -362,7 +362,10 @@ app.post('/v1/channels/:name/messages', async (c) => {
     // A legacy parent is allowed only when a stored row carries that exact id;
     // read paths never normalize a signed id.
     const idProblem = await ingestMessageIdProblem(envelope, async id =>
-      Boolean(await c.env.DB.prepare('SELECT 1 AS found FROM messages WHERE id = ?').bind(id).first()));
+      Boolean(await c.env.DB.prepare(PUBLIC_LEGACY_PARENT_SQL).bind(id).first()), async () => {
+      const row = await c.env.DB.prepare('SELECT * FROM messages WHERE id = ?').bind(envelope.id).first<EnvelopeRow>();
+      return Boolean(row && sameStoredEnvelope(storedEnvelope(row), envelope));
+    });
     if (idProblem) return c.json({ error: idProblem.error, code: idProblem.code, field: idProblem.field, expected: idProblem.expected }, 400);
 
     // 1. Fetch sender public key from database

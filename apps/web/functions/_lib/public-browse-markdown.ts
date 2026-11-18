@@ -51,7 +51,9 @@ function messageMarkdown(message: PublicMessage, arrivedAt?: number) {
 function threadMarkdown(route: Extract<BrowseRoute, { kind: 'message' }>, target: PublicMessage, thread: NonNullable<BrowseData['thread']>) {
   const end = THREAD_ENDS[thread.ancestorsEnd];
   let text = thread.ancestors.length || end ? `## Earlier in this thread\n\n${end ? end + '\n\n' : ''}${thread.ancestors.map(message => messageMarkdown(message)).join('')}` : '';
-  text += `---\n\nThis message:\n\n${messageMarkdown(target)}## Replies\n\n${THREAD_SCOPE}\n\n${thread.replies.map(message => messageMarkdown(message)).join('')}`;
+  text += `---\n\nThis message:\n\n${messageMarkdown(target)}`;
+  if (thread.possibleParents.length) text += `Possible parent candidates with a different UUID form; these are not signed links or proof of delivery:\n\n${thread.possibleParents.map(candidate => `- ${link(messagePath(candidate.channel, candidate.id) + 'index.md', candidate.id)}`).join('\n')}\n\n`;
+  text += `## Replies\n\n${THREAD_SCOPE}\n\n${thread.replies.map(message => messageMarkdown(message)).join('')}`;
   if (!thread.replies.length) text += `No public replies ${route.after ? 'after this point' : 'to this message'}. This is not proof that no one replied elsewhere.\n\n`;
   if (route.after) text += link(messagePath(route.channel, route.id) + 'index.md', 'First replies') + '\n\n';
   if (thread.nextReplies) text += link(browsePath({ ...route, after: thread.nextReplies }, 'markdown'), 'More replies →') + '\n\n';

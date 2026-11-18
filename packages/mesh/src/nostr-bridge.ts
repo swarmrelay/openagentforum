@@ -20,14 +20,21 @@
  * fails closed at ingress (refuses, loudly, when full; never evicts an
  * unconfirmed envelope). Missing hub pubkeys are retried with a TTL and a
  * held message is skipped deliberately only after HOLD_DEADLINE_MS.
+ * Hub->Nostr (0.4.5): a message no relay accepts holds the cursor, with
+ * capped, jittered backoff. If every relay is unavailable, it holds without
+ * limit, so an outage loses nothing. If a relay explicitly refused it and
+ * none accepted, it is skipped, loudly, after REFUSAL_DEADLINE_MS, so one
+ * refused event cannot stop the channel. Logs carry each relay's reason.
  */
 import { readFileSync, writeFileSync, existsSync, chmodSync } from 'node:fs';
+import { isPermanentCanonicalIdRefusal } from './canonical-refusal.js';
 import { signEnvelope, deriveAgentId, fetchChannelRecord, nextSequenceFor, type MessageEnvelope } from '@openagentforum/protocol';
 import {
   envelopeToEvent, verifyCarriedEnvelope, createAttestationEvent, attestationPayload, verifyLink,
   generateSecretKey, getPublicKey, nip19, SimplePool, DEFAULT_RELAYS, KIND_ENVELOPE, KIND_ATTEST,
   hexToBytes, bytesToHex, type Event,
 } from './nostr.js';
+import { classifyPublish, mirrorDecision, holdDelayMs, describeOutcomes } from './nostr-mirror.js';
 
 const argv = process.argv.slice(2);
 const cmd = argv[0] || 'bridge';
@@ -54,6 +61,8 @@ function loadNostrKey(): Uint8Array {
 
 const NULL_TTL_MS = 60_000;
 const HOLD_DEADLINE_MS = 10 * 60_000;
+/** A hub message that no relay accepts, and at least one relay refuses, is skipped after this long (0.4.5). */
+const REFUSAL_DEADLINE_MS = 30 * 60_000;
 const PENDING_CAP = 5_000;
 const PENDING_WARN = 500;
 type PubCache = Map<string, { pub: string | null; ts: number }>;
@@ -80,7 +89,7 @@ async function archiveToHub(envelope: MessageEnvelope<any>, senderPublicKey: str
   if (res.ok && body.success) return 'stored';
   if (res.status === 409) return 'conflict';
   // (#414) a signed id cannot be rewritten here, so the hub refuses this replay forever
-  if (res.status === 400 && body?.code === 'non_canonical_message_id') return 'permanent';
+  if (isPermanentCanonicalIdRefusal(res.status, body)) return 'permanent';
   return 'retry';
 }
 
@@ -92,7 +101,7 @@ async function bridge() {
   const state: {
     cursors: Record<string, number>; hubIds: string[]; fromNostr: string[];
     pending: Array<{ envelope: any; senderPublicKey: string }>;
-    refusedBackpressure?: number; droppedConflicts?: number; droppedNonCanonical?: number; skippedUnresolvable?: number;
+    refusedBackpressure?: number; droppedConflicts?: number; droppedNonCanonical?: number; skippedUnresolvable?: number; skippedRefused?: number;
   } = Object.assign({ cursors: {}, hubIds: [], fromNostr: [], pending: [] }, existsSync(STATE_PATH) ? JSON.parse(readFileSync(STATE_PATH, 'utf8')) : {});
   const hubIds = new Set(state.hubIds);
   const fromNostr = new Set(state.fromNostr);
@@ -165,7 +174,15 @@ async function bridge() {
       } catch (e) { state.cursors[ch] = 0; log('prime failed, starting from 0', ch, (e as Error).message); }
     }
     const heldSince = new Map<string, number>();
+    const firstRefusedAt = new Map<string, number>();
+    // One event per message across retries, so a retry after an ambiguous
+    // timeout is a relay-side duplicate rather than a second event.
+    const createdAtSec = new Map<string, number>();
+    let holds = 0;
     for (;;) {
+      // Every hold backs off before the next read: the hub answers at once
+      // while messages are waiting, so an immediate retry was a hot loop.
+      let holdReason: string | null = null;
       try {
         const d: any = await (await fetch(`${HUB}/v1/channels/${ch}/messages?after=${state.cursors[ch]}&wait=25`, { headers: UA })).json();
         for (const m of d.messages || []) {
@@ -177,7 +194,7 @@ async function bridge() {
               // so one unresolvable sender cannot wedge the channel forever.
               const since = heldSince.get(m.id) ?? Date.now();
               heldSince.set(m.id, since);
-              if (Date.now() - since < HOLD_DEADLINE_MS) { log('pubkey unavailable, holding cursor', ch, m.sender, m.id); break; }
+              if (Date.now() - since < HOLD_DEADLINE_MS) { holdReason = `pubkey unavailable, holding cursor ${ch} ${m.sender} ${m.id}`; break; }
               state.skippedUnresolvable = (state.skippedUnresolvable ?? 0) + 1;
               log('PERMANENT: sender key unresolvable for', Math.round(HOLD_DEADLINE_MS / 60000), 'min, skipping message', m.id, 'sender', m.sender, 'skipped so far', state.skippedUnresolvable);
               heldSince.delete(m.id);
@@ -185,16 +202,38 @@ async function bridge() {
               continue;
             }
             heldSince.delete(m.id);
-            const ev = envelopeToEvent(m, pub, sk);
-            const results = await Promise.allSettled(pool.publish(RELAYS, ev));
-            const okCount = results.filter((r) => r.status === 'fulfilled').length;
-            if (okCount === 0) { log('no relay accepted, holding cursor', m.id); break; }
-            log('mirrored hub->nostr', ch, m.id, 'relays', okCount + '/' + RELAYS.length);
+            const at = createdAtSec.get(m.id) ?? Math.floor(Date.now() / 1000);
+            createdAtSec.set(m.id, at);
+            const ev = envelopeToEvent(m, pub, sk, at);
+            const outcomes = classifyPublish(RELAYS, await Promise.allSettled(pool.publish(RELAYS, ev)));
+            const decision = mirrorDecision(outcomes, firstRefusedAt.get(m.id), Date.now(), REFUSAL_DEADLINE_MS);
+            if (decision === 'hold') {
+              if (!firstRefusedAt.has(m.id) && outcomes.some((o) => o.status === 'refused')) firstRefusedAt.set(m.id, Date.now());
+              holdReason = `no relay accepted, holding cursor ${ch} ${m.id} ${describeOutcomes(outcomes)}`;
+              break;
+            }
+            firstRefusedAt.delete(m.id);
+            createdAtSec.delete(m.id);
+            if (decision === 'skip') {
+              // Bounded like #48: no relay accepted this event and at least
+              // one refused it for the whole deadline, so skip it
+              // deliberately and loudly rather than stop the channel.
+              state.skippedRefused = (state.skippedRefused ?? 0) + 1;
+              log('PERMANENT: refused and not accepted by any relay for', Math.round(REFUSAL_DEADLINE_MS / 60000), 'min, skipping message', m.id, 'channel', ch, describeOutcomes(outcomes), 'skipped so far', state.skippedRefused);
+            } else {
+              const accepted = outcomes.filter((o) => o.status === 'accepted').length;
+              const others = outcomes.filter((o) => o.status !== 'accepted');
+              log('mirrored hub->nostr', ch, m.id, 'relays', accepted + '/' + RELAYS.length, ...(others.length ? [describeOutcomes(others)] : []));
+            }
           }
           state.cursors[ch] = Math.max(state.cursors[ch], m.storedSeq ?? 0);
           hubIds.add(m.id); save();
         }
-      } catch (e) { log('pump error', ch, (e as Error).message); await new Promise((r) => setTimeout(r, 5000)); }
+      } catch (e) { holdReason = `pump error ${ch} ${(e as Error).message}`; }
+      if (holdReason === null) { holds = 0; continue; }
+      const delay = holdDelayMs(++holds);
+      log(holdReason, `retry ${holds} in ${Math.round(delay / 1000)}s`);
+      await new Promise((r) => setTimeout(r, delay));
     }
   }
   for (const ch of CHANNELS) void pump(ch);

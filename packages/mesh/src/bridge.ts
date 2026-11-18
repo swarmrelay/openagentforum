@@ -26,6 +26,7 @@
  *     --state /var/lib/swarmrelay-bridge/state.json
  */
 import { readFileSync, writeFileSync, existsSync, chmodSync } from 'node:fs';
+import { isPermanentCanonicalIdRefusal } from './canonical-refusal.js';
 import { MeshNode, type MeshIdentity } from './index.js';
 
 function arg(flag: string, dflt?: string): string | undefined {
@@ -145,9 +146,10 @@ async function tryArchive(item: PendingItem): Promise<boolean> {
     state.droppedConflicts = (state.droppedConflicts ?? 0) + 1;
     return true; // remove from pending; hubIds intentionally NOT marked
   }
-  if (res.status === 400 && body?.code === 'non_canonical_message_id') {
+  if (isPermanentCanonicalIdRefusal(res.status, body)) {
     // (#414) the id is part of the signed envelope, so the bridge cannot
-    // rewrite it; the hub will refuse this replay forever. Drop and count it.
+    // rewrite it; the hub refuses a new id in this form. A parent refusal is
+    // retryable because its exact legacy parent can become public later.
     log('PERMANENT: non-canonical signed message id, dropping from queue', envelope.id, body?.error);
     state.droppedNonCanonical = (state.droppedNonCanonical ?? 0) + 1;
     return true; // remove from pending; hubIds intentionally NOT marked

@@ -15,7 +15,12 @@ import { verifyEnvelope, deriveAgentId, type MessageEnvelope } from '@openagentf
 
 export const KIND_ENVELOPE = 9911;
 export const KIND_ATTEST = 9912;
-export const DEFAULT_RELAYS = ['wss://relay.damus.io', 'wss://nos.lol', 'wss://relay.nostr.band'];
+// 0.4.5: relay.nostr.band stopped answering, so it is replaced by
+// relay.primal.net and relay.nostr.net, both of which already hold this
+// bridge's kind-9911 events. relay.damus.io stays; it returned HTTP 521 on
+// 2026-11-15, and the mirror holds without limit only while every relay is
+// unavailable.
+export const DEFAULT_RELAYS = ['wss://nos.lol', 'wss://relay.damus.io', 'wss://relay.primal.net', 'wss://relay.nostr.net'];
 
 export { generateSecretKey, getPublicKey, verifyEvent, nip19 };
 export { SimplePool } from './nostr-pool.js';
@@ -33,12 +38,22 @@ export function bytesToHex(b: Uint8Array): string {
   return Array.from(b).map((x) => x.toString(16).padStart(2, '0')).join('');
 }
 
-/** Wrap a verified-elsewhere envelope in a kind-9911 event signed by the relayer's Nostr key. */
-export function envelopeToEvent(envelope: MessageEnvelope<any>, senderPublicKey: string, sk: Uint8Array): Event {
+/**
+ * Wrap a verified-elsewhere envelope in a kind-9911 event signed by the relayer's Nostr key.
+ *
+ * `created_at` is when the event is relayed, not the envelope's signed
+ * `timestamp`; the carried envelope keeps that. Relays refuse events outside
+ * their accepted time window, and subscribers filter on `since`. So an
+ * envelope that reaches the hub hours after it was signed, or one dated in
+ * the future, would otherwise be refused or never delivered (0.4.5). Pass the
+ * same `createdAtSec` when retrying one message, so the retry is the same
+ * event (same id) and relays treat it as a duplicate.
+ */
+export function envelopeToEvent(envelope: MessageEnvelope<any>, senderPublicKey: string, sk: Uint8Array, createdAtSec: number = Math.floor(Date.now() / 1000)): Event {
   const { storedSeq: _drop, ...env } = envelope as any;
   const tpl: EventTemplate = {
     kind: KIND_ENVELOPE,
-    created_at: Math.floor((env.timestamp || Date.now()) / 1000),
+    created_at: createdAtSec,
     // NIP-01: relays only index SINGLE-LETTER tags for #filters. 't' (channel)
     // and 'i' (envelope id) are the filterable ones; the oaf-* tags are for humans.
     tags: [
