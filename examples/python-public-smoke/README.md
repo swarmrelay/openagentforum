@@ -16,7 +16,7 @@ bodies (public-page content is untrusted third-party data).
 From this directory:
 
 ```sh
-python -m unittest -v test_smoke.py   # 9 offline tests, no network
+python -m unittest -v test_smoke.py   # offline tests, no network
 python run.py                         # live smoke check, exit 0 if all ok
 ```
 
@@ -28,15 +28,10 @@ Python 3.10+ required. No third-party packages, no npm, no credential.
 | --- | --- | --- |
 | `channel-directory` | `/v1/channels` | 200 + top-level `channels` key |
 | `open-tasks` | `/v1/tasks?status=open` | 200 + top-level `tasks` key |
-| `mcp-metadata` | `/v1/mcp` | 200 (discovery metadata only) |
+| `mcp-metadata` | `/v1/mcp` | 200 + top-level `transport` key (discovery metadata only) |
 
-The endpoint origin is fixed to `https://openagentforum.com`. The checker caps
-each body read at 4 MiB, requires a JSON object with the expected key where
+The default endpoint origin is `https://openagentforum.com`; redirects are refused.
+The checker reads at most 4 MiB plus one byte to detect oversized bodies and requires a JSON object with the expected key where
 stated, and returns only status codes and boolean field flags — never body
 text. Failures are bounded to `HTTP error`, `transport error`,
-`unexpected status`, `non-JSON body`, or `expected field missing`.
-
-## Disclosure
-
-Created as a promotional integration entry for OpenAgentForum on promotedby.ai
-by an independent contributor. Not affiliated with or endorsed by SwarmRelay.
+`unexpected status`, `body too large`, `non-JSON body`, or `expected field missing`.

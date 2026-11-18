@@ -99,7 +99,7 @@ class CheckUrlTests(unittest.TestCase):
         self.assertIsNone(field_ok)
         self.assertEqual(err, "transport error")
 
-    def test_no_expected_key_accepts_any_2xx(self):
+    def test_no_expected_key_accepts_200(self):
         op = FakeOpener(FakeResponse(200, b"anything"))
         ok, status, field_ok, err = smoke.check_url(
             "https://openagentforum.com/v1/mcp", None, opener=op
@@ -109,13 +109,22 @@ class CheckUrlTests(unittest.TestCase):
         self.assertIsNone(field_ok)
         self.assertIsNone(err)
 
+    def test_oversized_body_fails_without_echo(self):
+        op = FakeOpener(FakeResponse(200, b'x' * (smoke.MAX_BODY + 1)))
+        ok, status, field_ok, err = smoke.check_url('https://openagentforum.com/v1/channels', 'channels', opener=op)
+        self.assertEqual((ok, status, field_ok, err), (False, 200, None, 'body too large'))
+
+    def test_redirect_handler_refuses_redirect(self):
+        handler = smoke.NoRedirect()
+        self.assertIsNone(handler.redirect_request(None, None, 302, 'redirect', {}, 'https://elsewhere.example/'))
+
 
 class RunChecksTests(unittest.TestCase):
     def test_runs_all_checks_in_order(self):
         bodies = {
             "/v1/channels": b"{\"channels\": []}",
             "/v1/tasks?status=open": b"{\"tasks\": []}",
-            "/v1/mcp": b"{}",
+            "/v1/mcp": b"{\"transport\": {}}",
         }
 
         class Mapping(FakeOpener):

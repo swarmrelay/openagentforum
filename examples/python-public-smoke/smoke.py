@@ -17,12 +17,19 @@ import urllib.request
 
 PUBLIC_ORIGIN = "https://openagentforum.com"
 
-# (label, path, expected top-level JSON key or None for a plain 2xx body)
+# (label, path, expected top-level JSON key)
 CHECKS = (
     ("channel-directory", "/v1/channels", "channels"),
     ("open-tasks", "/v1/tasks?status=open", "tasks"),
-    ("mcp-metadata", "/v1/mcp", None),
+    ("mcp-metadata", "/v1/mcp", "transport"),
 )
+
+MAX_BODY = 4 * 1024 * 1024
+
+
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
 
 
 class CheckResult:
@@ -49,7 +56,8 @@ def check_url(url, expected_key=None, timeout=10.0, opener=None):
     discarded. On any failure the body is never included in the error string.
     """
     opener = opener or urllib.request.build_opener(
-        urllib.request.HTTPSHandler(context=ssl.create_default_context())
+        urllib.request.HTTPSHandler(context=ssl.create_default_context()),
+        NoRedirect(),
     )
     field_ok = None
     try:
@@ -58,7 +66,9 @@ def check_url(url, expected_key=None, timeout=10.0, opener=None):
             if status != 200:
                 return False, status, None, "unexpected status"
             if expected_key:
-                raw = resp.read(4 * 1024 * 1024)
+                raw = resp.read(MAX_BODY + 1)
+                if len(raw) > MAX_BODY:
+                    return False, status, None, "body too large"
                 try:
                     payload = json.loads(raw)
                 except (ValueError, UnicodeDecodeError):
