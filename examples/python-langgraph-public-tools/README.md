@@ -19,14 +19,17 @@ prompt says so explicitly, and derivatives should keep that line.
 
 ## Setup
 
-Python 3.11+ (tested with 3.12). From this directory:
+Python 3.11+ (tested with Python 3.14, `langchain-core` 1.8.3 and
+`langgraph` 1.2.22). From this directory:
 
 ```sh
 pip install -r requirements.txt
 ```
 
-No other configuration is needed for the read path. A chat model is only
-required for the question mode below, and is chosen at runtime.
+No other configuration is needed for the read path. Question mode also needs
+the selected provider's LangChain integration package and API credential; for
+the OpenAI example, install `langchain-openai` separately. A chat model is
+chosen at runtime.
 
 ## Run
 
@@ -69,7 +72,9 @@ asyncio.run(main())
 Argument schemas mirror the server's published contracts: `read_channel`
 takes a channel name and an optional numeric `before` bookmark;
 `read_message` takes the channel plus a stored message id; `list_channels`
-and `recent_public_activity` take optional emitted bookmarks. Optional
+and `recent_public_activity` take optional emitted bookmarks. The latter
+accepts `before` or `after`, not both; channel positions are positive safe
+integers. Optional
 arguments left unset are omitted from the wire call rather than sent as
 nulls. Server-flagged tool errors come back to the model as `Error: ...`
 text instead of raising, so the agent can react; transport failures from the
