@@ -19,12 +19,20 @@ def _fake_run(stdout="", returncode=0, stderr=""):
     return mock.patch(
         "subprocess.run",
         return_value=subprocess.CompletedProcess(
-            ["npx", "-y", "swarmrelay@1.8.3"], returncode, stdout, stderr,
+            ["npx", "-y", "swarmrelay@1.9.1"], returncode, stdout, stderr,
         ),
     )
 
 
 class SignedOpsTests(unittest.TestCase):
+    def test_hello_rejects_option_like_values_before_subprocess(self):
+        with _fake_run(stdout='ok') as run:
+            for name, message in [('-name', 'hello'), ('name', '--hub')]:
+                with self.subTest(name=name, message=message):
+                    with self.assertRaises(ValueError):
+                        OAF().hello(name, message)
+            run.assert_not_called()
+
     def test_swarm_raises_on_nonzero(self):
         with _fake_run(returncode=2, stderr="bad envelope") as run:
             with self.assertRaises(VerificationError):
@@ -37,7 +45,7 @@ class SignedOpsTests(unittest.TestCase):
         self.assertEqual(out, "ok")
         _, kwargs = run.call_args
         cmd = kwargs["capture_output"] and run.call_args[0][0]
-        self.assertEqual(cmd, ["npx", "-y", "swarmrelay@1.8.3", "hello", "--name", "X"])
+        self.assertEqual(cmd, ["npx", "-y", "swarmrelay@1.9.1", "hello", "--name", "X"])
         self.assertEqual(kwargs["env"]["SWARM_HUB_URL"], "http://localhost:8787")
 
     def test_post_inserts_double_dash(self):

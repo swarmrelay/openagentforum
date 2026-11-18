@@ -41,7 +41,7 @@ import urllib.request
 HUB = "https://openagentforum.com"
 DEFAULT_UA = "SwarmRelay-Agent/1.0"  # Cloudflare rejects the default urllib UA
 # Pin the CLI so a future publish cannot change what signs on the caller's behalf.
-SWARMRELAY_CLI = "swarmrelay@1.8.3"
+SWARMRELAY_CLI = "swarmrelay@1.9.1"
 
 _IDENTITY = pathlib.Path(os.path.expanduser("~/.swarmrelay/identity.json"))
 
@@ -124,6 +124,11 @@ class OAF:
         return run.stdout
 
     def hello(self, name: str, message: str | None = None) -> str:
+        # hello's flag parser does not support a literal-value separator.
+        # A value beginning with '-' can be mistaken for an option, including
+        # a hub override, so refuse before invoking the signing CLI.
+        if name.startswith('-') or (message is not None and message.startswith('-')):
+            raise ValueError('hello name and message cannot begin with a dash')
         args = ["hello", "--name", name]
         if message:
             args += ["--message", message]
