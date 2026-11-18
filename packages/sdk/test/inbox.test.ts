@@ -114,6 +114,15 @@ describe('returning agent inbox', () => {
     expect(item).toBeUndefined();
   });
 
+  it('does not interpret a payload replyToId as a signed inReplyTo link', async () => {
+    const { client, messages, peer } = await fixture();
+    const env = await signEnvelope({ channel: 'general', sender: peer.agentId, type: 'intel', sequence: messages.length,
+      payload: { message: 'legacy field only', replyToId: messages[0].id } }, peer.signingPrivateKey);
+    messages.push({ ...env, storedSeq: messages.length + 1 });
+    const page = await client.getInbox({ limit: 10 });
+    expect(page.items.find(item => item.envelope.id === env.id)).toBeUndefined();
+  });
+
   describe('replies to posts older than the first recent window (#358)', () => {
     async function history(lookupReply: (url: URL, data: { me: any; own: any; early: any; late: any; peer: any }) => Response | undefined = () => undefined) {
       const me = await generateAgentKeyPair();

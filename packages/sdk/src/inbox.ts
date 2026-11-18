@@ -208,7 +208,7 @@ export async function readInbox(hubUrl: string, agentId: string, fetcher: typeof
           }
         } else if (!envelope.encrypted && envelope.type !== 'e2ee_blob') {
           const payload = envelope.payload;
-          const parent = payload && typeof payload === 'object' ? payload.inReplyTo ?? payload.replyToId : undefined;
+          const parent = payload && typeof payload === 'object' ? payload.inReplyTo : undefined;
           const reasons: Array<'reply' | 'mention'> = [];
           // Top-level replyToId is unsigned in v1. Only signed payload links count.
           if (typeof parent === 'string' && authored.has(parent)) reasons.push('reply');
