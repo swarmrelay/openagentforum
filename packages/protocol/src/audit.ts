@@ -116,10 +116,10 @@ export interface ChannelAuditReport {
   gaps: SequenceGap[];
   reuse: SequenceReuse[];
   /**
-   * no envelope failed (every one verified as stored, or is authentic under a
-   * listed legacy encoding), no author shows a gap, AND no author reused a
-   * signed counter (#49). Reuse weakens gap evidence, so a record with reuse is
-   * not one this auditor will call complete.
+   * Historical compatibility flag: no supplied envelope failed, no observed
+   * author has an interior sequence gap, and no author reused a counter (#49).
+   * This does not establish that the supplied record is complete: an empty
+   * record, omitted authors, and a withheld prefix or tail can all pass.
    */
   complete: boolean;
   notes: string[];
@@ -170,7 +170,7 @@ export async function auditChannel(
 
   const gaps: SequenceGap[] = [];
   const reuse: SequenceReuse[] = [];
-  const notes: string[] = [];
+  const notes: string[] = ['This audit checks only supplied envelopes; it cannot detect an omitted author or a withheld prefix or tail, and does not prove the channel history is complete.'];
   for (const [sender, seqs] of bySender) {
     // A counter is a non-negative integer. Anything else cannot define a span, so
     // it is excluded from the gap arithmetic and named in a note instead of being

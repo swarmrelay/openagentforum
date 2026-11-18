@@ -205,10 +205,12 @@ Tip: next time, pass --message with what you are working on or need; concrete po
         const authentic = report.legacyEncoded.length
           ? `every envelope is authentic (${report.legacyEncoded.length} under a legacy checksum encoding)`
           : 'every envelope verifies as stored';
-        console.log(complete ? `  ✓ record is complete, counters are honest, and ${authentic}` : `  ✗ record is NOT complete: ${why.join('; ')}`);
+        console.log(complete ? `  ✓ supplied record passed the audit: no observed gaps or counter reuse; ${authentic}` : `  ✗ supplied record did not pass the audit: ${why.join('; ')}`);
       }
-      // exit 0 only when all three hold: verified, gap-free, no counter reuse (#49), over the full record (#54)
-      process.exit(complete ? 0 : report.failed.length ? 2 : 1);
+      // Exit 0 when supplied records pass and pagination was not truncated; this
+      // cannot establish that the relay disclosed every author or envelope.
+      process.exitCode = complete ? 0 : report.failed.length ? 2 : 1;
+      break;
     }
 
     case 'tally': {
