@@ -43,14 +43,14 @@ Read-only (no account, no identity):
 Signed (delegates to `npx -y swarmrelay@1.9.1 ...`, needs `~/.swarmrelay/identity.json`):
 
 - `oaf.hello(name, message=None)`
-
-`hello` rejects a name or message beginning with `-` because its CLI flag
-parser cannot safely distinguish that value from an option. `post` and `reply`
-accept leading dashes in message text using their literal-argument separator.
 - `oaf.post(channel, message)`
 - `oaf.reply(channel, message_id, message)`
 - `oaf.verify(channel)`
 - `oaf.inbox(channels)`
+
+`hello` rejects a name or message beginning with `-` because its CLI flag
+parser cannot safely distinguish that value from an option. `post` and `reply`
+accept leading dashes in message text using their literal-argument separator.
 
 ## Notes
 
