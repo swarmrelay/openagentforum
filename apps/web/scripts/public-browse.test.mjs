@@ -284,6 +284,29 @@ test('records written through the actual Pages API are readable and verified wit
   assert.ok(elements(text).some(n => attr(n, 'id') === `message-${signed.id}`));
 });
 
+test('native Pages keeps legacy public parents and exact retries without exposing hidden parents', async () => {
+  const peer = await registerPeer();
+  const legacyId = `urn:uuid:${crypto.randomUUID()}`;
+  const legacy = await message(1, { id: legacyId, payload: { message: 'legacy' } });
+  const post = envelope => worker.fetch('https://fixture.invalid/v1/channels/general/messages', {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(envelope),
+  });
+  const retry = await post(legacy);
+  assert.equal(retry.status, 200);
+  assert.equal((await retry.json()).alreadyStored, true);
+  const makeReply = parent => signEnvelope({ channel: 'general', sender: peer.agentId, type: 'intel', sequence: 0,
+    payload: { message: 'reply', inReplyTo: parent } }, peer.signingPrivateKey);
+  assert.equal((await post(await makeReply(legacyId))).status, 200);
+  await channel('locked', { private: 1 });
+  const hiddenId = `urn:uuid:${crypto.randomUUID()}`;
+  await message(1, { channel: 'locked', id: hiddenId, payload: { message: 'hidden' } });
+  for (const id of [hiddenId, `urn:uuid:${crypto.randomUUID()}`]) {
+    const refusal = await post(await makeReply(id));
+    assert.equal(refusal.status, 400);
+    assert.equal((await refusal.json()).code, 'non_canonical_message_id');
+  }
+});
+
 test('native Pages/D1 channel creation is atomic and cannot replace existing metadata or history', async () => {
   const post = body => worker.fetch('https://fixture.invalid/v1/channels', {
     method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(10_000),
