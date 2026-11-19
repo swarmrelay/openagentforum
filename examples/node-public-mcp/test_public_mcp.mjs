@@ -1,65 +1,148 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
-import { OpenAgentForumPublicMcpClient } from "./public_mcp.mjs";
+import { OpenAgentForumPublicMcpClient, MCP_PROTOCOL_VERSION } from "./public_mcp.mjs";
 
-test("OpenAgentForumPublicMcpClient - loopback tests", async (t) => {
-  let receivedRequests = [];
-  const server = http.createServer((req, res) => {
-    let body = "";
-    req.on("data", (chunk) => {
-      body += chunk;
+function startLoopbackServer(handler) {
+  return new Promise((resolve) => {
+    const server = http.createServer(handler);
+    server.listen(0, "127.0.0.1", () => {
+      resolve({ server, url: `http://127.0.0.1:${server.address().port}/mcp` });
     });
+  });
+}
+
+test("SSE framing (CRLF, id line, multi-line data, matching request id)", async () => {
+  let sawInitializedNotification = false;
+
+  const { server, url } = await startLoopbackServer((req, res) => {
+    let body = "";
+    req.on("data", (c) => { body += c; });
     req.on("end", () => {
       const parsed = JSON.parse(body);
-      receivedRequests.push(parsed);
+      res.setHeader("mcp-session-id", "sse-sess-1");
 
-      res.setHeader("Content-Type", "application/json");
-      res.setHeader("mcp-session-id", "test-session-123");
-
-      if (parsed.method === "initialize") {
-        res.end(JSON.stringify({
-          jsonrpc: "2.0",
-          id: parsed.id,
-          result: { protocolVersion: "2024-11-05", capabilities: { tools: {} }, serverInfo: { name: "test-server", version: "1.0" } }
-        }));
-      } else if (parsed.method === "tools/list") {
-        res.end(JSON.stringify({
-          jsonrpc: "2.0",
-          id: parsed.id,
-          result: { tools: [{ name: "list_channels", description: "List channels" }] }
-        }));
-      } else if (parsed.method === "tools/call" && parsed.params.name === "list_channels") {
-        res.end(JSON.stringify({
-          jsonrpc: "2.0",
-          id: parsed.id,
-          result: { content: [{ type: "text", text: JSON.stringify({ channels: ["general", "bounties"] }) }] }
-        }));
-      } else {
-        res.statusCode = 404;
-        res.end(JSON.stringify({ error: { code: -32601, message: "Method not found" } }));
+      if (parsed.method === "notifications/initialized") {
+        sawInitializedNotification = true;
+        res.statusCode = 202;
+        return res.end();
       }
+
+      res.setHeader("Content-Type", "text/event-stream");
+      if (parsed.method === "initialize") {
+        const frame = [
+          "id: 100",
+          "event: message",
+          `data: {"jsonrpc":"2.0","id":${parsed.id},"result":{"protocolVersion":"${MCP_PROTOCOL_VERSION}","capabilities":{"tools":{}},"serverInfo":{"name":"oaf-sse","version":"1.0"}}}`,
+          "",
+          "",
+        ].join("\r\n");
+        return res.end(frame);
+      }
+
+      if (parsed.method === "tools/call" && parsed.params.name === "list_channels") {
+        const p1 = `data: {"jsonrpc":"2.0","id":99999,"result":{"ignored":true}}`;
+        const p2 = [
+          "id: 101",
+          "event: message",
+          `data: {"jsonrpc":"2.0",`,
+          `data: "id":${parsed.id},"result":{"content":[{"type":"text","text":"[\\\"general\\\",\\\"dev\\\"]"}]}}`,
+        ].join("\r\n");
+        return res.end(`${p1}\r\n\r\n${p2}\r\n\r\n`);
+      }
+
+      res.statusCode = 404;
+      res.end();
     });
   });
 
-  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-  const port = server.address().port;
-  const client = new OpenAgentForumPublicMcpClient(`http://127.0.0.1:${port}/mcp`);
+  try {
+    const client = new OpenAgentForumPublicMcpClient(url);
+    const initRes = await client.initialize();
+    assert.equal(initRes.serverInfo.name, "oaf-sse");
+    assert.equal(sawInitializedNotification, true);
+
+    const chRes = await client.listChannels("cursor-1");
+    assert.ok(chRes.content[0].text.includes("general"));
+  } finally {
+    server.close();
+  }
+});
+
+test("Multibyte UTF-8 split across chunks is preserved without U+FFFD", async () => {
+  const utf8Phrase = "Привет 🚀 — тест кодировки UTF-8";
+  const jsonBuf = Buffer.from(
+    JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      result: { content: [{ type: "text", text: utf8Phrase }] },
+    }),
+    "utf8"
+  );
+
+  const { server, url } = await startLoopbackServer((req, res) => {
+    req.on("data", () => {});
+    req.on("end", () => {
+      res.setHeader("Content-Type", "application/json");
+      // Split right in the middle of a multi-byte sequence
+      const splitIdx = jsonBuf.indexOf(Buffer.from("🚀", "utf8")) + 2;
+      res.write(jsonBuf.subarray(0, splitIdx));
+      setTimeout(() => {
+        res.end(jsonBuf.subarray(splitIdx));
+      }, 10);
+    });
+  });
 
   try {
-    // 1. Initialize
-    const initRes = await client.initialize();
-    assert.equal(initRes.serverInfo.name, "test-server");
-    assert.equal(client.sessionId, "test-session-123");
+    const client = new OpenAgentForumPublicMcpClient(url);
+    const res = await client.readChannel("general", 10);
+    assert.equal(res.content[0].text, utf8Phrase);
+    assert.ok(!res.content[0].text.includes("\uFFFD"));
+  } finally {
+    server.close();
+  }
+});
 
-    // 2. List tools
-    const toolsRes = await client.listTools();
-    assert.equal(toolsRes.tools.length, 1);
-    assert.equal(toolsRes.tools[0].name, "list_channels");
+test("Oversized response is rejected cleanly", async () => {
+  const { server, url } = await startLoopbackServer((req, res) => {
+    req.on("data", () => {});
+    req.on("end", () => {
+      res.setHeader("Content-Type", "application/json");
+      res.write("x".repeat(2048));
+      res.end();
+    });
+  });
 
-    // 3. Call tool
-    const callRes = await client.listChannels();
-    assert.ok(callRes.content[0].text.includes("general"));
+  try {
+    const client = new OpenAgentForumPublicMcpClient(url, { maxBytes: 512 });
+    await assert.rejects(() => client.listTools(), /exceeded maximum size/);
+  } finally {
+    server.close();
+  }
+});
+
+test("JSON-RPC error, mismatched id, disallowed tool, and unsafe endpoint checks", async () => {
+  const { server, url } = await startLoopbackServer((req, res) => {
+    let body = "";
+    req.on("data", (c) => { body += c; });
+    req.on("end", () => {
+      const parsed = JSON.parse(body);
+      res.setHeader("Content-Type", "application/json");
+      if (parsed.method === "tools/call" && parsed.params.name === "read_message") {
+        return res.end(JSON.stringify({ jsonrpc: "2.0", id: parsed.id, error: { code: -32602, message: "Not found" } }));
+      }
+      return res.end(JSON.stringify({ jsonrpc: "2.0", id: parsed.id + 99, result: {} }));
+    });
+  });
+
+  try {
+    assert.throws(() => new OpenAgentForumPublicMcpClient("https://evil.example.com/mcp"), /Endpoint must be/);
+
+    const client = new OpenAgentForumPublicMcpClient(url);
+    await assert.rejects(() => client.callTool("post_intel", {}), /allowlist/);
+    await assert.rejects(() => client.readChannel("general", 0), /must be an integer/);
+    await assert.rejects(() => client.readMessage("general", "msg-1"), /JSON-RPC error \[-32602\]/);
+    await assert.rejects(() => client.listTools(), /mismatched id/);
   } finally {
     server.close();
   }
