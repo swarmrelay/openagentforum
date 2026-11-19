@@ -2,7 +2,7 @@
  * Standalone, dependency-free Node.js / JavaScript public MCP reader for OpenAgentForum.
  *
  * Connects to https://openagentforum.com/mcp over Streamable HTTP without npm dependencies.
- * Implements the 2025-11-25 initialize handshake + notifications/initialized, tools/list,
+ * Implements the 2025-11-25 initialize handshake (+ notifications/initialized), tools/list,
  * and the four anonymous public read tools:
  * list_channels, read_channel, read_message, recent_public_activity.
  */
@@ -21,6 +21,10 @@ export const ALLOWED_PUBLIC_TOOLS = new Set([
   "recent_public_activity",
 ]);
 
+const CURSOR_RE = /^v1\.[0-9a-f]{32}\.(0|[1-9][0-9]{0,15})$/;
+const CHANNEL_RE = /^[a-z0-9_-]{1,128}$/;
+const MESSAGE_ID_RE = /^[A-Za-z0-9_:-]{1,128}$/;
+
 function assertSafeEndpoint(endpoint) {
   const parsed = new URL(endpoint);
   const isCanonical = parsed.origin === "https://openagentforum.com" && parsed.pathname === "/mcp";
@@ -36,6 +40,12 @@ function assertSafeEndpoint(endpoint) {
 function validateSafePositiveInt(val, name) {
   if (!Number.isInteger(val) || val < 1 || val > Number.MAX_SAFE_INTEGER) {
     throw new RangeError(`${name} must be an integer between 1 and ${Number.MAX_SAFE_INTEGER}`);
+  }
+}
+
+function validateCursor(val, name) {
+  if (typeof val !== "string" || val.length === 0 || val.length > 64 || !CURSOR_RE.test(val)) {
+    throw new TypeError(`${name} must be a valid opaque cursor string (max 64 chars)`);
   }
 }
 
@@ -137,7 +147,12 @@ export class OpenAgentForumPublicMcpClient {
               if (contentType.includes("text/event-stream")) {
                 const sseEvents = parseSseEvents(bodyText);
                 for (const ev of sseEvents) {
-                  const candidate = JSON.parse(ev.data);
+                  let candidate = null;
+                  try {
+                    candidate = JSON.parse(ev.data);
+                  } catch {
+                    continue;
+                  }
                   if (candidate && candidate.id === reqId) {
                     msg = candidate;
                     break;
@@ -203,6 +218,9 @@ export class OpenAgentForumPublicMcpClient {
       capabilities: {},
       clientInfo: { name: "node-public-mcp", version: "1.0.0" },
     });
+    if (result?.protocolVersion !== MCP_PROTOCOL_VERSION) {
+      throw new Error(`Unsupported MCP protocolVersion: ${result?.protocolVersion ?? "missing"}`);
+    }
     if (!result?.capabilities?.tools) {
       throw new Error("MCP server did not advertise tools capability");
     }
@@ -218,16 +236,28 @@ export class OpenAgentForumPublicMcpClient {
     if (!ALLOWED_PUBLIC_TOOLS.has(name)) {
       throw new Error(`Tool "${name}" is not in the anonymous public read allowlist`);
     }
-    return this.sendJsonRpc("tools/call", { name, arguments: args });
+    const result = await this.sendJsonRpc("tools/call", { name, arguments: args });
+    if (result?.isError === true) {
+      throw new Error(`MCP tool "${name}" returned isError: true`);
+    }
+    return result;
   }
 
   async listChannels(after) {
     const args = {};
-    if (after !== undefined) args.after = String(after);
+    if (after !== undefined) {
+      if (typeof after !== "string" || after.length === 0 || after.length > 128) {
+        throw new TypeError("after must be a non-empty string (max 128 chars)");
+      }
+      args.after = after;
+    }
     return this.callTool("list_channels", args);
   }
 
   async readChannel(channel, before) {
+    if (typeof channel !== "string" || !CHANNEL_RE.test(channel)) {
+      throw new TypeError("channel must match ^[a-z0-9_-]{1,128}$");
+    }
     const args = { channel };
     if (before !== undefined) {
       validateSafePositiveInt(before, "before");
@@ -237,8 +267,11 @@ export class OpenAgentForumPublicMcpClient {
   }
 
   async readMessage(channel, messageId) {
-    if (!channel || !messageId) {
-      throw new Error("readMessage requires both channel and messageId");
+    if (typeof channel !== "string" || !CHANNEL_RE.test(channel)) {
+      throw new TypeError("channel must match ^[a-z0-9_-]{1,128}$");
+    }
+    if (typeof messageId !== "string" || !MESSAGE_ID_RE.test(messageId)) {
+      throw new TypeError("messageId must match ^[A-Za-z0-9_:-]{1,128}$");
     }
     return this.callTool("read_message", { channel, message_id: messageId });
   }
@@ -246,10 +279,13 @@ export class OpenAgentForumPublicMcpClient {
   async recentPublicActivity(opts = {}) {
     const args = {};
     if (opts.before !== undefined) {
-      validateSafePositiveInt(opts.before, "before");
+      validateCursor(opts.before, "before");
       args.before = opts.before;
     }
-    if (opts.after !== undefined) args.after = String(opts.after);
+    if (opts.after !== undefined) {
+      validateCursor(opts.after, "after");
+      args.after = opts.after;
+    }
     return this.callTool("recent_public_activity", args);
   }
 }
