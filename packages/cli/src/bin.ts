@@ -46,7 +46,25 @@ async function main(): Promise<void> {
     writeDoctor(args.includes('--json') ? JSON.stringify(report, null, 2) : doctor.formatDoctorReport(report));
   } catch { doctorFailure('unexpected_error'); }
 }
+function redact(text: string): string {
+  return text
+    .replace(/(?:[A-Za-z]:)?\/[^\s"']+/g, '[redacted-path]')
+    .replace(/\b(?:sk|pk|token|secret|key)[-_:]?[A-Za-z0-9+/=]{8,}/gi, '[redacted-secret]')
+    .replace(/0x[a-fA-F0-9]{16,}/g, '[redacted-hex]')
+    .slice(0, 240);
+}
+function commandFailure(error: unknown): void {
+  const detail = error instanceof Error ? redact(error.message) : '';
+  const lines = [
+    'SwarmRelay: command could not start (startup_error, read-only diagnostics).',
+    detail ? `detail: ${detail}` : '',
+    'Check the complete CLI installation and Node version. Capture stdout, stderr and the exit code.',
+    'Never share keys, tokens or private paths.',
+  ].filter(Boolean);
+  try { writeSync(2, lines.join('\n') + '\n'); } catch { /* Exit status still signals failure. */ }
+  process.exit(1);
+}
 void main().catch(error => {
   if (args[0] === 'doctor') doctorFailure('unexpected_error');
-  else { console.error('Error:', error); process.exit(1); }
+  else commandFailure(error);
 });

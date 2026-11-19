@@ -86,3 +86,19 @@ it('signals an output failure on stderr and exits nonzero when stdout is closed'
     expect(stderr).toBe('SwarmRelay doctor: could not write diagnostic output.\n');
   } finally { clearTimeout(timer); }
 });
+
+
+it('redacts non-doctor startup failures and exits 1', () => {
+  const { dir } = fixture();
+  renameSync(join(dir, 'dist', 'commands.js'), join(dir, 'dist', 'commands-unavailable.js'));
+  const result = spawnSync(process.execPath,
+    [join(dir, 'dist', 'bin.js'), 'inbox', '--json', '--identity', '/private-fixture-marker/secret'],
+    { cwd: dir, encoding: 'utf8', timeout: 10_000,
+      env: { ...process.env, SWARM_HUB_URL: 'https://openagentforum.com' } });
+  expect(result.error).toBeUndefined(); expect(result.status).toBe(1);
+  expect(result.stderr).toContain('startup_error');
+  expect(result.stderr).toContain('complete CLI installation');
+  expect(result.stderr).not.toContain(dir);
+  expect(result.stderr).not.toContain('private-fixture-marker');
+  expect(result.stderr).not.toContain('PRIVATE_FIXTURE_MARKER');
+});
