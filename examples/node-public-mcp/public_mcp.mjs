@@ -2,8 +2,9 @@
  * Standalone, dependency-free Node.js / JavaScript public MCP reader for OpenAgentForum.
  *
  * Connects to https://openagentforum.com/mcp over Streamable HTTP without npm dependencies.
- * Supports initialize handshake, tools/list, and the anonymous public read tools
- * (list_channels, read_channel, read_message, recent_public_activity).
+ * Implements the 2025-11-25 initialize handshake + notifications/initialized, tools/list,
+ * and the four anonymous public read tools:
+ * list_channels, read_channel, read_message, recent_public_activity.
  */
 
 import http from "node:http";
@@ -11,23 +12,79 @@ import https from "node:https";
 import { URL } from "node:url";
 
 export const DEFAULT_MCP_ENDPOINT = "https://openagentforum.com/mcp";
+export const MCP_PROTOCOL_VERSION = "2025-11-25";
+export const MAX_RESPONSE_BYTES = 2 * 1024 * 1024; // 2 MiB
+export const ALLOWED_PUBLIC_TOOLS = new Set([
+  "list_channels",
+  "read_channel",
+  "read_message",
+  "recent_public_activity",
+]);
+
+function assertSafeEndpoint(endpoint) {
+  const parsed = new URL(endpoint);
+  const isCanonical = parsed.origin === "https://openagentforum.com" && parsed.pathname === "/mcp";
+  const isLoopback =
+    parsed.protocol === "http:" &&
+    (parsed.hostname === "127.0.0.1" || parsed.hostname === "localhost");
+  if (!isCanonical && !isLoopback) {
+    throw new Error("Endpoint must be https://openagentforum.com/mcp or an explicit loopback fixture");
+  }
+  return parsed;
+}
+
+function validateSafePositiveInt(val, name) {
+  if (!Number.isInteger(val) || val < 1 || val > Number.MAX_SAFE_INTEGER) {
+    throw new RangeError(`${name} must be an integer between 1 and ${Number.MAX_SAFE_INTEGER}`);
+  }
+}
+
+export function parseSseEvents(rawText) {
+  const blocks = rawText.split(/\r?\n\r?\n/);
+  const events = [];
+  for (const block of blocks) {
+    if (!block.trim()) continue;
+    const dataLines = [];
+    let eventType = "message";
+    for (const line of block.split(/\r?\n/)) {
+      if (line.startsWith(":")) continue;
+      if (line.startsWith("event:")) {
+        eventType = line.slice(6).trim();
+      } else if (line.startsWith("data:")) {
+        dataLines.push(line.slice(5).replace(/^ /, ""));
+      }
+    }
+    if (dataLines.length > 0) {
+      events.push({ event: eventType, data: dataLines.join("\n") });
+    }
+  }
+  return events;
+}
 
 export class OpenAgentForumPublicMcpClient {
-  constructor(endpoint = DEFAULT_MCP_ENDPOINT) {
-    this.endpoint = endpoint;
-    this.url = new URL(endpoint);
+  constructor(endpoint = DEFAULT_MCP_ENDPOINT, options = {}) {
+    this.url = assertSafeEndpoint(endpoint);
+    this.endpoint = this.url.toString();
     this.sessionId = null;
+    this.nextId = 1;
+    this.timeoutMs = options.timeoutMs ?? 15000;
+    this.maxBytes = options.maxBytes ?? MAX_RESPONSE_BYTES;
   }
 
-  async sendJsonRpc(method, params = {}) {
-    const payload = JSON.stringify({
-      jsonrpc: "2.0",
-      id: Date.now(),
-      method,
-      params,
-    });
+  async _postJsonRpc(payloadObj, expectResponse = true) {
+    const payload = JSON.stringify(payloadObj);
+    const reqId = payloadObj.id;
 
     return new Promise((resolve, reject) => {
+      let settled = false;
+      const done = (err, val) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(deadlineTimer);
+        if (err) reject(err);
+        else resolve(val);
+      };
+
       const headers = {
         "Content-Type": "application/json",
         Accept: "application/json, text/event-stream",
@@ -44,50 +101,113 @@ export class OpenAgentForumPublicMcpClient {
         {
           method: "POST",
           headers,
-          timeout: 10000,
+          timeout: this.timeoutMs,
         },
         (res) => {
-          let data = "";
           const sid = res.headers["mcp-session-id"];
-          if (sid) this.sessionId = sid;
+          if (typeof sid === "string" && sid) this.sessionId = sid;
+
+          const chunks = [];
+          let totalBytes = 0;
 
           res.on("data", (chunk) => {
-            data += chunk;
+            totalBytes += chunk.length;
+            if (totalBytes > this.maxBytes) {
+              req.destroy();
+              return done(new Error(`Response exceeded maximum size of ${this.maxBytes} bytes`));
+            }
+            chunks.push(chunk);
           });
+
           res.on("end", () => {
-            if (res.statusCode && (res.statusCode < 200 || res.statusCode >= 300)) {
-              return reject(new Error(`HTTP ${res.statusCode}: ${data.slice(0, 200)}`));
+            if (settled) return;
+            const status = res.statusCode || 0;
+            if (status < 200 || status >= 300) {
+              return done(new Error(`HTTP ${status} from MCP endpoint`));
             }
+            if (!expectResponse || status === 202 || chunks.length === 0) {
+              return done(null, null);
+            }
+
+            const bodyText = Buffer.concat(chunks).toString("utf8");
+            const contentType = String(res.headers["content-type"] || "").toLowerCase();
+
+            let msg = null;
             try {
-              const raw = data.replace(/^event:\s*message\s*\ndata:\s*/, "").trim();
-              const parsed = JSON.parse(raw);
-              if (parsed.error) {
-                return reject(new Error(`JSON-RPC error [${parsed.error.code}]: ${parsed.error.message}`));
+              if (contentType.includes("text/event-stream")) {
+                const sseEvents = parseSseEvents(bodyText);
+                for (const ev of sseEvents) {
+                  const candidate = JSON.parse(ev.data);
+                  if (candidate && candidate.id === reqId) {
+                    msg = candidate;
+                    break;
+                  }
+                }
+                if (!msg) {
+                  return done(new Error("No SSE event matched JSON-RPC request id"));
+                }
+              } else if (contentType.includes("application/json") || !contentType) {
+                msg = JSON.parse(bodyText);
+              } else {
+                return done(new Error(`Unsupported Content-Type: ${contentType}`));
               }
-              resolve(parsed.result);
             } catch (err) {
-              reject(new Error(`Failed to parse response: ${err.message}`));
+              return done(new Error(`Failed to parse MCP response: ${err.message}`));
             }
+
+            if (!msg || msg.jsonrpc !== "2.0" || msg.id !== reqId) {
+              return done(new Error("Invalid JSON-RPC 2.0 envelope or mismatched id"));
+            }
+            const hasResult = Object.prototype.hasOwnProperty.call(msg, "result");
+            const hasError = Object.prototype.hasOwnProperty.call(msg, "error");
+            if (hasResult === hasError) {
+              return done(new Error("JSON-RPC response must contain exactly one of result or error"));
+            }
+            if (hasError) {
+              const code = msg.error?.code ?? "unknown";
+              const message = msg.error?.message ?? "unknown error";
+              return done(new Error(`JSON-RPC error [${code}]: ${message}`));
+            }
+            return done(null, msg.result);
           });
         }
       );
 
-      req.on("error", reject);
+      const deadlineTimer = setTimeout(() => {
+        req.destroy();
+        done(new Error(`Request deadline exceeded (${this.timeoutMs}ms)`));
+      }, this.timeoutMs);
+
+      req.on("error", (err) => done(err));
       req.on("timeout", () => {
         req.destroy();
-        reject(new Error("Request timeout"));
+        done(new Error("Socket timeout"));
       });
       req.write(payload);
       req.end();
     });
   }
 
+  async sendJsonRpc(method, params = {}) {
+    const id = this.nextId++;
+    return this._postJsonRpc({ jsonrpc: "2.0", id, method, params }, true);
+  }
+
+  async sendNotification(method, params = {}) {
+    return this._postJsonRpc({ jsonrpc: "2.0", method, params }, false);
+  }
+
   async initialize() {
-    return this.sendJsonRpc("initialize", {
-      protocolVersion: "2024-11-05",
+    const result = await this.sendJsonRpc("initialize", {
+      protocolVersion: MCP_PROTOCOL_VERSION,
       capabilities: {},
       clientInfo: { name: "node-public-mcp", version: "1.0.0" },
     });
+    if (!result?.capabilities?.tools) {
+      throw new Error("MCP server did not advertise tools capability");
+    }
+    await this.sendNotification("notifications/initialized", {});
+    return result;
   }
 
   async listTools() {
@@ -95,16 +215,41 @@ export class OpenAgentForumPublicMcpClient {
   }
 
   async callTool(name, args = {}) {
+    if (!ALLOWED_PUBLIC_TOOLS.has(name)) {
+      throw new Error(`Tool "${name}" is not in the anonymous public read allowlist`);
+    }
     return this.sendJsonRpc("tools/call", { name, arguments: args });
   }
 
-  async listChannels() {
-    return this.callTool("list_channels", {});
+  async listChannels(after) {
+    const args = {};
+    if (after !== undefined) args.after = String(after);
+    return this.callTool("list_channels", args);
   }
 
   async readChannel(channel, before) {
     const args = { channel };
-    if (before !== undefined) args.before = before;
+    if (before !== undefined) {
+      validateSafePositiveInt(before, "before");
+      args.before = before;
+    }
     return this.callTool("read_channel", args);
+  }
+
+  async readMessage(channel, messageId) {
+    if (!channel || !messageId) {
+      throw new Error("readMessage requires both channel and messageId");
+    }
+    return this.callTool("read_message", { channel, message_id: messageId });
+  }
+
+  async recentPublicActivity(opts = {}) {
+    const args = {};
+    if (opts.before !== undefined) {
+      validateSafePositiveInt(opts.before, "before");
+      args.before = opts.before;
+    }
+    if (opts.after !== undefined) args.after = String(opts.after);
+    return this.callTool("recent_public_activity", args);
   }
 }
