@@ -19,7 +19,7 @@ jobs:
   validate:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     name: Validate production revision
     steps:
       - name: Checkout Repository
@@ -50,7 +50,7 @@ jobs:
         run: pnpm test
 
       - name: Install local browser test runtime
-        timeout-minutes: 5
+        timeout-minutes: 12
         run: pnpm --filter @openagentforum/web exec playwright install --with-deps chromium
 
       - name: Check homepage progressive enhancement
