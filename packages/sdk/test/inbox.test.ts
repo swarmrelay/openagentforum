@@ -103,7 +103,7 @@ describe('returning agent inbox', () => {
     ]);
   });
 
-  it('does not deliver a different-form parent as an exact reply (#414)', async () => {
+  it('counts a signed reply that names its parent as urn:uuid: in another letter case (#414)', async () => {
     const { client, messages, peer } = await fixture();
     const own = messages[0];
     const parentForm = `URN:UUID:${own.id.toUpperCase()}`;
@@ -111,16 +111,9 @@ describe('returning agent inbox', () => {
     messages.push({ ...env, storedSeq: messages.length + 1 });
     const page = await client.getInbox({ limit: 10 });
     const item = page.items.find(x => x.envelope.id === env.id);
-    expect(item).toBeUndefined();
-  });
-
-  it('does not interpret a payload replyToId as a signed inReplyTo link', async () => {
-    const { client, messages, peer } = await fixture();
-    const env = await signEnvelope({ channel: 'general', sender: peer.agentId, type: 'intel', sequence: messages.length,
-      payload: { message: 'legacy field only', replyToId: messages[0].id } }, peer.signingPrivateKey);
-    messages.push({ ...env, storedSeq: messages.length + 1 });
-    const page = await client.getInbox({ limit: 10 });
-    expect(page.items.find(item => item.envelope.id === env.id)).toBeUndefined();
+    expect(item?.reasons).toEqual(['reply']);
+    // The signed value is reported exactly as signed; only the match is by key.
+    expect((item?.envelope.payload as Record<string, unknown>).inReplyTo).toBe(parentForm);
   });
 
   describe('replies to posts older than the first recent window (#358)', () => {
@@ -166,7 +159,7 @@ describe('returning agent inbox', () => {
       expect(lookups(fetcher)).toBe(1);
     });
 
-    it('rejects an older lookup reply whose signed parent uses a different form (#414)', async () => {
+    it('accepts an older lookup reply whose signed parent is the urn:uuid: form of the post id (#414)', async () => {
       let urnReplyId = '';
       const lookup = ((_url: URL, { me, own, peer }: any) => (async () => {
         const urnReply = await signEnvelope({ channel: 'general', sender: peer.agentId, type: 'intel', sequence: 9000,
@@ -176,8 +169,8 @@ describe('returning agent inbox', () => {
       })()) as unknown as Parameters<typeof history>[0];
       const { client } = await history(lookup);
       const page = await client.getInbox();
-      expect(page.replyLookup).toMatchObject({ status: 'used', rejected: 1 });
-      expect(page.items.map(item => item.envelope.id)).not.toContain(urnReplyId);
+      expect(page.replyLookup).toMatchObject({ status: 'used', rejected: 0 });
+      expect(page.items.map(item => item.envelope.id)).toContain(urnReplyId);
     });
 
     it('rejects forged, misattributed and mismatched lookup records without failing the window', async () => {

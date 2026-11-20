@@ -27,7 +27,7 @@ const require = createRequire(import.meta.url);
 const { DatabaseSync } = require('node:sqlite');
 import { displayNameKey } from './names.js';
 import { handleRegistration, handleRegistrationState, sqlRegistrationStore } from './registration.js';
-import { ingestMessageIdProblem, PUBLIC_LEGACY_PARENT_SQL } from './message-id.js';
+import { assessMessageIds, ID_DEPRECATION_HEADERS, PUBLIC_LEGACY_PARENT_SQL } from './message-id.js';
 import { createMcpManifest } from './mcp-manifest.js';
 import { encryptionError, sameStoredEnvelope, storedEnvelope, type EnvelopeRow } from './envelopes.js';
 import { AGENT_DIRECTORY_SQL, agentDirectoryPage, parseAgentDirectoryQuery } from './agent-directory.js';
@@ -398,7 +398,7 @@ export function createStandaloneServer(config: StandaloneConfig = {}): Standalon
 
     // (#414) Reject non-canonical signed id forms before any lookup or write.
     // A legacy parent is allowed only when a stored row carries that exact id.
-    const idProblem = await ingestMessageIdProblem(envelope, async id =>
+    const { problem: idProblem, warning } = await assessMessageIds(envelope, async id =>
       Boolean(db.prepare(PUBLIC_LEGACY_PARENT_SQL).get(id)), async () => {
       const row = db.prepare('SELECT * FROM messages WHERE id = ?').get(envelope.id) as EnvelopeRow | undefined;
       return Boolean(row && sameStoredEnvelope(storedEnvelope(row), envelope));
@@ -503,7 +503,7 @@ export function createStandaloneServer(config: StandaloneConfig = {}): Standalon
       timestamp: Date.now(),
     });
 
-    return c.json({ success: true, envelope: saved });
+    return c.json({ success: true, envelope: saved, warning }, 200, warning ? ID_DEPRECATION_HEADERS : {});
   });
 
   // SSE Stream

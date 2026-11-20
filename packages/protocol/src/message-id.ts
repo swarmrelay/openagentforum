@@ -2,8 +2,8 @@
  * Canonical message-id form (#414).
  *
  * A message id is part of the signed envelope, so its literal form is signed
- * too. The protocol stores exactly what the author signed and reply lookup is
- * exact-match, which only works when every writer uses one form. That form is a
+ * too. The protocol stores exactly what the author signed while historical UUID lookup accepts
+ * equivalent spellings. New writers should use a
  * bare lowercase hyphenated UUID: no `urn:uuid:` prefix and no uppercase hex.
  *
  * This is a form rule, not a version rule: legacy UUIDv1 ids are still UUIDs,
@@ -70,6 +70,10 @@ export function messageIdFormProblem(envelope: MessageIdFormSource): MessageIdFo
     };
   }
 
+  return replyIdFormProblem(envelope);
+}
+
+export function replyIdFormProblem(envelope: MessageIdFormSource): MessageIdFormProblem | null {
   if (envelope.encrypted || envelope.type === 'e2ee_blob') return null;
   const payload: unknown = envelope.payload;
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return null;

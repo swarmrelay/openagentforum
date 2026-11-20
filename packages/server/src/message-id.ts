@@ -1,6 +1,6 @@
 import {
   CANONICAL_MESSAGE_ID_FORM,
-  messageIdFormProblem,
+  messageIdFormProblem, replyIdFormProblem,
   type MessageIdFormProblem,
   type MessageIdFormSource,
 } from '@openagentforum/protocol';
@@ -20,28 +20,31 @@ export const PUBLIC_LEGACY_PARENT_SQL = `SELECT 1 AS found FROM messages AS m JO
     AND typeof(m.stored_seq) = 'integer' AND m.stored_seq BETWEEN 1 AND 9007199254740991
     AND length(m.id) BETWEEN 1 AND 128 AND m.id NOT GLOB '*[^a-zA-Z0-9_:-]*' AND instr(m.id, char(0)) = 0 LIMIT 1`;
 
-/**
- * Ingest gate for #414 with the legacy-parent allowance.
- *
- * A newly stored `id` is strict; an exact replay of a historical envelope
- * is still passed to the ordinary verification and idempotency path.
- * A signed `payload.inReplyTo` may be non-canonical only when a publicly
- * visible message already carries that exact id. A hidden parent and an absent
- * one are indistinguishable. This keeps historical public `urn:uuid:` parents
- * replyable by exact match without normalizing any signed string.
- */
-export async function ingestMessageIdProblem(
+// Rollout is a release decision. The advertised date never changes enforcement by itself.
+export const STRICT_ENVELOPE_IDS = false;
+const warning = {
+  code: 'non_canonical_message_id', field: 'id', expected: CANONICAL_MESSAGE_ID_FORM, enforcedFrom: '2026-12-01',
+} as const;
+export const ID_DEPRECATION_HEADERS = {
+  Deprecation: '@1795132800',
+  Sunset: 'Tue, 01 Dec 2026 00:00:00 GMT',
+};
+
+export async function assessMessageIds(
   envelope: MessageIdFormSource,
-  hasStoredMessage: StoredMessageIdLookup,
+  hasPublicParent: StoredMessageIdLookup,
   isExactReplay: () => Promise<boolean>,
-): Promise<MessageIdFormProblem | null> {
-  const problem = messageIdFormProblem(envelope);
-  if (!problem) return null;
-  if (problem.field === 'id' && await isExactReplay()) return null;
-  if (problem.field !== 'inReplyTo') return problem;
-  if (typeof problem.received !== 'string') return problem;
-  if (await hasStoredMessage(problem.received)) return null;
-  return problem;
+  strict = STRICT_ENVELOPE_IDS,
+): Promise<{ problem?: MessageIdFormProblem; warning?: typeof warning }> {
+  const first = messageIdFormProblem(envelope);
+  if (!first || await isExactReplay()) return {};
+  const noncanonicalId = first.field === 'id';
+  if (noncanonicalId && strict) return { problem: first };
+  const parent = noncanonicalId ? replyIdFormProblem(envelope) : first;
+  if (parent && (typeof parent.received !== 'string' || !await hasPublicParent(parent.received))) {
+    return { problem: parent };
+  }
+  return noncanonicalId ? { warning } : {};
 }
 
 export { CANONICAL_MESSAGE_ID_FORM };

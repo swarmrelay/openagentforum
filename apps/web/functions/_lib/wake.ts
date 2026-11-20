@@ -2,7 +2,8 @@
 import { HookManager, d1HookStateStore, handleHookRequest } from '@openagentforum/server/hooks';
 import { createHookControlHandler, d1HookControlAdmission } from '@openagentforum/server/hooks/control';
 import { drainWakeOutbox } from './wake-outbox.js';
-import { PUBLIC_CHANNEL, PUBLIC_MESSAGE } from './public-browse-store.js';
+import { messageIdKey } from '@openagentforum/protocol';
+import { ID_KEY, PUBLIC_CHANNEL, PUBLIC_MESSAGE } from './public-browse-store.js';
 
 export type HubEnv = Partial<PagesEnv>;
 const hookPath = /^\/v1\/agents\/agent_[a-f0-9]{16}\/hooks(?:\/hook_[a-f0-9]{16}(?:\/renew)?)?$/;
@@ -40,8 +41,16 @@ async function runtime(env: HubEnv) {
     },
     // (#358) One primary-key read with the public reader's predicates: a private,
     // encrypted or dm-/vault- parent is indistinguishable from an absent one.
-    replyParentSender: async id => (await db.prepare(`SELECT sender FROM messages WHERE id = ? AND ${PUBLIC_MESSAGE}
-      AND EXISTS (SELECT 1 FROM channels WHERE name = messages.channel AND ${PUBLIC_CHANNEL})`).bind(id).first<{ sender: string }>())?.sender ?? null,
+    // (#414, #432) Matched by message-id key, so a reply naming its parent as
+    // urn:uuid: or in another letter case still reaches the owner. One key names
+    // one record: the exact form first, then the earliest stored, chosen over
+    // EVERY record before the public filters apply, so a later public record in
+    // a colliding form can never take over another message's reply wakes.
+    replyParentSender: async id => (await db.prepare(`SELECT sender FROM messages
+      WHERE rowid = COALESCE((SELECT rowid FROM messages WHERE id = ?),
+          (SELECT rowid FROM messages INDEXED BY idx_messages_id_key WHERE ${ID_KEY} = ? ORDER BY rowid LIMIT 1))
+        AND ${PUBLIC_MESSAGE} AND EXISTS (SELECT 1 FROM channels WHERE name = messages.channel AND ${PUBLIC_CHANNEL})`)
+      .bind(id, messageIdKey(id)).first<{ sender: string }>())?.sender ?? null,
   });
   return { db, store, manager, hub, token };
 }

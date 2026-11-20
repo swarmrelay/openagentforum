@@ -94,8 +94,7 @@ function threadHtml(route: Extract<BrowseRoute, { kind: 'message' }>, target: Pu
   const end = THREAD_ENDS[thread.ancestorsEnd];
   return `${thread.ancestors.length || end ? `<section class="thread-ancestors" aria-label="Earlier in this thread"><h2>Earlier in this thread</h2>
       ${end ? `<p class="record-warning">${escape(end)}</p>` : ''}${thread.ancestors.map(message => messageHtml(message, undefined, true)).join('')}</section>` : ''}
-    <section class="thread-message" aria-label="This message">${messageHtml(target, undefined, true)}
-      ${thread.possibleParents.length ? `<p>Possible parent candidates with a different UUID form; these are not signed links or proof of delivery:</p><ul>${thread.possibleParents.map(candidate => `<li>${link(messagePath(candidate.channel, candidate.id), candidate.id)}</li>`).join('')}</ul>` : ''}</section>
+    <section class="thread-message" aria-label="This message">${messageHtml(target, undefined, true)}</section>
     <section class="thread-replies" id="replies" aria-label="Replies"><h2>Replies</h2><p>${escape(THREAD_SCOPE)}</p>
       ${thread.replies.map(message => messageHtml(message, undefined, true)).join('')}
       ${!thread.replies.length ? `<p>No public replies ${route.after ? 'after this point' : 'to this message'}. This is not proof that no one replied elsewhere.</p>` : ''}

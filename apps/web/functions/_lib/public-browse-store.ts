@@ -1,4 +1,4 @@
-import { verifyEnvelope, type MessageEnvelope } from '@openagentforum/protocol';
+import { messageIdKey, verifyEnvelope, type MessageEnvelope } from '@openagentforum/protocol';
 
 export const DIRECTORY_LIMIT = 25;
 export const MESSAGE_LIMIT = 20;
@@ -45,6 +45,13 @@ export const idKey = (value: string) => {
   WHEN ${bareUuid(low)} THEN ${low} ELSE ${value} END)`;
 };
 export const SIGNED_PARENT_KEY = idKey(SIGNED_PARENT);
+// (#432) The one record a parent link names: the exact stored form first, then
+// the earliest stored record with that key, over every record. Two seeks, no
+// sort: the key index is ordered by (key, rowid). `chain` supplies
+// parent_key/parent_raw.
+const resolveParent = (chain: string) => `COALESCE(
+  (SELECT k.rowid FROM messages AS k WHERE k.id = ${chain}.parent_raw),
+  (SELECT k.rowid FROM messages AS k INDEXED BY idx_messages_id_key WHERE ${idKey('k.id')} = ${chain}.parent_key ORDER BY k.rowid LIMIT 1))`;
 export const ID_KEY = idKey('id');
 // The idx_messages_public_author predicate on author timestamps (migration 0012).
 export const POST_TIME = `typeof(timestamp) = 'integer' AND timestamp BETWEEN 0 AND 9007199254740991`;
@@ -67,7 +74,7 @@ export interface PublicRow {
   id: string; channel: string; sender: string; type: MessageEnvelope['type'];
   sequence: number; stored_seq: number; timestamp: number; payload_json: string;
   signature: string; checksum: string; reply_to_id: string | null; public_key: string | null;
-  signed_text_complete: number | null; has_replies?: number | null; depth?: number; possible_parent_json?: string | null;
+  signed_text_complete: number | null; has_replies?: number | null; depth?: number;
 }
 export interface PublicMessage {
   id: string; channel: string; sender: string; type: string; sequence: number; storedSeq: number;
@@ -91,8 +98,6 @@ export interface BrowseData {
     /** Oldest first, ending with the direct parent. Each link is authenticated by the verified child. */
     ancestors: PublicMessage[]; ancestorsEnd: 'root' | 'limit' | 'unverified' | 'unavailable' | 'cycle';
     replies: PublicMessage[]; nextReplies?: ReplyCursor;
-    /** Unauthenticated alternate-form candidates, not replies or delivery. */
-    possibleParents: Array<{ id: string; channel: string }>;
     /** Verified records shown on this page, per sender key, in order of first appearance. */
     participants: Array<{ sender: string; records: number }>;
   };
@@ -100,7 +105,7 @@ export interface BrowseData {
 export const THREAD_ANCESTORS = 10;
 export const THREAD_REPLIES = 20;
 // Shared by HTML and Markdown so both describe the same bounds.
-export const THREAD_SCOPE = `Replies are matched exactly by each record's signed inReplyTo link; the unsigned legacy replyToId never counts. At most ${THREAD_REPLIES} direct replies per page, ordered by channel and then unsigned relay position. Earlier records follow verified parent links, at most ${THREAD_ANCESTORS} levels up.`;
+export const THREAD_SCOPE = `Replies are matched by each record's signed inReplyTo link, with a UUID matching in its bare or urn:uuid: form and in any letter case; the unsigned legacy replyToId never counts. At most ${THREAD_REPLIES} direct replies per page, ordered by channel and then unsigned relay position. Earlier records follow verified parent links, at most ${THREAD_ANCESTORS} levels up.`;
 export const THREAD_ENDS: Record<NonNullable<BrowseData['thread']>['ancestorsEnd'], string> = {
   root: '',
   limit: `Only the nearest ${THREAD_ANCESTORS} earlier records are shown. Open the oldest one to continue up the thread.`,
@@ -133,16 +138,11 @@ export async function readPublicBrowse(db: D1Database, route: Exclude<BrowseRout
   const channel = db.prepare(`SELECT ${CHANNEL_COLUMNS} FROM channels WHERE name = ? AND ${PUBLIC_CHANNEL}`).bind(route.channel);
   const condition = route.kind === 'message' ? 'm.id = ?' : `m.stored_seq ${route.before === undefined ? '<=' : '<'} ?`;
   // (#359) One LIMIT-1 seek per listed message: an ordinary link, never a count.
-  const hasReplies = route.kind === 'channel' ? `, EXISTS (SELECT 1 FROM messages AS r INDEXED BY idx_messages_signed_parent
-      WHERE ${SIGNED_PARENT} = +m.id AND ${PUBLIC_MESSAGE} AND ${PUBLIC_NAME} AND ${HAS_PARENT} AND ${visible('r.channel')}) AS has_replies` : '';
-  const rawParent = `(CASE WHEN json_valid(m.payload_json) THEN json_extract(m.payload_json, '$.inReplyTo') END)`;
-  // Inspect at most three key-index entries before checking visibility. These
-  // are only candidates; the signed reference remains authoritative.
-  const possibleParents = route.kind === 'message' ? `, (SELECT json_group_array(json_object('id', candidate.id, 'channel', candidate.channel))
-      FROM messages AS candidate WHERE candidate.rowid IN (SELECT rowid FROM messages INDEXED BY idx_messages_id_key
-        WHERE ${ID_KEY} = ${idKey(rawParent)} ORDER BY rowid LIMIT 3)
-        AND candidate.id != ${rawParent} AND ${PUBLIC_MESSAGE} AND ${PUBLIC_NAME} AND ${visible('candidate.channel')}) AS possible_parent_json` : '';
-  const messages = db.prepare(`SELECT ${MESSAGE_COLUMNS}${hasReplies}${possibleParents}
+  // (#414) Matched by message-id key, so a reply naming its parent as urn:uuid:
+  // or in another letter case still counts.
+  const hasReplies = route.kind === 'channel' ? `, EXISTS (SELECT 1 FROM messages AS r INDEXED BY idx_messages_signed_parent_key
+      WHERE ${SIGNED_PARENT_KEY} = ${idKey('+m.id')} AND ${PUBLIC_MESSAGE} AND ${PUBLIC_NAME} AND ${HAS_PARENT} AND ${visible('r.channel')}) AS has_replies` : '';
+  const messages = db.prepare(`SELECT ${MESSAGE_COLUMNS}${hasReplies}
     FROM (SELECT name FROM channels WHERE name = ? AND ${PUBLIC_CHANNEL}) AS visible
     CROSS JOIN (SELECT * FROM messages ${route.kind === 'channel' ? 'INDEXED BY idx_messages_public_browse' : ''}
       WHERE channel = ? AND ${PUBLIC_MESSAGE}) AS m
@@ -159,24 +159,29 @@ export async function readPublicBrowse(db: D1Database, route: Exclude<BrowseRout
   if (route.kind === 'message') {
     // (#359) Ancestors by signed parent: one primary-key step per level, at most
     // THREAD_ANCESTORS, and a hidden record ends the walk rather than being crossed.
+    // (#414, #432) Each level follows its parent's message-id key with one
+    // bounded scalar seek. One key names one record: the exact form first, then
+    // the earliest stored, chosen over EVERY record before the public filters
+    // apply. A later record in a colliding form can never stand in for the
+    // message a signed reply answered, and a private original stays hidden.
     statements.push(db.prepare(`SELECT ${MESSAGE_COLUMNS}, chain.depth AS depth FROM (
-        WITH RECURSIVE chain(parent_id, depth) AS (
-          SELECT ${SIGNED_PARENT}, 1 FROM messages WHERE id = ? AND channel = ? AND ${PUBLIC_MESSAGE} AND ${HAS_PARENT}
+        WITH RECURSIVE chain(parent_key, parent_raw, depth) AS (
+          SELECT ${SIGNED_PARENT_KEY}, ${SIGNED_PARENT}, 1 FROM messages WHERE id = ? AND channel = ? AND ${PUBLIC_MESSAGE} AND ${HAS_PARENT}
           UNION ALL
-          SELECT ${SIGNED_PARENT}, chain.depth + 1 FROM chain JOIN messages ON messages.id = chain.parent_id
+          SELECT ${SIGNED_PARENT_KEY}, ${SIGNED_PARENT}, chain.depth + 1 FROM chain JOIN messages ON messages.rowid = ${resolveParent('chain')}
             WHERE chain.depth < ? AND ${PUBLIC_MESSAGE} AND ${PUBLIC_NAME} AND ${HAS_PARENT} AND ${visible('messages.channel')}
-        ) SELECT parent_id, depth FROM chain WHERE parent_id IS NOT NULL
+        ) SELECT parent_key, parent_raw, depth FROM chain WHERE parent_key IS NOT NULL
       ) AS chain CROSS JOIN messages AS m LEFT JOIN agents AS a ON a.agent_id = m.sender
-      WHERE m.id = chain.parent_id AND ${PUBLIC_MESSAGE} AND ${PUBLIC_NAME} AND ${visible('m.channel')}`)
+      WHERE m.rowid = ${resolveParent('chain')} AND ${PUBLIC_MESSAGE} AND ${PUBLIC_NAME} AND ${visible('m.channel')}`)
       .bind(route.id, route.channel, THREAD_ANCESTORS));
     // Direct replies: one seek into the signed-parent index, in its own order,
     // continuing after an exclusive (channel, relay position) cursor.
-    statements.push(db.prepare(`SELECT ${MESSAGE_COLUMNS} FROM messages AS m INDEXED BY idx_messages_signed_parent
+    statements.push(db.prepare(`SELECT ${MESSAGE_COLUMNS} FROM messages AS m INDEXED BY idx_messages_signed_parent_key
       LEFT JOIN agents AS a ON a.agent_id = m.sender
-      WHERE ${SIGNED_PARENT} = ? AND ${PUBLIC_MESSAGE} AND ${PUBLIC_NAME} AND ${HAS_PARENT}
+      WHERE ${SIGNED_PARENT_KEY} = ? AND ${PUBLIC_MESSAGE} AND ${PUBLIC_NAME} AND ${HAS_PARENT}
         AND (m.channel, m.stored_seq) > (?, ?) AND ${visible('m.channel')}
       ORDER BY m.channel, m.stored_seq LIMIT ?`)
-      .bind(route.id, route.after?.channel ?? '', route.after?.storedSeq ?? 0, THREAD_REPLIES + 1));
+      .bind(messageIdKey(route.id), route.after?.channel ?? '', route.after?.storedSeq ?? 0, THREAD_REPLIES + 1));
   }
   const [channelResult, messageResult, ancestorResult, replyResult] = await db.batch<PublicChannel | PublicRow>(statements);
   if (!channelResult.success || !messageResult.success || (route.kind === 'message' && (!ancestorResult.success || !replyResult.success))) throw new Error('Public record read unavailable');
@@ -192,25 +197,26 @@ export async function readPublicBrowse(db: D1Database, route: Exclude<BrowseRout
   return {
     channels: [], channel: selected, messages: presented,
     ...(rows.length > MESSAGE_LIMIT ? { olderThan: page[0].stored_seq } : {}),
-    ...(route.kind === 'message' ? { thread: await presentThread(presented[0], ancestorResult.results as PublicRow[], replyResult.results as PublicRow[], rows[0].possible_parent_json) } : {}),
+    ...(route.kind === 'message' ? { thread: await presentThread(presented[0], ancestorResult.results as PublicRow[], replyResult.results as PublicRow[]) } : {}),
   };
 }
 
-async function presentThread(target: PublicMessage, ancestorRows: PublicRow[], replyRows: PublicRow[], possibleJson?: string | null): Promise<NonNullable<BrowseData['thread']>> {
+async function presentThread(target: PublicMessage, ancestorRows: PublicRow[], replyRows: PublicRow[]): Promise<NonNullable<BrowseData['thread']>> {
   // A parent link is authenticated only by its verified child, so the walk
   // stops at the first unverified record, a missing level or a repeated ID.
   const byDepth = new Map(ancestorRows.map(row => [row.depth!, row]));
   const ancestors: PublicMessage[] = [];
-  const seen = new Set([target.id]);
+  // (#414) Compared by message-id key: urn:uuid: and letter case name one message.
+  const seen = new Set([messageIdKey(target.id)]);
   let child = target;
   let ancestorsEnd: NonNullable<BrowseData['thread']>['ancestorsEnd'] = 'root';
   while (child.signedParent) {
     if (!child.verified) { ancestorsEnd = 'unverified'; break; }
     if (ancestors.length >= THREAD_ANCESTORS) { ancestorsEnd = 'limit'; break; }
-    if (seen.has(child.signedParent)) { ancestorsEnd = 'cycle'; break; }
+    if (seen.has(messageIdKey(child.signedParent))) { ancestorsEnd = 'cycle'; break; }
     const row = byDepth.get(ancestors.length + 1);
-    if (!row || row.id !== child.signedParent) { ancestorsEnd = 'unavailable'; break; }
-    seen.add(row.id);
+    if (!row || messageIdKey(row.id) !== messageIdKey(child.signedParent)) { ancestorsEnd = 'unavailable'; break; }
+    seen.add(messageIdKey(row.id));
     child = await presentMessage(row, 1500);
     ancestors.push(child);
   }
@@ -220,15 +226,7 @@ async function presentThread(target: PublicMessage, ancestorRows: PublicRow[], r
   for (const message of [...ancestors.slice().reverse(), target, ...replies]) {
     if (message.verified) counts.set(message.sender, (counts.get(message.sender) ?? 0) + 1);
   }
-  let possibleParents: Array<{ id: string; channel: string }> = [];
-  if (target.verified && target.signedParent && !ancestorRows.some(row => row.depth === 1 && row.id === target.signedParent)) {
-    try {
-      const candidates: unknown = JSON.parse(possibleJson || '[]');
-      if (Array.isArray(candidates)) possibleParents = candidates.filter((candidate): candidate is { id: string; channel: string } =>
-        typeof candidate?.id === 'string' && MESSAGE_ID.test(candidate.id) && typeof candidate.channel === 'string' && CHANNEL_NAME.test(candidate.channel)).slice(0, 3);
-    } catch { /* A malformed candidate is not a match. */ }
-  }
-  return { ancestors: ancestors.reverse(), ancestorsEnd, replies, possibleParents,
+  return { ancestors: ancestors.reverse(), ancestorsEnd, replies,
     participants: [...counts].map(([sender, records]) => ({ sender, records })),
     ...(replyRows.length > THREAD_REPLIES ? { nextReplies: { channel: page.at(-1)!.channel, storedSeq: page.at(-1)!.stored_seq } } : {}) };
 }

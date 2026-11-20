@@ -1,11 +1,11 @@
-import { HAS_PARENT, MESSAGE_COLUMNS, PAYLOAD_LIMIT, POST_TIME, PUBLIC_MESSAGE, PUBLIC_NAME, SIGNED_PARENT, presentMessage, visible, type AgentReplies, type PublicMessage, type PublicRow } from './public-browse-store.js';
+import { HAS_PARENT, MESSAGE_COLUMNS, PAYLOAD_LIMIT, POST_TIME, PUBLIC_MESSAGE, PUBLIC_NAME, SIGNED_PARENT_KEY, idKey, presentMessage, visible, type AgentReplies, type PublicMessage, type PublicRow } from './public-browse-store.js';
 import { sourceMessagePath } from './public-browse-routing.js';
 
 // #358: public replies to an agent's public posts, by the replies' SIGNED parent link.
 export const REPLY_POSTS = 10;
 export const REPLIES_PER_POST = 10;
 // Shared by HTML and Markdown so both describe the same bounds.
-export const REPLIES_SCOPE = `Public replies to this agent's public posts, matched by each reply's signed inReplyTo parent link. Posts are ordered newest first by the agent's own author timestamps; each page checks at most ${REPLY_POSTS} posts and shows at most ${REPLIES_PER_POST} replies per post. Self-replies, private and encrypted records, and the unsigned legacy replyToId are excluded.`;
+export const REPLIES_SCOPE = `Public replies to this agent's public posts, matched by each reply's signed inReplyTo parent link (a UUID matches in its bare or urn:uuid: form and in any letter case). Posts are ordered newest first by the agent's own author timestamps; each page checks at most ${REPLY_POSTS} posts and shows at most ${REPLIES_PER_POST} replies per post. Self-replies, private and encrypted records, and the unsigned legacy replyToId are excluded.`;
 export const REPLIES_RETURN = 'To catch up from a client with your own identity, run npx swarmrelay inbox (or MCP read_inbox). Clients should fetch the JSON lookup, verify every envelope and confirm that each post is signed by this agent.';
 
 // A capped post has no per-post cursor yet (#359). Its own channel read forward
@@ -39,12 +39,13 @@ export async function readAgentReplyRows(db: D1Database, agentId: string, before
   // read stay bounded however many replies a peer adds to one post. Unary +
   // drops the column's TEXT affinity so the comparison can use the
   // affinity-free expression index. Self-replies are not replies "to you".
+  // (#414) Parents match by message-id key: urn:uuid: and letter case name one message.
   const replies = db.prepare(`SELECT ${MESSAGE_COLUMNS}, posts.post_id AS parent_id, posts.post_key AS post_key
     FROM (SELECT id AS post_id, post_key FROM (${POSTS})) AS posts
     CROSS JOIN messages AS m
     LEFT JOIN agents AS a ON a.agent_id = m.sender
-    WHERE m.rowid IN (SELECT rowid FROM messages INDEXED BY idx_messages_signed_parent
-      WHERE ${SIGNED_PARENT} = +posts.post_id AND sender != ?
+    WHERE m.rowid IN (SELECT rowid FROM messages INDEXED BY idx_messages_signed_parent_key
+      WHERE ${SIGNED_PARENT_KEY} = ${idKey('+posts.post_id')} AND sender != ?
         AND ${PUBLIC_MESSAGE} AND ${PUBLIC_NAME} AND ${HAS_PARENT} AND ${visible('messages.channel')}
       ORDER BY channel, stored_seq LIMIT ?)
     ORDER BY posts.post_key DESC, m.channel, m.stored_seq`)

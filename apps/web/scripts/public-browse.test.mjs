@@ -267,12 +267,12 @@ test('native record rendering preserves author sequence and verifies as stored',
   assert.equal(response.headers.get('x-fixture-queries'), '3'); // record batch + #345 sender activity
 });
 
-test('records written through the actual Pages API are readable and verified with canonical IDs', async () => {
+test('records written through the actual Pages API are readable and verified, including URN IDs', async () => {
   const peer = await generateAgentKeyPair();
   const post = (path, body) => worker.fetch(`https://fixture.invalid/v1/${path}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
   const registered = await post('agents/register', { name: 'Browse journey fixture', publicKey: peer.signingPublicKey });
   assert.equal(registered.status, 200);
-  const signed = await signEnvelope({ id: '6ba7b810-9dad-11d1-80b4-00c04fd430c8', channel: 'general', sender: peer.agentId, type: 'intel', sequence: 37, payload: { message: 'Hello from the local Pages journey' } }, peer.signingPrivateKey);
+  const signed = await signEnvelope({ id: 'urn:uuid:6ba7b810-9dad-11d1-80b4-00c04fd430c8', channel: 'general', sender: peer.agentId, type: 'intel', sequence: 37, payload: { message: 'Hello from the local Pages journey' } }, peer.signingPrivateKey);
   const written = await post('channels/general/messages', signed);
   assert.equal(written.status, 200);
   const saved = (await written.json()).envelope;
@@ -809,7 +809,7 @@ test('reply lookup rejects malformed input, unknown agents and oversize records 
     source: '/v1/channels/general/messages?after=1&limit=1' }]);
 });
 
-test('reply lookup query plans seek the author and exact signed-parent indexes (0012)', async () => {
+test('reply lookup query plans seek the author index (0012) and the signed-parent key index (0016)', async () => {
   const peer = await registerPeer();
   const post = await message(1, { timestamp: 10 });
   await message(2, { signer: peer, payload: { message: 'Answer', inReplyTo: post.id } });
@@ -817,7 +817,7 @@ test('reply lookup query plans seek the author and exact signed-parent indexes (
   const details = JSON.parse(response.headers.get('x-fixture-plans')).flat().join('\n');
   // Seeks, not index scans: an affinity mismatch once degraded the parent probe to an index SCAN.
   assert.ok(details.includes('SEARCH messages USING INDEX idx_messages_public_author (sender=? AND <expr><?)'), details);
-  assert.ok(details.includes('SEARCH messages USING INDEX idx_messages_signed_parent (<expr>=?)'), details);
+  assert.ok(details.includes('SEARCH messages USING INDEX idx_messages_signed_parent_key (<expr>=?)'), details);
   // Each post's replies are a correlated LIMITed list, fetched by rowid.
   assert.ok(details.includes('CORRELATED LIST SUBQUERY'), details);
   assert.ok(details.includes('SEARCH m USING INTEGER PRIMARY KEY (rowid=?)'), details);
@@ -939,10 +939,10 @@ test('thread and channel reply probes seek the signed-parent and id key indexes 
   const post = await message(1, { payload: { message: 'Post' } });
   const reply = await message(2, { signer: peer, payload: { message: 'Reply', inReplyTo: post.id } });
   for (const [path, needles] of [
-    // The ancestor walk follows the literal signed parent by primary key.
-    [`/channels/general/messages/${reply.id}/`, ['SEARCH messages USING INDEX sqlite_autoindex_messages_1 (id=?)']],
-    [`/channels/general/messages/${post.id}/`, ['SEARCH m USING INDEX idx_messages_signed_parent (<expr>=? AND (channel,stored_seq)>(?,?))', 'SEARCH messages USING INDEX sqlite_autoindex_messages_1 (id=?)']],
-    ['/channels/general/', ['SEARCH r USING INDEX idx_messages_signed_parent (<expr>=?)']],
+    // The ancestor walk follows each parent's id key, one indexed seek per level.
+    [`/channels/general/messages/${reply.id}/`, ['SEARCH k USING COVERING INDEX idx_messages_id_key (<expr>=?)']],
+    [`/channels/general/messages/${post.id}/`, ['SEARCH m USING INDEX idx_messages_signed_parent_key (<expr>=? AND (channel,stored_seq)>(?,?))', 'SEARCH messages USING INDEX sqlite_autoindex_messages_1 (id=?)']],
+    ['/channels/general/', ['SEARCH r USING INDEX idx_messages_signed_parent_key (<expr>=?)']],
   ]) {
     const { response } = await get(path, { headers: { 'x-fixture-plans': '1' } });
     const details = JSON.parse(response.headers.get('x-fixture-plans')).flat().join('\n');
@@ -951,7 +951,7 @@ test('thread and channel reply probes seek the signed-parent and id key indexes 
   }
 });
 
-test('reply links match exactly and other UUID forms are only labeled candidates (#414)', async () => {
+test('replies match their parent by message-id key: urn:uuid: and letter case name one message, other ids stay exact (#414)', async () => {
   const peer = await registerPeer();
   const u = crypto.randomUUID(), v = crypto.randomUUID();
   const parent = await message(1, { id: u, payload: { message: 'Bare parent' } });
@@ -964,58 +964,33 @@ test('reply links match exactly and other UUID forms are only labeled candidates
   await message(21, { signer: peer, payload: { message: 'Wrong case on a non-UUID id', inReplyTo: 'CASE-PARENT' } });
   const child = await message(30, { payload: { message: 'Self reply naming the urn form', inReplyTo: `urn:uuid:${u.toUpperCase()}` } });
 
-  // Only the literal signed parent enters the thread or inbox.
+  // Thread view: every form of the parent's UUID threads; a non-UUID id stays exact.
   let page = await get(`/channels/general/messages/${parent.id}/`);
   assert.equal(page.response.status, 200);
-  assert.deepEqual(threadIds(page.text, 'thread-replies'), [answers[3].id]);
+  assert.deepEqual(threadIds(page.text, 'thread-replies'), [...answers.map(a => a.id), child.id]);
   page = await get(`/channels/general/messages/${encodeURIComponent(urnParent.id)}/`);
-  assert.deepEqual(threadIds(page.text, 'thread-replies'), []);
+  assert.deepEqual(threadIds(page.text, 'thread-replies'), [bareAnswer.id]);
   page = await get(`/channels/general/messages/${exact.id}/`);
   assert.deepEqual(threadIds(page.text, 'thread-replies'), []);
-  // Alternate forms appear only as explicitly labeled candidate links.
+  // Ancestor walk crosses forms in both directions.
   page = await get(`/channels/general/messages/${child.id}/`);
-  assert.deepEqual(threadIds(page.text, 'thread-ancestors'), []);
-  assert.match(page.text, /Possible parent candidates with a different UUID form/);
-  assert.ok(links(page.text).includes(`/channels/general/messages/${parent.id}/`));
-  const markdown = await get(`/channels/general/messages/${child.id}/index.md`);
-  assert.match(markdown.text, /Possible parent candidates with a different UUID form/);
-  assert.match(markdown.text, /not signed links or proof of delivery/);
+  assert.deepEqual(threadIds(page.text, 'thread-ancestors'), [parent.id]);
   page = await get(`/channels/general/messages/${bareAnswer.id}/`);
-  assert.deepEqual(threadIds(page.text, 'thread-ancestors'), []);
-  assert.match(page.text, /Possible parent candidates with a different UUID form/);
+  assert.deepEqual(threadIds(page.text, 'thread-ancestors'), [urnParent.id]);
 
   // Channel listing flags the parents that have replies, and only those.
   const flagged = links((await get('/channels/general/')).text).filter(href => href?.endsWith('/#replies'));
-  assert.ok(flagged.includes(`/channels/general/messages/${parent.id}/#replies`));
-  assert.ok(!flagged.includes(`/channels/general/messages/${encodeURIComponent(urnParent.id)}/#replies`));
+  for (const id of [parent.id, urnParent.id]) assert.ok(flagged.includes(`/channels/general/messages/${encodeURIComponent(id)}/#replies`), id);
   assert.ok(!flagged.includes(`/channels/general/messages/${encodeURIComponent(exact.id)}/#replies`));
 
-  // The possible candidates never count as inbox delivery.
+  // Replies inbox: matched by key, shown exactly as signed, self-replies still excluded.
   const body = await (await replies(author.agentId)).json();
   const thread = body.threads.find(t => t.post.id === parent.id);
-  assert.deepEqual(thread.replies.map(r => r.id), [answers[3].id]);
-  assert.equal(thread.replies[0].payload.inReplyTo, u);
+  assert.deepEqual(thread.replies.map(r => r.id), answers.map(a => a.id));
+  assert.equal(thread.replies[0].payload.inReplyTo, `urn:uuid:${u}`, 'the signed parent value is never rewritten');
   for (const reply of thread.replies) assert.ok((await verifyEnvelope(reply, peer.signingPublicKey)).valid);
-  assert.equal(body.threads.find(t => t.post.id === urnParent.id), undefined);
+  assert.deepEqual(body.threads.find(t => t.post.id === urnParent.id).replies.map(r => r.id), [bareAnswer.id]);
   assert.equal(body.threads.find(t => t.post.id === exact.id), undefined);
-});
-
-test('possible-parent hints require a verified child and never expose hidden candidates', async () => {
-  const candidateId = crypto.randomUUID();
-  await channel('locked', { private: 1 });
-  await message(1, { channel: 'locked', id: candidateId, payload: { message: 'hidden candidate' } });
-  const child = await message(1, { payload: { message: 'public child', inReplyTo: `urn:uuid:${candidateId}` } });
-  for (const suffix of ['', 'index.md']) {
-    const page = await get(`/channels/general/messages/${child.id}/${suffix}`);
-    assert.doesNotMatch(page.text, /Possible parent candidates with a different UUID form/);
-    assert.doesNotMatch(page.text, /hidden candidate|\/channels\/locked\//);
-  }
-  const visibleId = crypto.randomUUID();
-  await message(2, { id: visibleId, payload: { message: 'visible candidate' } });
-  const forged = await message(3, { payload: { message: 'unverified child', inReplyTo: `urn:uuid:${visibleId}` } });
-  await sql([{ sql: "UPDATE messages SET signature = ? WHERE id = ?", args: ['0'.repeat(128), forged.id] }]);
-  const page = await get(`/channels/general/messages/${forged.id}/`);
-  assert.doesNotMatch(page.text, /Possible parent candidates with a different UUID form/);
 });
 
 test('a later record in a colliding id form never displaces the original parent (#432)', async () => {
@@ -1025,10 +1000,10 @@ test('a later record in a colliding id form never displaces the original parent 
   const answer = await message(2, { signer: peer, payload: { message: 'An answer', inReplyTo: `urn:uuid:${u}` } });
   // Simulate a legacy or bypassed collision: stored AFTER the original, by another key.
   const squatter = await message(3, { id: `URN:UUID:${u.toUpperCase()}`, signer: peer, payload: { message: 'Squatting in another form' } });
-  // No alternate form becomes an authenticated ancestor.
+  // The ancestor walk shows the original, never the later collider.
   let page = await get(`/channels/general/messages/${answer.id}/`);
-  assert.deepEqual(threadIds(page.text, 'thread-ancestors'), []);
-  assert.match(page.text, /Possible parent candidates with a different UUID form/);
+  assert.deepEqual(threadIds(page.text, 'thread-ancestors'), [original.id]);
+  assert.doesNotMatch(page.text, /Squatting in another form/);
   // An exact signed link to the collider still names the collider (exact form first).
   const exactReply = await message(4, { payload: { message: 'Replying to the exact form', inReplyTo: squatter.id } });
   page = await get(`/channels/general/messages/${exactReply.id}/`);
@@ -1045,8 +1020,8 @@ test('ingest refuses an id that names an existing message in another form, priva
   for (const [n, form] of [`urn:uuid:${u}`, u.toUpperCase(), `URN:UUID:${u.toUpperCase()}`].entries()) {
     const collider = await signEnvelope({ id: form, channel: 'general', sender: author2.agentId, type: 'intel', sequence: 2 + n, payload: { message: `collider ${n}` } }, author2.signingPrivateKey);
     const response = await post('channels/general/messages', collider);
-    assert.equal(response.status, 400, form);
-    assert.equal((await response.json()).code, 'non_canonical_message_id');
+    assert.equal(response.status, 409, form);
+    assert.equal((await response.json()).reason, 'id_key_conflict');
   }
   // A byte-identical replay of the original is still an idempotent success.
   const replay = await post('channels/general/messages', first);
@@ -1410,7 +1385,7 @@ test('journal inserts are atomic, duplicate API replays do not make extra arriva
   // Local inert owner only: prove the new trigger coexists with 0005 without
   // invoking delivery, possessing credentials or sharing its cursor/retention.
   await sql([{ sql: "INSERT INTO wake_hook_state (agent_id,revision,ciphertext,due_at) VALUES ('fixture-wake-owner',1,'inert-fixture',1)" }]);
-  const signed = await signEnvelope({ id: crypto.randomUUID(), channel: 'general', sender: author.agentId, type: 'intel', sequence: 1, payload: { message: 'Local write journey' } }, author.signingPrivateKey);
+  const signed = await signEnvelope({ id: 'api-recent', channel: 'general', sender: author.agentId, type: 'intel', sequence: 1, payload: { message: 'Local write journey' } }, author.signingPrivateKey);
   const post = () => worker.fetch('https://fixture.invalid/v1/channels/general/messages', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(signed) });
   assert.equal((await post()).status, 200); assert.equal((await post()).status, 200);
   assert.equal((await recentState()).high_seq, 1);
@@ -1426,7 +1401,7 @@ test('journal inserts are atomic, duplicate API replays do not make extra arriva
   assert.equal((await sql([{ sql: 'SELECT COUNT(*) AS n FROM wake_message_outbox' }]))[0].results[0].n, 1);
   await sql([{ sql: 'DELETE FROM wake_message_outbox' }, { sql: "DELETE FROM wake_hook_state WHERE agent_id='fixture-wake-owner'" }]);
   assert.equal((await recentState()).high_seq, 1, 'Draining wake references must not drain the public journal');
-  assert.deepEqual(ids((await get('/recent/')).text), [signed.id]);
+  assert.deepEqual(ids((await get('/recent/')).text), ['api-recent']);
   // Local fixture only: recreate discovery after an existing stored message.
   await sql(['DROP TRIGGER public_message_arrival', 'DROP TABLE public_message_arrivals', 'DROP TABLE public_recent_state'].map(statement => ({ sql: statement })));
   const schema = (await readFile(new URL('../migrations/0007_public_recent.sql', import.meta.url), 'utf8')).replace(/^\s*--.*$/gm, '');

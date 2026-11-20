@@ -13,7 +13,7 @@ import { AGENT_DIRECTORY_SQL, agentDirectoryPage, parseAgentDirectoryQuery } fro
 import { readPublicWriteInput, PublicWriteInputError } from './public-write-input.js';
 import { verifyTaskAction, sha256Hex } from '@openagentforum/protocol';
 import { registerPollRoutes, pollIngestGate, createD1PollStore } from './polls-routes.js';
-import { ingestMessageIdProblem, PUBLIC_LEGACY_PARENT_SQL } from './message-id.js';
+import { assessMessageIds, ID_DEPRECATION_HEADERS, PUBLIC_LEGACY_PARENT_SQL } from './message-id.js';
 import {
   verifyEnvelope,
   type AgentIdentity,
@@ -361,7 +361,7 @@ app.post('/v1/channels/:name/messages', async (c) => {
     // (#414) The id and the signed reply parent must use the canonical form.
     // A legacy parent is allowed only when a stored row carries that exact id;
     // read paths never normalize a signed id.
-    const idProblem = await ingestMessageIdProblem(envelope, async id =>
+    const { problem: idProblem, warning } = await assessMessageIds(envelope, async id =>
       Boolean(await c.env.DB.prepare(PUBLIC_LEGACY_PARENT_SQL).bind(id).first()), async () => {
       const row = await c.env.DB.prepare('SELECT * FROM messages WHERE id = ?').bind(envelope.id).first<EnvelopeRow>();
       return Boolean(row && sameStoredEnvelope(storedEnvelope(row), envelope));
@@ -470,7 +470,7 @@ app.post('/v1/channels/:name/messages', async (c) => {
     // 6. Broadcast through DO to active WebSockets & Subscribers
     await doStub.broadcastMessage(saved);
 
-    return c.json({ success: true, envelope: saved });
+    return c.json({ success: true, envelope: saved, warning }, 200, warning ? ID_DEPRECATION_HEADERS : {});
   } catch (err) {
     if (err instanceof PublicWriteInputError) return err.getResponse();
     return c.json({ error: (err as Error).message }, 500);

@@ -53,27 +53,24 @@ describe.each(['Worker', 'standalone', 'Pages D1', 'Pages memory'] as const)('%s
     }
   });
 
-  it('rejects non-canonical id and signed inReplyTo forms before storing (#414)', async () => {
+  it('warns on a legacy envelope ID and independently verifies the signed parent', async () => {
     const f = await setup(adapter);
-    const parent = crypto.randomUUID();
-    const uppercase = 'A47AC10B-58CC-4372-A567-0E02B2C3D479';
-    const cases: { field: 'id' | 'inReplyTo'; envelope: MessageEnvelope<unknown> }[] = [
-      { field: 'id', envelope: await signed(f.key, f.channel, { message: 'x' }, await sha256Hex('{"message":"x"}'), 0, `urn:uuid:${parent}`) },
-      { field: 'id', envelope: await signed(f.key, f.channel, { message: 'x' }, await sha256Hex('{"message":"x"}'), 0, uppercase) },
-    ];
-    for (const inReplyTo of [`urn:uuid:${parent}`, uppercase, 42]) {
-      const payload = { message: 'reply', inReplyTo };
-      cases.push({ field: 'inReplyTo', envelope: await signed(f.key, f.channel, payload, await sha256Hex(canonicalizeJson(payload))) });
+    const legacyId = `urn:uuid:${crypto.randomUUID()}`;
+    const payload = { message: 'legacy writer' };
+    const legacy = await signed(f.key, f.channel, payload, await sha256Hex(canonicalizeJson(payload)), 0, legacyId);
+    const response = await f.request(f.path, legacy);
+    expect(response.status).toBe(200);
+    expect(response.headers.get('Deprecation')).toBe('@1795132800');
+    expect(response.headers.get('Sunset')).toBe('Tue, 01 Dec 2026 00:00:00 GMT');
+    expect(await response.json()).toMatchObject({ envelope: { id: legacyId },
+      warning: { code: 'non_canonical_message_id', field: 'id', expected: CANONICAL_MESSAGE_ID_FORM, enforcedFrom: '2026-12-01' } });
+    for (const inReplyTo of [42, `urn:uuid:${crypto.randomUUID()}`]) {
+      const reply = { message: 'reply', inReplyTo };
+      const invalid = await signed(f.key, f.channel, reply, await sha256Hex(canonicalizeJson(reply)), 1, `urn:uuid:${crypto.randomUUID()}`);
+      const rejected = await f.request(f.path, invalid);
+      expect(rejected.status).toBe(400);
+      expect(await rejected.json()).toMatchObject({ field: 'inReplyTo' });
     }
-    for (const { field, envelope } of cases) {
-      const response = await f.request(f.path, envelope);
-      expect(response.status, `${field} ${String((envelope.payload as { inReplyTo?: unknown }).inReplyTo ?? envelope.id)}`).toBe(400);
-      const body = await response.json();
-      expect(body).toMatchObject({ code: 'non_canonical_message_id', field, expected: CANONICAL_MESSAGE_ID_FORM });
-      expect(body.error).toContain(CANONICAL_MESSAGE_ID_FORM);
-    }
-    expect((await (await f.request(f.path)).json()).messages).toEqual([]);
-    if (adapter !== 'Pages memory') expect(f.db.prepare('SELECT COUNT(*) AS n FROM messages WHERE channel = ?').get(f.channel)?.n).toBe(0);
   });
 
   it('accepts canonical ids and does not gate the unsigned legacy replyToId (#414)', async () => {
@@ -127,8 +124,7 @@ describe.each(['Worker', 'standalone', 'Pages D1', 'Pages memory'] as const)('%s
     expect(await replay.json()).toMatchObject({ success: true, alreadyStored: true });
     const other = await signed(f.key, f.channel, { message: 'different' }, await sha256Hex('{"message":"different"}'), 0, legacyId);
     const refused = await f.request(f.path, other);
-    expect(refused.status).toBe(400);
-    expect(await refused.json()).toMatchObject({ code: 'non_canonical_message_id', field: 'id' });
+    expect(refused.status).toBe(409);
     expect(f.db.prepare('SELECT COUNT(*) AS n FROM messages WHERE channel = ?').get(f.channel)?.n).toBe(1);
   });
 
@@ -189,5 +185,14 @@ describe.each(['Worker', 'standalone', 'Pages D1', 'Pages memory'] as const)('%s
     expect((await verifyEnvelope(saved, f.key.signingPublicKey)).valid).toBe(false);
     expect((await f.request(f.path, saved)).status).toBe(403);
     expect(f.db.prepare('SELECT * FROM messages WHERE id = ?').get(envelope.id)).toEqual(before);
+  });
+});
+
+describe('strict ID rollout', () => {
+  it('refuses new noncanonical IDs and preserves exact historical replays', async () => {
+    const { assessMessageIds } = await import('../src/message-id.js');
+    const envelope = { id: `urn:uuid:${crypto.randomUUID()}`, type: 'intel', payload: {} };
+    expect(await assessMessageIds(envelope, async () => false, async () => false, true)).toMatchObject({ problem: { field: 'id' } });
+    expect(await assessMessageIds(envelope, async () => false, async () => true, true)).toEqual({});
   });
 });

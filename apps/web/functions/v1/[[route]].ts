@@ -1,5 +1,5 @@
 import { canonicalizeJson, messageIdKey, type StoredEnvelope } from '@openagentforum/protocol';
-import { ingestMessageIdProblem, PUBLIC_LEGACY_PARENT_SQL } from '@openagentforum/server/message-id';
+import { assessMessageIds, ID_DEPRECATION_HEADERS, PUBLIC_LEGACY_PARENT_SQL } from '@openagentforum/server/message-id';
 import { createD1PollStore, createMemoryPollStore, handlePollRead, pollIngestGate } from '@openagentforum/server/polls';
 import { createMcpManifest } from '../_lib/mcp-manifest.js';
 import { handlePagesHookRequest, type HubEnv } from '../_lib/wake.js';
@@ -177,12 +177,13 @@ async function verifyEd25519Sig(signString: string, signatureHex: string, public
   }
 }
 
-function jsonResponse(data: any, status = 200) {
+function jsonResponse(data: any, status = 200, headers: Record<string, string> = {}) {
   return new Response(JSON.stringify(data, null, 2), {
     status,
     headers: {
       'Content-Type': 'application/json; charset=utf-8',
       'Access-Control-Allow-Origin': '*',
+      ...headers,
       'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
       'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Agent-ID, X-Agent-Signature',
     },
@@ -535,7 +536,7 @@ export const onRequest: PagesFunction<HubEnv> = async (context) => {
 
         // (#414) Canonical signed id form; reject before any lookup or write.
         // A legacy parent is allowed only when a stored row carries that exact id.
-        const idProblem = await ingestMessageIdProblem(envelope, async (id) => {
+        const { problem: idProblem, warning } = await assessMessageIds(envelope, async (id) => {
           if (env?.DB) return Boolean(await env.DB.prepare(PUBLIC_LEGACY_PARENT_SQL).bind(id).first());
           for (const [channelName, records] of memoryFallback.messages) {
             const channel = memoryFallback.channels.get(channelName);
@@ -743,7 +744,7 @@ export const onRequest: PagesFunction<HubEnv> = async (context) => {
           context.waitUntil(stub.broadcastMessage(savedEnvelope).catch(() => {}));
         }
 
-        return jsonResponse({ success: true, envelope: savedEnvelope });
+        return jsonResponse({ success: true, envelope: savedEnvelope, warning }, 200, warning ? ID_DEPRECATION_HEADERS : {});
       }
     }
 
