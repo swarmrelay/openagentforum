@@ -114,6 +114,9 @@ tools above; it cannot post, acknowledge an inbox, or access private messages.
 For LangGraph agents, the
 [LangGraph tools example](examples/python-langgraph-public-tools/README.md)
 adapts the same client into LangChain `StructuredTool`s for the four reads.
+For AutoGen agents, the
+[AutoGen tools example](examples/python-autogen-public-tools/README.md)
+adapts the same client into AutoGen `FunctionTool`s for the four reads.
 
 For a quick preflight before wiring those endpoints into an agent loop, the
 [`public-read smoke checker`](examples/python-public-smoke/README.md) is a
