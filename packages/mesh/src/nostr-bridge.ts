@@ -27,6 +27,7 @@
  * refused event cannot stop the channel. Logs carry each relay's reason.
  */
 import { readFileSync, writeFileSync, existsSync, chmodSync } from 'node:fs';
+import { classifyArchiveFailure, type ArchiveFailureOutcome } from './archive-outcome.js';
 import { signEnvelope, deriveAgentId, fetchChannelRecord, nextSequenceFor, type MessageEnvelope } from '@openagentforum/protocol';
 import {
   envelopeToEvent, verifyCarriedEnvelope, createAttestationEvent, attestationPayload, verifyLink,
@@ -79,15 +80,15 @@ async function hubPubkey(sender: string, cache: PubCache): Promise<string | null
   }
 }
 
-async function archiveToHub(envelope: MessageEnvelope<any>, senderPublicKey: string): Promise<'stored' | 'conflict' | 'retry'> {
+async function archiveToHub(envelope: MessageEnvelope<any>, senderPublicKey: string): Promise<{ outcome: 'stored' | ArchiveFailureOutcome; status: number; error?: string }> {
   // Announce only the immutable verification key; profile claims need the owner's proof.
   await fetch(`${HUB}/v1/agents/register`, { method: 'POST', headers: UA, body: JSON.stringify({ publicKey: senderPublicKey }) });
   const { storedSeq: _d, ...env } = envelope as any;
   const res = await fetch(`${HUB}/v1/channels/${envelope.channel}/messages`, { method: 'POST', headers: UA, body: JSON.stringify(env) });
-  const body: any = await res.json().catch(() => ({}));
-  if (res.ok && body.success) return 'stored';
-  if (res.status === 409) return 'conflict';
-  return 'retry';
+  const body: any = await res.json().catch(() => undefined);
+  const error = typeof body?.error === 'string' ? body.error : undefined;
+  if (res.ok && body?.success) return { outcome: 'stored', status: res.status, error };
+  return { outcome: classifyArchiveFailure(res.status, body), status: res.status, error };
 }
 
 // ── bridge ──────────────────────────────────────────────────────────
@@ -98,7 +99,7 @@ async function bridge() {
   const state: {
     cursors: Record<string, number>; hubIds: string[]; fromNostr: string[];
     pending: Array<{ envelope: any; senderPublicKey: string }>;
-    refusedBackpressure?: number; droppedConflicts?: number; skippedUnresolvable?: number; skippedRefused?: number;
+    refusedBackpressure?: number; droppedConflicts?: number; droppedPermanent?: number; skippedUnresolvable?: number; skippedRefused?: number;
   } = Object.assign({ cursors: {}, hubIds: [], fromNostr: [], pending: [] }, existsSync(STATE_PATH) ? JSON.parse(readFileSync(STATE_PATH, 'utf8')) : {});
   const hubIds = new Set(state.hubIds);
   const fromNostr = new Set(state.fromNostr);
@@ -148,8 +149,9 @@ async function bridge() {
         if (!done) {
           try {
             const r = await archiveToHub(item.envelope, item.senderPublicKey);
-            if (r === 'stored') { hubIds.add(item.envelope.id); done = true; log('archived nostr->hub', item.envelope.channel, item.envelope.id); }
-            else if (r === 'conflict') { done = true; state.droppedConflicts = (state.droppedConflicts ?? 0) + 1; log('PERMANENT: id conflict on hub', item.envelope.id); }
+            if (r.outcome === 'stored') { hubIds.add(item.envelope.id); done = true; log('archived nostr->hub', item.envelope.channel, item.envelope.id); }
+            else if (r.outcome === 'conflict') { done = true; state.droppedConflicts = (state.droppedConflicts ?? 0) + 1; log('PERMANENT: id conflict on hub', item.envelope.id, r.status, r.error); }
+            else if (r.outcome === 'permanent') { done = true; state.droppedPermanent = (state.droppedPermanent ?? 0) + 1; log('PERMANENT: hub refused envelope', item.envelope.id, r.status, r.error); }
           } catch (e) { log('archive error (retry)', (e as Error).message); }
         }
         if (done) { state.pending = state.pending.filter((p) => p.envelope.id !== item.envelope.id); save(); }
