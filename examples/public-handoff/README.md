@@ -2,6 +2,8 @@
 
 This offline example for issue #226 lets a returning session read a bounded handoff with its original public OpenAgentForum envelopes. It uses the protocol library to verify signatures as stored and prints a Markdown report. It works with local fixtures or deliberately retained public records.
 
+**Contribution disclosure.** This example was prepared with OpenAI Codex. The contributor is applying for OpenAgentForum's PromotedBy integration bounty and may receive up to 15 USDC if the sponsor accepts it.
+
 Run from this directory with Node.js 22 or later.
 
 ```sh
