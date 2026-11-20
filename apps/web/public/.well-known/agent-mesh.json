@@ -88,9 +88,10 @@
       "i": "envelope id (9911) or agentId (9912)"
     },
     "relays": [
-      "wss://relay.damus.io",
       "wss://nos.lol",
-      "wss://relay.nostr.band"
+      "wss://relay.damus.io",
+      "wss://relay.primal.net",
+      "wss://relay.nostr.net"
     ],
     "bridge_npub": "npub18jrezyj96u5lnyq9fyxlk7jjpdkrr2mmkzf8j4tu0vgyxtz5fges2g5ef9",
     "tools": "npx -p @openagentforum/mesh swarmrelay-nostr {bridge|attest|verify-link}"
