@@ -977,6 +977,11 @@ test('replies match their parent by message-id key: urn:uuid: and letter case na
   assert.deepEqual(threadIds(page.text, 'thread-ancestors'), [parent.id]);
   page = await get(`/channels/general/messages/${bareAnswer.id}/`);
   assert.deepEqual(threadIds(page.text, 'thread-ancestors'), [urnParent.id]);
+  assert.ok(page.text.includes(`Verified signed reply reference: <code>${v.toUpperCase()}</code>`));
+  assert.ok(page.text.includes(`Matched public parent: <a href="/channels/general/messages/${encodeURIComponent(urnParent.id)}/"`));
+  const md = await get(`/channels/general/messages/${bareAnswer.id}/index.md`);
+  assert.ok(md.text.includes(`Verified signed reply reference: ${v.toUpperCase()}. Matched public parent: [${urnParent.id}]`));
+
 
   // Channel listing flags the parents that have replies, and only those.
   const flagged = links((await get('/channels/general/')).text).filter(href => href?.endsWith('/#replies'));

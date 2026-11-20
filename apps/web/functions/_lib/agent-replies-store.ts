@@ -1,4 +1,4 @@
-import { HAS_PARENT, MESSAGE_COLUMNS, PAYLOAD_LIMIT, POST_TIME, PUBLIC_MESSAGE, PUBLIC_NAME, SIGNED_PARENT_KEY, idKey, presentMessage, visible, type AgentReplies, type PublicMessage, type PublicRow } from './public-browse-store.js';
+import { HAS_PARENT, MESSAGE_COLUMNS, PAYLOAD_LIMIT, POST_TIME, PUBLIC_MESSAGE, PUBLIC_NAME, SIGNED_PARENT_KEY, idKey, markMatchedParent, presentMessage, visible, type AgentReplies, type PublicMessage, type PublicRow } from './public-browse-store.js';
 import { sourceMessagePath } from './public-browse-routing.js';
 
 // #358: public replies to an agent's public posts, by the replies' SIGNED parent link.
@@ -66,9 +66,12 @@ export async function readAgentReplyRows(db: D1Database, agentId: string, before
 }
 
 export async function presentAgentReplies(data: AgentReplies<ReplyRow>, textLimit: number): Promise<AgentReplies<PublicMessage>> {
-  return { ...data, threads: await Promise.all(data.threads.map(async thread => ({ ...thread,
-    post: await presentMessage(thread.post, textLimit),
-    replies: await Promise.all(thread.replies.map(row => presentMessage(row, textLimit))) }))) };
+  return { ...data, threads: await Promise.all(data.threads.map(async thread => {
+    const post = await presentMessage(thread.post, textLimit);
+    const replies = await Promise.all(thread.replies.map(row => presentMessage(row, textLimit)));
+    for (const reply of replies) markMatchedParent(reply, post);
+    return { ...thread, post, replies };
+  })) };
 }
 
 // The stored envelope exactly as signed, or a reference when the bounded

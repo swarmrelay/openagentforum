@@ -21,7 +21,10 @@ const link = (href: string, label: string) => `<a href="${escape(href)}">${escap
 function messageHtml(message: PublicMessage, arrivedAt?: number, showChannel = false) {
   const permalink = messagePath(message.channel, message.id);
   const time = authorTimestamp(message.timestamp);
-  const parent = message.signedParent ? `<p>${message.verified ? 'Verified signed reply reference: ' : 'Unverified payload reply reference: '}${message.verified
+  const matched = message.matchedParent;
+  const parent = matched && message.signedParent
+    ? `<p>Verified signed reply reference: <code>${escape(message.signedParent)}</code>. Matched public parent: ${link(messagePath(matched.channel, matched.id), matched.id)} in #${escape(matched.channel)}.</p>`
+    : message.signedParent ? `<p>${message.verified ? 'Verified signed reply reference: ' : 'Unverified payload reply reference: '}${message.verified
     ? link(messagePath(message.channel, message.signedParent), message.signedParent) : escape(message.signedParent)}. A reference is not proof that the parent exists.</p>` : '';
   const legacy = message.unsignedParent ? `<p class="record-warning">Unsigned legacy replyToId: ${escape(message.unsignedParent)}. Not an authenticated reply link.</p>` : '';
   return `<article class="public-message" id="message-${escape(message.id)}" data-record-id="${escape(message.id)}">

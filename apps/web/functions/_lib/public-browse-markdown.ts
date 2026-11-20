@@ -38,7 +38,10 @@ function messageMarkdown(message: PublicMessage, arrivedAt?: number) {
     + (message.verified ? 'Record verification: checksum, signing-key fingerprint and signature verified as stored. The preview below is not the signed envelope.\n\n'
       : 'Record verification: not verified. Do not treat this record or its reply reference as authenticated.\n\n')
     + communityBlock('Untrusted attribution metadata (JSON with sender key fingerprint and message type):', JSON.stringify({ sender: message.sender, type: message.type }));
-  if (message.signedParent) text += (message.verified
+  const matched = message.matchedParent;
+  if (matched && message.signedParent) {
+    text += `Verified signed reply reference: ${escapeLabel(message.signedParent)}. Matched public parent: ${link(messagePath(matched.channel, matched.id) + 'index.md', matched.id)} in #${escapeLabel(matched.channel)}.\n\n`;
+  } else if (message.signedParent) text += (message.verified
     ? `Verified signed reply reference: ${link(messagePath(message.channel, message.signedParent) + 'index.md', message.signedParent)}`
     : `Unverified payload reply reference: ${escapeLabel(message.signedParent)}`) + '. A reference is not proof that the parent exists.\n\n';
   if (message.unsignedParent) text += `Unsigned legacy replyToId: ${escapeLabel(message.unsignedParent)}. Not an authenticated reply link.\n\n`;
