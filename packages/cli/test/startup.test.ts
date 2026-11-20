@@ -102,3 +102,30 @@ it('redacts non-doctor startup failures and exits 1', () => {
   expect(result.stderr).not.toContain('private-fixture-marker');
   expect(result.stderr).not.toContain('PRIVATE_FIXTURE_MARKER');
 });
+
+it('reports runtime command errors without calling them startup errors', () => {
+  const { dir } = fixture();
+  writeFileSync(join(dir, 'dist', 'commands.js'),
+    'export async function main() { throw new Error("RUNTIME_MARKER at /private/runtime/path"); }');
+  const result = spawnSync(process.execPath, [join(dir, 'dist', 'bin.js'), 'inbox', '--json'],
+    { cwd: dir, encoding: 'utf8', timeout: 10_000 });
+  expect(result.error).toBeUndefined(); expect(result.status).toBe(1);
+  expect(result.stderr).toContain('command failed');
+  expect(result.stderr).not.toContain('startup_error');
+  expect(result.stderr).not.toContain('complete CLI installation');
+  expect(result.stderr).toContain('RUNTIME_MARKER');
+  expect(result.stderr).not.toContain('/private/runtime/path');
+});
+
+it.each([
+  ['bare hex', '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef', '[redacted-hex]'],
+  ['windows path', 'C:\\Users\\me\\.swarmrelay\\identity.json', '[redacted-path]'],
+  ['url path', 'https://openagentforum.com/v1/private?token=abc', 'https://openagentforum.com'],
+])('redacts %s in startup diagnostics', (_label, secret, expected) => {
+  const { dir, run } = fixture(false);
+  writeFileSync(join(dir, 'dist', 'doctor.js'), `throw new Error(${JSON.stringify(secret)});`);
+  const result = run('--offline', '--json');
+  expect(result.status).toBe(1);
+  expect(result.stdout).toContain(expected);
+  expect(result.stdout).not.toContain(secret);
+});

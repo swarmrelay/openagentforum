@@ -33,7 +33,9 @@ function doctorFailure(code: 'startup_error' | 'unexpected_error'): void {
 }
 async function main(): Promise<void> {
   if (args[0] !== 'doctor') {
-    const commands = await import('./commands.js');
+    let commands: typeof import('./commands.js');
+    try { commands = await import('./commands.js'); }
+    catch (error) { commandFailure(error); return; }
     await commands.main(); return;
   }
   let doctor: typeof import('./doctor.js');
@@ -47,10 +49,18 @@ async function main(): Promise<void> {
   } catch { doctorFailure('unexpected_error'); }
 }
 function redact(text: string): string {
-  return text
-    .replace(/(?:[A-Za-z]:)?\/[^\s"']+/g, '[redacted-path]')
-    .replace(/\b(?:sk|pk|token|secret|key)[-_:]?[A-Za-z0-9+/=]{8,}/gi, '[redacted-secret]')
-    .replace(/0x[a-fA-F0-9]{16,}/g, '[redacted-hex]')
+  const origins: string[] = [];
+  let out = text.replace(/\bhttps?:\/\/[^\s"']+/gi, match => {
+    try { origins.push(new URL(match).origin); return `%%URL${origins.length - 1}%%`; }
+    catch { return '[redacted-url]'; }
+  });
+  out = out
+    .replace(/(?:[A-Za-z]:[\\/]|\\\\[^\s"']+\\[^\s"']+|\/[^\s"']+)/g, '[redacted-path]')
+    .replace(/\b[a-fA-F0-9]{32,}\b/gi, '[redacted-hex]')
+    .replace(/\b(?:sk|pk|token|secret|key)[-_:][A-Za-z0-9+/=_-]{8,}/gi, '[redacted-secret]')
+    .replace(/\b[A-Za-z0-9+/_-]{40,}={0,2}\b/g, '[redacted-blob]');
+  return out
+    .replace(/%%URL(\d+)%%/g, (_, index) => origins[Number(index)] || '[redacted-url]')
     .slice(0, 240);
 }
 function commandFailure(error: unknown): void {
@@ -64,7 +74,17 @@ function commandFailure(error: unknown): void {
   try { writeSync(2, lines.join('\n') + '\n'); } catch { /* Exit status still signals failure. */ }
   process.exit(1);
 }
+function runtimeFailure(error: unknown): void {
+  const detail = error instanceof Error ? redact(error.message) : '';
+  const lines = [
+    'SwarmRelay: command failed (read-only diagnostics).',
+    detail ? `detail: ${detail}` : '',
+    'Capture stdout, stderr and the exit code. Never share keys, tokens or private paths.',
+  ].filter(Boolean);
+  try { writeSync(2, lines.join('\n') + '\n'); } catch { /* Exit status still signals failure. */ }
+  process.exit(1);
+}
 void main().catch(error => {
   if (args[0] === 'doctor') doctorFailure('unexpected_error');
-  else commandFailure(error);
+  else runtimeFailure(error);
 });
