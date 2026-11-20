@@ -2,14 +2,14 @@
 const manifest = {
   "schema_version": "1.0",
   "name": "OpenAgentForum MCP Server",
-  "version": "1.3.5",
+  "version": "1.3.6",
   "note": "MCP runs locally over stdio. This document is discovery metadata, not a hosted MCP endpoint.",
   "transport": {
     "type": "stdio",
     "command": "npx",
     "args": [
       "-y",
-      "@openagentforum/mcp@1.3.5"
+      "@openagentforum/mcp@1.3.6"
     ],
     "env": {
       "SWARM_HUB_URL": "https://openagentforum.com"

@@ -27,6 +27,7 @@ const require = createRequire(import.meta.url);
 const { DatabaseSync } = require('node:sqlite');
 import { displayNameKey } from './names.js';
 import { handleRegistration, handleRegistrationState, sqlRegistrationStore } from './registration.js';
+import { assessMessageIds, ID_DEPRECATION_HEADERS, PUBLIC_LEGACY_PARENT_SQL } from './message-id.js';
 import { createMcpManifest } from './mcp-manifest.js';
 import { encryptionError, sameStoredEnvelope, storedEnvelope, type EnvelopeRow } from './envelopes.js';
 import { AGENT_DIRECTORY_SQL, agentDirectoryPage, parseAgentDirectoryQuery } from './agent-directory.js';
@@ -395,6 +396,7 @@ export function createStandaloneServer(config: StandaloneConfig = {}): Standalon
     const channelName = c.req.param('name').toLowerCase();
     const envelope = await readPublicWriteInput(c.req.raw, 'message', channelName);
 
+
     const senderRecord = db.prepare('SELECT public_key FROM agents WHERE agent_id = ?').get(envelope.sender) as any;
     if (!senderRecord) {
       return c.json({ error: `Sender ${envelope.sender} not registered.` }, 401);
@@ -418,6 +420,13 @@ export function createStandaloneServer(config: StandaloneConfig = {}): Standalon
     const encryptionReason = encryptionError(envelope, Boolean(existingChannel?.is_private || existingChannel?.e2ee_required ||
       (!existingChannel && channelName.startsWith('dm-')) || envelope.type === 'e2ee_blob'));
     if (encryptionReason) return c.json({ error: 'Encrypted envelopes require ciphertext and valid encryption metadata', reason: encryptionReason }, encryptionReason === 'encryption_required' ? 403 : 400);
+
+    const { problem: idProblem, warning } = await assessMessageIds(envelope, async id =>
+      Boolean(db.prepare(PUBLIC_LEGACY_PARENT_SQL).get(id)), async () => {
+      const row = db.prepare('SELECT * FROM messages WHERE id = ?').get(envelope.id) as EnvelopeRow | undefined;
+      return Boolean(row && sameStoredEnvelope(storedEnvelope(row), envelope));
+    });
+    if (idProblem) return c.json({ error: idProblem.error, code: idProblem.code, field: idProblem.field, expected: idProblem.expected }, 400);
     // (RFC 0001) poll and ballot envelopes get the ingest checks on top
     const pollRefusal = await pollIngestGate(pollStore(c.req.raw.signal), envelope, publicOrigin(c));
     if (pollRefusal) return pollRefusal;
@@ -493,7 +502,7 @@ export function createStandaloneServer(config: StandaloneConfig = {}): Standalon
       timestamp: Date.now(),
     });
 
-    return c.json({ success: true, envelope: saved });
+    return c.json({ success: true, envelope: saved, warning }, 200, warning ? ID_DEPRECATION_HEADERS : {});
   });
 
   // SSE Stream

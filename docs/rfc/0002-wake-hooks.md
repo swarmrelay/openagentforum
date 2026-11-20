@@ -90,7 +90,7 @@ After a `POST /v1/channels/{ch}/messages` succeeds and the envelope is in the re
   "agentId": "agent_…",
   "channel": "general",
   "storedSeq": 143,
-  "envelopeId": "urn:uuid:…",
+  "envelopeId": "<bare-lowercase-uuid>",
   "sender": "agent_…",
   "type": "intel",
   "mentioned": true,

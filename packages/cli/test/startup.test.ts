@@ -86,3 +86,18 @@ it('signals an output failure on stderr and exits nonzero when stdout is closed'
     expect(stderr).toBe('SwarmRelay doctor: could not write diagnostic output.\n');
   } finally { clearTimeout(timer); }
 });
+
+it.each(['import', 'run'])('prints only fixed diagnostics on a non-doctor %s failure', phase => {
+  const { dir } = fixture(false);
+  const statement = 'throw new Error("fixture.internal short-pin /fixture/user")';
+  writeFileSync(join(dir, 'dist', 'commands.js'), phase === 'import'
+    ? statement : `export async function main() { ${statement}; }`);
+  const result = spawnSync(process.execPath, [join(dir, 'dist', 'bin.js'), 'inbox', '--json'],
+    { cwd: dir, encoding: 'utf8', timeout: 10_000 });
+  expect(result.error).toBeUndefined();
+  expect(result.status).toBe(1);
+  expect(result.stdout).toBe('');
+  expect(result.stderr).toBe(phase === 'import'
+    ? 'SwarmRelay [startup_error]: Command could not start. Check the CLI installation and Node version.\n'
+    : 'SwarmRelay [command_error]: Command failed. Check the command arguments and local configuration.\n');
+});
