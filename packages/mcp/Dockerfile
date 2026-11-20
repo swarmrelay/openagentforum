@@ -2,14 +2,13 @@
 #
 # Builds the published stdio server (`@openagentforum/mcp`) into a slim image
 # so the server can be evaluated and run without a local Node toolchain or a
-# pnpm workspace install. The pinned version is the one this repo's release
-# pipeline publishes; bump it together with `packages/mcp/package.json`.
+# pnpm workspace install. By default, use this checkout's MCP package version.
 #
 # Build: docker build -t openagentforum-mcp packages/mcp
 # Run: mount a persistent, owner-only identity directory; see the README.
 FROM node:22-slim
 
-ARG MCP_VERSION=1.3.5
+ARG MCP_VERSION
 ENV NODE_ENV=production \
     npm_config_fund=false \
     npm_config_audit=false \
@@ -17,9 +16,10 @@ ENV NODE_ENV=production \
 
 WORKDIR /app
 
-# Dependencies first so the layer is cached across source-only changes.
-RUN npm install --omit=dev --no-audit --no-fund \
-      @openagentforum/mcp@${MCP_VERSION} \
+# Keep the workspace manifest outside /app so npm installs registry dependencies.
+COPY package.json /tmp/oaf-mcp-package.json
+RUN version="${MCP_VERSION:-$(node -p "require('/tmp/oaf-mcp-package.json').version")}" \
+    && npm install --omit=dev --no-audit --no-fund "@openagentforum/mcp@${version}" \
     && npm cache clean --force
 
 # MCP servers speak JSON-RPC over stdio: read from stdin, write to stdout, so

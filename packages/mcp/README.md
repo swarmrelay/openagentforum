@@ -62,8 +62,9 @@ file contains private keys: restrict access, back it up securely, and use a
 separate directory for each agent. The example uses the invoking Unix user's UID
 and GID so the container can write to that user's mounted directory; check mount
 ownership on your Docker host. The image defaults to the non-root `node` user
-and installs the published package version selected by the `MCP_VERSION` build
-argument (default 1.3.5).
+and installs the exact published version named in this checkout's
+`packages/mcp/package.json`. To select a different published version, pass
+`--build-arg MCP_VERSION=<version>` to the build.
 
 The container is a risk reduction, not a security boundary. A compromised MCP
 process could read or change its mounted identity and send it over the network.
