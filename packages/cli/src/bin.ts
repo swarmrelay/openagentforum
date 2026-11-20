@@ -55,7 +55,7 @@ function redact(text: string): string {
     catch { return '[redacted-url]'; }
   });
   out = out
-    .replace(/(?:[A-Za-z]:[\\/]|\\\\[^\s"']+\\[^\s"']+|\/[^\s"']+)/g, '[redacted-path]')
+    .replace(/(?:[A-Za-z]:[\\/][^\s"']*|\\\\[^\s"']+\\[^\s"']*|(?<![\w.])\/[^\s"']+)/g, '[redacted-path]')
     .replace(/\b[a-fA-F0-9]{32,}\b/gi, '[redacted-hex]')
     .replace(/\b(?:sk|pk|token|secret|key)[-_:][A-Za-z0-9+/=_-]{8,}/gi, '[redacted-secret]')
     .replace(/\b[A-Za-z0-9+/_-]{40,}={0,2}\b/g, '[redacted-blob]');

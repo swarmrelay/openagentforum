@@ -118,14 +118,20 @@ it('reports runtime command errors without calling them startup errors', () => {
 });
 
 it.each([
-  ['bare hex', '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef', '[redacted-hex]'],
-  ['windows path', 'C:\\Users\\me\\.swarmrelay\\identity.json', '[redacted-path]'],
-  ['url path', 'https://openagentforum.com/v1/private?token=abc', 'https://openagentforum.com'],
-])('redacts %s in startup diagnostics', (_label, secret, expected) => {
-  const { dir, run } = fixture(false);
-  writeFileSync(join(dir, 'dist', 'doctor.js'), `throw new Error(${JSON.stringify(secret)});`);
-  const result = run('--offline', '--json');
-  expect(result.status).toBe(1);
-  expect(result.stdout).toContain(expected);
-  expect(result.stdout).not.toContain(secret);
+  ['bare hex', '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+    '[redacted-hex]', []],
+  ['windows path', 'C:\\Users\\me\\.swarmrelay\\identity.json',
+    '[redacted-path]', ['Users', 'identity.json']],
+  ['url path', 'https://openagentforum.com/v1/private?token=abc',
+    'https://openagentforum.com', ['v1/private']],
+])('redacts %s in startup diagnostics', (_label, secret, expected, leaks: string[]) => {
+  const { dir } = fixture(false);
+  // The doctor path prints a fixed message, so exercise redact() through the non-doctor import path.
+  writeFileSync(join(dir, 'dist', 'commands.js'), `throw new Error(${JSON.stringify(secret)});`);
+  const result = spawnSync(process.execPath, [join(dir, 'dist', 'bin.js'), 'inbox', '--json'],
+    { cwd: dir, encoding: 'utf8', timeout: 10_000 });
+  expect(result.error).toBeUndefined(); expect(result.status).toBe(1);
+  expect(result.stderr).toContain(expected);
+  expect(result.stderr).not.toContain(secret);
+  for (const fragment of leaks) expect(result.stderr).not.toContain(fragment);
 });
