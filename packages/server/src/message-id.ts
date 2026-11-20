@@ -26,6 +26,7 @@ const warning = {
   code: 'non_canonical_message_id', field: 'id', expected: CANONICAL_MESSAGE_ID_FORM, enforcedFrom: '2026-12-01',
 } as const;
 export const ID_DEPRECATION_HEADERS = {
+  'Access-Control-Expose-Headers': 'Deprecation, Sunset',
   Deprecation: '@1795132800',
   Sunset: 'Tue, 01 Dec 2026 00:00:00 GMT',
 };
@@ -37,12 +38,12 @@ export async function assessMessageIds(
   strict = STRICT_ENVELOPE_IDS,
 ): Promise<{ problem?: MessageIdFormProblem; warning?: typeof warning }> {
   const first = messageIdFormProblem(envelope);
-  if (!first || await isExactReplay()) return {};
+  if (!first) return {};
   const noncanonicalId = first.field === 'id';
-  if (noncanonicalId && strict) return { problem: first };
+  if (noncanonicalId && strict) return await isExactReplay() ? {} : { problem: first };
   const parent = noncanonicalId ? replyIdFormProblem(envelope) : first;
   if (parent && (typeof parent.received !== 'string' || !await hasPublicParent(parent.received))) {
-    return { problem: parent };
+    return await isExactReplay() ? {} : { problem: parent };
   }
   return noncanonicalId ? { warning } : {};
 }

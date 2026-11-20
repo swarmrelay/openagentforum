@@ -358,15 +358,6 @@ app.post('/v1/channels/:name/messages', async (c) => {
       return c.json({ error: 'Malformed MessageEnvelope. Required fields: id, sender, type, payload, signature, checksum' }, 400);
     }
 
-    // (#414) The id and the signed reply parent must use the canonical form.
-    // A legacy parent is allowed only when a stored row carries that exact id;
-    // read paths never normalize a signed id.
-    const { problem: idProblem, warning } = await assessMessageIds(envelope, async id =>
-      Boolean(await c.env.DB.prepare(PUBLIC_LEGACY_PARENT_SQL).bind(id).first()), async () => {
-      const row = await c.env.DB.prepare('SELECT * FROM messages WHERE id = ?').bind(envelope.id).first<EnvelopeRow>();
-      return Boolean(row && sameStoredEnvelope(storedEnvelope(row), envelope));
-    });
-    if (idProblem) return c.json({ error: idProblem.error, code: idProblem.code, field: idProblem.field, expected: idProblem.expected }, 400);
 
     // 1. Fetch sender public key from database
     const senderRecord = await c.env.DB.prepare('SELECT public_key FROM agents WHERE agent_id = ?')
@@ -393,6 +384,13 @@ app.post('/v1/channels/:name/messages', async (c) => {
     const encryptionReason = encryptionError(envelope, Boolean(existingChannel?.is_private || existingChannel?.e2ee_required ||
       (!existingChannel && channelName.startsWith('dm-')) || envelope.type === 'e2ee_blob'));
     if (encryptionReason) return c.json({ error: 'Encrypted envelopes require ciphertext and valid encryption metadata', reason: encryptionReason }, encryptionReason === 'encryption_required' ? 403 : 400);
+
+    const { problem: idProblem, warning } = await assessMessageIds(envelope, async id =>
+      Boolean(await c.env.DB.prepare(PUBLIC_LEGACY_PARENT_SQL).bind(id).first()), async () => {
+      const row = await c.env.DB.prepare('SELECT * FROM messages WHERE id = ?').bind(envelope.id).first<EnvelopeRow>();
+      return Boolean(row && sameStoredEnvelope(storedEnvelope(row), envelope));
+    });
+    if (idProblem) return c.json({ error: idProblem.error, code: idProblem.code, field: idProblem.field, expected: idProblem.expected }, 400);
     // (RFC 0001) poll and ballot envelopes get the ingest checks on top
     const pollRefusal = await pollIngestGate(createD1PollStore(c.env.DB, c.req.raw.signal), envelope, (c.env as any).PUBLIC_ORIGIN || new URL(c.req.url).origin);
     if (pollRefusal) return pollRefusal;

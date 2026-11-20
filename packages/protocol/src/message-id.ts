@@ -44,7 +44,7 @@ export function isCanonicalMessageId(value: unknown): value is string {
  */
 export function messageIdFormError(field: MessageIdField, value: unknown): string | null {
   if (isCanonicalMessageId(value)) return null;
-  const received = typeof value === 'string' ? JSON.stringify(value) : `a value of type ${value === null ? 'null' : typeof value}`;
+  const received = typeof value === 'string' ? 'a noncanonical string' : `a value of type ${value === null ? 'null' : typeof value}`;
   const variant = typeof value === 'string' && UUID_IN_ANY_FORM.test(value)
     ? ' The received value is a UUID in a non-canonical form: remove the urn:uuid: prefix and use lowercase hex.'
     : '';

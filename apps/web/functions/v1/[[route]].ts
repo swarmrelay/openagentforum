@@ -534,31 +534,6 @@ export const onRequest: PagesFunction<HubEnv> = async (context) => {
           return jsonResponse({ error: 'Malformed MessageEnvelope. Required: id, sender, type, payload, signature, checksum' }, 400);
         }
 
-        // (#414) Canonical signed id form; reject before any lookup or write.
-        // A legacy parent is allowed only when a stored row carries that exact id.
-        const { problem: idProblem, warning } = await assessMessageIds(envelope, async (id) => {
-          if (env?.DB) return Boolean(await env.DB.prepare(PUBLIC_LEGACY_PARENT_SQL).bind(id).first());
-          for (const [channelName, records] of memoryFallback.messages) {
-            const channel = memoryFallback.channels.get(channelName);
-            if (!channel || channel.isPrivate || channel.e2eeRequired || !/^[a-z0-9_-]{1,128}$/.test(channelName)
-                || channelName.startsWith('dm-') || channelName.startsWith('vault-')) continue;
-            if ((records as Array<MessageRecord & { storedSeq: number }>).some(message => message.id === id
-                && /^[a-zA-Z0-9_:-]{1,128}$/.test(message.id) && message.encrypted !== true && message.type !== 'e2ee_blob'
-                && message.nonce == null && message.ephemeralPublicKey == null && message.recipientKeys == null
-                && Number.isSafeInteger(message.storedSeq) && message.storedSeq > 0)) return true;
-          }
-          return false;
-        }, async () => {
-          if (env?.DB) {
-            const row = await env.DB.prepare('SELECT * FROM messages WHERE id = ?').bind(envelope.id).first<EnvelopeRow>();
-            if (!row) return false;
-            const saved = storedEnvelope(row);
-            return row.signature === envelope.signature && canonicalizeJson(envelopeMetadata(saved)) === canonicalizeJson(envelopeMetadata(envelope));
-          }
-          const saved = Array.from(memoryFallback.messages.values()).flat().find(record => record.id === envelope.id);
-          return Boolean(saved && saved.signature === envelope.signature && canonicalizeJson(envelopeMetadata(saved)) === canonicalizeJson(envelopeMetadata(envelope)));
-        });
-        if (idProblem) return jsonResponse({ error: idProblem.error, code: idProblem.code, field: idProblem.field, expected: idProblem.expected }, 400);
 
         let senderPubKey: string | null = null;
         if (env?.DB) {
@@ -605,6 +580,30 @@ export const onRequest: PagesFunction<HubEnv> = async (context) => {
         const encryptionReason = encryptionError(envelope, Boolean(channelPolicy?.is_private || channelPolicy?.e2ee_required ||
           (!channelPolicy && chName.startsWith('dm-')) || envelope.type === 'e2ee_blob'));
         if (encryptionReason) return jsonResponse({ error: 'Encrypted envelopes require ciphertext and valid encryption metadata', reason: encryptionReason }, encryptionReason === 'encryption_required' ? 403 : 400);
+
+        const { problem: idProblem, warning } = await assessMessageIds(envelope, async (id) => {
+          if (env?.DB) return Boolean(await env.DB.prepare(PUBLIC_LEGACY_PARENT_SQL).bind(id).first());
+          for (const [channelName, records] of memoryFallback.messages) {
+            const channel = memoryFallback.channels.get(channelName);
+            if (!channel || channel.isPrivate || channel.e2eeRequired || !/^[a-z0-9_-]{1,128}$/.test(channelName)
+                || channelName.startsWith('dm-') || channelName.startsWith('vault-')) continue;
+            if ((records as Array<MessageRecord & { storedSeq: number }>).some(message => message.id === id
+                && /^[a-zA-Z0-9_:-]{1,128}$/.test(message.id) && message.encrypted !== true && message.type !== 'e2ee_blob'
+                && message.nonce == null && message.ephemeralPublicKey == null && message.recipientKeys == null
+                && Number.isSafeInteger(message.storedSeq) && message.storedSeq > 0)) return true;
+          }
+          return false;
+        }, async () => {
+          if (env?.DB) {
+            const row = await env.DB.prepare('SELECT * FROM messages WHERE id = ?').bind(envelope.id).first<EnvelopeRow>();
+            if (!row) return false;
+            const saved = storedEnvelope(row);
+            return row.signature === envelope.signature && canonicalizeJson(envelopeMetadata(saved)) === canonicalizeJson(envelopeMetadata(envelope));
+          }
+          const saved = Array.from(memoryFallback.messages.values()).flat().find(record => record.id === envelope.id);
+          return Boolean(saved && saved.signature === envelope.signature && canonicalizeJson(envelopeMetadata(saved)) === canonicalizeJson(envelopeMetadata(envelope)));
+        });
+        if (idProblem) return jsonResponse({ error: idProblem.error, code: idProblem.code, field: idProblem.field, expected: idProblem.expected }, 400);
 
         // The history must fit the hosted work policy before a vote/close writes.
         const pollRefusal = await pollIngestGate(hubPollStore(env, request), envelope, env.PUBLIC_ORIGIN || url.origin);
