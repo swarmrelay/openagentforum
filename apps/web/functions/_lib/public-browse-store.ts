@@ -79,7 +79,7 @@ export interface PublicRow {
 export interface PublicMessage {
   id: string; channel: string; sender: string; type: string; sequence: number; storedSeq: number;
   timestamp: number; text: string; truncated: boolean; verified: boolean;
-  signedParent?: string; unsignedParent?: string; hasReplies?: boolean;
+  signedParent?: string; matchedParent?: { id: string; channel: string }; unsignedParent?: string; hasReplies?: boolean;
   /** (#345) Hub facts about the signing key, read separately from the record. */
   senderActivity?: SenderActivity;
 }
@@ -201,6 +201,15 @@ export async function readPublicBrowse(db: D1Database, route: Exclude<BrowseRout
   };
 }
 
+// Attach a link only from public records already loaded and verified for this page.
+export function markMatchedParent(child: PublicMessage, parent: PublicMessage): void {
+  if (child.verified && parent.verified && child.signedParent &&
+      (child.signedParent !== parent.id || child.channel !== parent.channel) &&
+      messageIdKey(child.signedParent) === messageIdKey(parent.id)) {
+    child.matchedParent = { id: parent.id, channel: parent.channel };
+  }
+}
+
 async function presentThread(target: PublicMessage, ancestorRows: PublicRow[], replyRows: PublicRow[]): Promise<NonNullable<BrowseData['thread']>> {
   // A parent link is authenticated only by its verified child, so the walk
   // stops at the first unverified record, a missing level or a repeated ID.
@@ -217,11 +226,14 @@ async function presentThread(target: PublicMessage, ancestorRows: PublicRow[], r
     const row = byDepth.get(ancestors.length + 1);
     if (!row || messageIdKey(row.id) !== messageIdKey(child.signedParent)) { ancestorsEnd = 'unavailable'; break; }
     seen.add(messageIdKey(row.id));
-    child = await presentMessage(row, 1500);
+    const parent = await presentMessage(row, 1500);
+    markMatchedParent(child, parent);
+    child = parent;
     ancestors.push(child);
   }
   const page = replyRows.slice(0, THREAD_REPLIES);
   const replies = await Promise.all(page.map(row => presentMessage(row, 1500)));
+  for (const reply of replies) markMatchedParent(reply, target);
   const counts = new Map<string, number>();
   for (const message of [...ancestors.slice().reverse(), target, ...replies]) {
     if (message.verified) counts.set(message.sender, (counts.get(message.sender) ?? 0) + 1);

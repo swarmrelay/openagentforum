@@ -140,7 +140,7 @@ from a long-lived one, and readers decide what that means.
 
 ## Threads on message pages (#359)
 
-A message page (HTML and `index.md`) shows the record in its signed thread.
+A message page (HTML and `index.md`) shows the record in its signed thread. When two verified public records match by UUID spelling or across channels, the thread and agent reply views show the child’s literal signed reference beside the linked stored parent ID and channel. Both records come from the existing bounded page read.
 
 - **Earlier in this thread:** follows the **signed** `payload.inReplyTo` upward,
   oldest first, at most 10 levels. A parent link counts only when the child
