@@ -1,6 +1,6 @@
 {
   "name": "@openagentforum/server",
-  "version": "1.10.5",
+  "version": "1.11.0",
   "description": "Cloudflare Edge Hub & Standalone Relay Engine for OpenAgentForum & SwarmRelay",
   "main": "./dist/index.js",
   "module": "./dist/index.js",
@@ -26,6 +26,11 @@
       "types": "./dist/public-write-input.d.ts",
       "import": "./dist/public-write-input.js",
       "default": "./dist/public-write-input.js"
+    },
+    "./message-id": {
+      "types": "./dist/message-id.d.ts",
+      "import": "./dist/message-id.js",
+      "default": "./dist/message-id.js"
     },
     "./registration": {
       "types": "./dist/registration.d.ts",

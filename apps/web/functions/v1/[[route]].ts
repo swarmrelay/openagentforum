@@ -1,4 +1,5 @@
 import { canonicalizeJson, messageIdKey, type StoredEnvelope } from '@openagentforum/protocol';
+import { assessMessageIds, ID_DEPRECATION_HEADERS, PUBLIC_LEGACY_PARENT_SQL } from '@openagentforum/server/message-id';
 import { createD1PollStore, createMemoryPollStore, handlePollRead, pollIngestGate } from '@openagentforum/server/polls';
 import { createMcpManifest } from '../_lib/mcp-manifest.js';
 import { handlePagesHookRequest, type HubEnv } from '../_lib/wake.js';
@@ -176,12 +177,13 @@ async function verifyEd25519Sig(signString: string, signatureHex: string, public
   }
 }
 
-function jsonResponse(data: any, status = 200) {
+function jsonResponse(data: any, status = 200, headers: Record<string, string> = {}) {
   return new Response(JSON.stringify(data, null, 2), {
     status,
     headers: {
       'Content-Type': 'application/json; charset=utf-8',
       'Access-Control-Allow-Origin': '*',
+      ...headers,
       'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
       'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Agent-ID, X-Agent-Signature',
     },
@@ -532,6 +534,7 @@ export const onRequest: PagesFunction<HubEnv> = async (context) => {
           return jsonResponse({ error: 'Malformed MessageEnvelope. Required: id, sender, type, payload, signature, checksum' }, 400);
         }
 
+
         let senderPubKey: string | null = null;
         if (env?.DB) {
           const row = await env.DB.prepare('SELECT public_key FROM agents WHERE agent_id = ?').bind(envelope.sender).first<{ public_key: string }>();
@@ -577,6 +580,30 @@ export const onRequest: PagesFunction<HubEnv> = async (context) => {
         const encryptionReason = encryptionError(envelope, Boolean(channelPolicy?.is_private || channelPolicy?.e2ee_required ||
           (!channelPolicy && chName.startsWith('dm-')) || envelope.type === 'e2ee_blob'));
         if (encryptionReason) return jsonResponse({ error: 'Encrypted envelopes require ciphertext and valid encryption metadata', reason: encryptionReason }, encryptionReason === 'encryption_required' ? 403 : 400);
+
+        const { problem: idProblem, warning } = await assessMessageIds(envelope, async (id) => {
+          if (env?.DB) return Boolean(await env.DB.prepare(PUBLIC_LEGACY_PARENT_SQL).bind(id).first());
+          for (const [channelName, records] of memoryFallback.messages) {
+            const channel = memoryFallback.channels.get(channelName);
+            if (!channel || channel.isPrivate || channel.e2eeRequired || !/^[a-z0-9_-]{1,128}$/.test(channelName)
+                || channelName.startsWith('dm-') || channelName.startsWith('vault-')) continue;
+            if ((records as Array<MessageRecord & { storedSeq: number }>).some(message => message.id === id
+                && /^[a-zA-Z0-9_:-]{1,128}$/.test(message.id) && message.encrypted !== true && message.type !== 'e2ee_blob'
+                && message.nonce == null && message.ephemeralPublicKey == null && message.recipientKeys == null
+                && Number.isSafeInteger(message.storedSeq) && message.storedSeq > 0)) return true;
+          }
+          return false;
+        }, async () => {
+          if (env?.DB) {
+            const row = await env.DB.prepare('SELECT * FROM messages WHERE id = ?').bind(envelope.id).first<EnvelopeRow>();
+            if (!row) return false;
+            const saved = storedEnvelope(row);
+            return row.signature === envelope.signature && canonicalizeJson(envelopeMetadata(saved)) === canonicalizeJson(envelopeMetadata(envelope));
+          }
+          const saved = Array.from(memoryFallback.messages.values()).flat().find(record => record.id === envelope.id);
+          return Boolean(saved && saved.signature === envelope.signature && canonicalizeJson(envelopeMetadata(saved)) === canonicalizeJson(envelopeMetadata(envelope)));
+        });
+        if (idProblem) return jsonResponse({ error: idProblem.error, code: idProblem.code, field: idProblem.field, expected: idProblem.expected }, 400);
 
         // The history must fit the hosted work policy before a vote/close writes.
         const pollRefusal = await pollIngestGate(hubPollStore(env, request), envelope, env.PUBLIC_ORIGIN || url.origin);
@@ -716,7 +743,7 @@ export const onRequest: PagesFunction<HubEnv> = async (context) => {
           context.waitUntil(stub.broadcastMessage(savedEnvelope).catch(() => {}));
         }
 
-        return jsonResponse({ success: true, envelope: savedEnvelope });
+        return jsonResponse({ success: true, envelope: savedEnvelope, warning }, 200, warning ? ID_DEPRECATION_HEADERS : {});
       }
     }
 

@@ -43,6 +43,8 @@
  * what distinguishes recognized errors from unrelated responses, subject to
  * the intermediary limitation above.
  */
+import { isPermanentCanonicalIdRefusal } from './canonical-refusal.js';
+
 export type ArchiveFailureOutcome = 'conflict' | 'permanent' | 'retry';
 
 const ID_CONFLICT = 'Envelope id is already bound to a different envelope';
@@ -71,6 +73,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 export function classifyArchiveFailure(status: number, body?: unknown): ArchiveFailureOutcome {
   if (!isRecord(body)) return 'retry';
+  if (isPermanentCanonicalIdRefusal(status, body)) return 'permanent';
   const error = typeof body.error === 'string' ? body.error : undefined;
   const code = typeof body.code === 'string' ? body.code : undefined;
   const reason = typeof body.reason === 'string' ? body.reason : undefined;
