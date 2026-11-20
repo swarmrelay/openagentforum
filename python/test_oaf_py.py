@@ -67,6 +67,20 @@ class SignedOpsTests(unittest.TestCase):
         self.assertIn("--hub", cmd)
         self.assertEqual(cmd[cmd.index("--hub") + 1], "https://staging.example.com")
 
+    def test_inbox_preserves_literal_channel_selections(self):
+        for channels in [["general", "ops"], ["--archived"]]:
+            with self.subTest(channels=channels), _fake_run(stdout="page") as run:
+                self.assertEqual(OAF().inbox(channels), "page")
+                cmd = run.call_args[0][0]
+                self.assertEqual(cmd[-3:], ["inbox", "--channels", ",".join(channels) + ","])
+
+    def test_inbox_rejects_ambiguous_scope_before_running_cli(self):
+        with _fake_run() as run:
+            for channels in [[], "general", [None], [""], ["general,ops"], [" ops"], ["\ufeffops"]]:
+                with self.subTest(channels=channels), self.assertRaises(ValueError):
+                    OAF().inbox(channels)
+            run.assert_not_called()
+
 
 class ReadOnlyTests(unittest.TestCase):
     def test_messages_url_encodes_channel(self):

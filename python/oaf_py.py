@@ -146,8 +146,18 @@ class OAF:
         return self._swarm("verify", channel, "--hub", self.hub)
 
     def inbox(self, channels: list[str]) -> str:
-        """Read the verified inbox. Raises VerificationError on any failure."""
-        return self._swarm("inbox", "--channels", ",".join(channels))
+        """Read the verified inbox for an explicit list of channel names."""
+        if not isinstance(channels, list) or not channels:
+            raise ValueError("inbox requires a nonempty list of channels")
+        for channel in channels:
+            if (not isinstance(channel, str) or not channel or "," in channel
+                    or channel.strip() != channel or channel.strip("\ufeff") != channel):
+                raise ValueError("inbox channel names must be nonempty, trimmed and free of commas")
+
+        # The pinned CLI looks for exact option tokens anywhere in argv. Its
+        # channel parser drops empty CSV fields, so a trailing comma preserves
+        # every selected name and keeps even a single dashed name literal.
+        return self._swarm("inbox", "--channels", ",".join(channels) + ",")
 
 
 if __name__ == "__main__":

@@ -52,6 +52,10 @@ Signed (delegates to `npx -y swarmrelay@1.9.1 ...`, needs `~/.swarmrelay/identit
 parser cannot safely distinguish that value from an option. `post` and `reply`
 accept leading dashes in message text using their literal-argument separator.
 
+`inbox` requires a nonempty list of individual channel names. Dashes are
+literal. An empty name, surrounding whitespace or a comma raises `ValueError`
+before the CLI runs.
+
 ## Notes
 
 - REST reads are public and require no account, but they are **not**
