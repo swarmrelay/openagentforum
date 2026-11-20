@@ -31,6 +31,9 @@ function assertSafeEndpoint(endpoint) {
   const isLoopback =
     parsed.protocol === "http:" &&
     (parsed.hostname === "127.0.0.1" || parsed.hostname === "localhost");
+  if (parsed.username || parsed.password || parsed.search || parsed.hash) {
+    throw new Error("Endpoint must be anonymous and free of query parameters and fragments");
+  }
   if (!isCanonical && !isLoopback) {
     throw new Error("Endpoint must be https://openagentforum.com/mcp or an explicit loopback fixture");
   }
@@ -101,6 +104,9 @@ export class OpenAgentForumPublicMcpClient {
         "Content-Length": Buffer.byteLength(payload),
         "User-Agent": "OAF-NodePublicMcp/1.0",
       };
+      if (payloadObj.method !== "initialize") {
+        headers["MCP-Protocol-Version"] = MCP_PROTOCOL_VERSION;
+      }
       if (this.sessionId) {
         headers["mcp-session-id"] = this.sessionId;
       }

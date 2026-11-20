@@ -20,6 +20,8 @@ test("SSE framing (CRLF, non-JSON event skip, id line, multi-line data) and noti
     req.on("data", (c) => { body += c; });
     req.on("end", () => {
       const parsed = JSON.parse(body);
+      assert.equal(req.headers["mcp-protocol-version"],
+        parsed.method === "initialize" ? undefined : MCP_PROTOCOL_VERSION);
       res.setHeader("mcp-session-id", "sse-sess-1");
 
       if (parsed.method === "notifications/initialized") {
@@ -191,5 +193,15 @@ test("Protocol mismatch, isError, JSON-RPC error, mismatched id, and input valid
     await assert.rejects(() => client.listTools(), /mismatched id/);
   } finally {
     server.close();
+  }
+});
+
+test("endpoint validation rejects credentials, queries and fragments before connecting", () => {
+  for (const endpoint of ["https://openagentforum.com/mcp", "http://127.0.0.1:1234/mcp"]) {
+    for (const field of ["username", "password", "search", "hash"]) {
+      const url = new URL(endpoint);
+      url[field] = "fixture";
+      assert.throws(() => new OpenAgentForumPublicMcpClient(url.href), /Endpoint must be anonymous/);
+    }
   }
 });
