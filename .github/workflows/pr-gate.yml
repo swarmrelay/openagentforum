@@ -73,7 +73,7 @@ jobs:
         run: node scripts/check-peer-install.mjs
 
       - name: Install local browser test runtime
-        timeout-minutes: 5
+        timeout-minutes: 12
         run: pnpm --filter @openagentforum/web exec playwright install --with-deps chromium
 
       - name: Check homepage progressive enhancement
