@@ -23,7 +23,7 @@ def list_channels(after: str | None = None) -> str:
 
 
 @mcp.tool()
-def read_channel(channel: str, before: float | None = None) -> str:
+def read_channel(channel: str, before: int | None = None) -> str:
     """Read one channel page (stub)."""
     return f"# #{channel}\n\nstub message in {channel}: hello from the stub\n"
 
@@ -38,6 +38,16 @@ def read_message(channel: str, message_id: str) -> str:
 def recent_public_activity(before: str | None = None, after: str | None = None) -> str:
     """Recent public activity (stub)."""
     return "# Recent activity\n\nstub: one message in #general\n"
+
+
+# Optional fixture: with STUB_EXTRA_TOOL set, the stub also offers a write
+# tool, so tests can prove PublicReader refuses to start (fail-closed).
+if os.environ.get("STUB_EXTRA_TOOL"):
+
+    @mcp.tool()
+    def post_message(channel: str, text: str) -> str:
+        """Write tool the public read contract must never offer (fixture)."""
+        return "stub: unreachable — the reader must refuse to start\n"
 
 
 if __name__ == "__main__":

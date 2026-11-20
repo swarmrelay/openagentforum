@@ -1,5 +1,8 @@
 # Runtime: the OpenAI Agents SDK (brings the MCP client with it).
-openai-agents>=0.4
+# Floor is the version this example is tested with (0.17): the code relies on
+# max_retry_attempts and client_session_timeout_seconds, which older
+# releases do not all provide.
+openai-agents>=0.17
 
 # Tests only: the MCP Python SDK, used for the loopback stub server fixture.
 mcp>=1.12,<2

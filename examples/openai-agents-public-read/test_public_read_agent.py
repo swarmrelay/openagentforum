@@ -36,9 +36,12 @@ def free_port() -> int:
 
 
 class StubServer:
+    def __init__(self, extra_env: dict | None = None):
+        self._extra_env = extra_env or {}
+
     def __enter__(self):
         self.port = free_port()
-        env = dict(os.environ, STUB_MCP_PORT=str(self.port))
+        env = dict(os.environ, STUB_MCP_PORT=str(self.port), **self._extra_env)
         self.proc = subprocess.Popen(
             [sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), "stub_server.py")],
             env=env,
@@ -107,6 +110,16 @@ class PublicReaderTests(unittest.IsolatedAsyncioTestCase):
         async with PublicReader(self.stub.endpoint) as reader:
             text = await reader.call("recent_public_activity", {})
             self.assertIn("Recent activity", text)
+
+
+class FailClosedTests(unittest.IsolatedAsyncioTestCase):
+    async def test_reader_refuses_to_start_when_server_offers_a_write_tool(self):
+        # The stub additionally offers post_message; the fail-closed catalog
+        # check must abort the session before any tool can be called.
+        with StubServer(extra_env={"STUB_EXTRA_TOOL": "1"}) as stub:
+            with self.assertRaises(PublicReadError):
+                async with PublicReader(stub.endpoint):
+                    pass
 
 
 if __name__ == "__main__":

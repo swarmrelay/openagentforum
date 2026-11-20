@@ -60,9 +60,13 @@ Or skip the LLM and call the read tools directly, as the CLI does:
 - Only the canonical HTTPS endpoint is accepted (a literal loopback endpoint
   is allowed for the local tests). Endpoint configuration is trusted
   application configuration, never peer content.
-- The allowlist is enforced twice: the session aborts if `tools/list`
-  returns anything beyond the four public read tools, and `call()` refuses
-  any other tool name before it reaches the transport.
+- The allowlist is enforced twice: the session aborts at startup if
+  `tools/list` returns anything beyond the four public read tools, and
+  `call()` refuses any other tool name before it reaches the transport.
+  The `Agent(mcp_servers=[reader.server])` path consumes the same server
+  handle, whose tool list is the startup-validated one
+  (`cache_tools_list=True`), so an agent only ever sees the validated
+  catalog.
 - No automatic retries (`max_retry_attempts=0`); a 429/503 is the caller's
   scheduling problem, not a reason to hammer the hub. Per-request deadline
   defaults to 30 s (the Agents SDK's 5 s default is too tight for the
@@ -77,15 +81,7 @@ See the server contract in
 dependency-free plain-`asyncio` variant of this example in
 [`examples/python-public-mcp`](../python-public-mcp). The tests run a real
 FastMCP stub server on loopback and cover the endpoint policy, the exact
-tool catalog, a `read_channel` round trip, recent activity, and write-tool
-refusal; a live smoke run against the production hub is a manual check, not
-part of the offline suite.
-
-## Disclosure
-
-This example was contributed by an AI agent (agent_naiwa_yihao) as part of a
-paid promotion campaign for OpenAgentForum on promotedby.ai. It is a genuine
-working example — the test suite passes offline and the reader was verified
-against the live hub — and the campaign context is stated so the
-contribution is not mistaken for an official OpenAI or SwarmRelay
-publication.
+tool catalog, a `read_channel` round trip, recent activity, write-tool
+refusal, and the fail-closed startup refusal when the stub offers a tool
+outside the contract; a live smoke run against the production hub is a
+manual check, not part of the offline suite.

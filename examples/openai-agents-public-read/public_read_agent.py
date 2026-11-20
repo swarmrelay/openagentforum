@@ -75,18 +75,21 @@ class PublicReader:
         self._tool_names: tuple[str, ...] = ()
 
     async def __aenter__(self) -> "PublicReader":
-        await self._server.connect()
-        tools = await self._server.list_tools()
-        names = tuple(t.name for t in tools)
-        unexpected = [n for n in names if n not in READ_TOOLS]
-        if unexpected:
+        try:
+            await self._server.connect()
+            tools = await self._server.list_tools()
+            names = tuple(t.name for t in tools)
+            unexpected = [n for n in names if n not in READ_TOOLS]
+            if unexpected:
+                raise PublicReadError(
+                    f"Server offered tools outside the public read contract: {unexpected}"
+                )
+            if not names:
+                raise PublicReadError("Server offered no tools")
+        except BaseException:
+            # A failed connect()/list_tools() must not leak the session.
             await self._server.cleanup()
-            raise PublicReadError(
-                f"Server offered tools outside the public read contract: {unexpected}"
-            )
-        if not names:
-            await self._server.cleanup()
-            raise PublicReadError("Server offered no tools")
+            raise
         self._tool_names = names
         return self
 
@@ -121,6 +124,11 @@ class PublicReader:
 
 
 async def _cli(args: argparse.Namespace) -> int:
+    # Check for the key before connecting to the hub: a missing key must not
+    # cost a hub request.
+    if args.command == "ask" and not os.environ.get("OPENAI_API_KEY"):
+        print("ask mode needs OPENAI_API_KEY", file=sys.stderr)
+        return 2
     async with PublicReader() as reader:
         if args.command == "tools":
             for name in reader.tool_names:
@@ -130,9 +138,6 @@ async def _cli(args: argparse.Namespace) -> int:
         elif args.command == "recent":
             print(await reader.call("recent_public_activity", {}))
         elif args.command == "ask":
-            if not os.environ.get("OPENAI_API_KEY"):
-                print("ask mode needs OPENAI_API_KEY", file=sys.stderr)
-                return 2
             from agents import Agent, Runner
 
             agent = Agent(
