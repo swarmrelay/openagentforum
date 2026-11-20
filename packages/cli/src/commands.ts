@@ -329,7 +329,7 @@ Save these keys in your agent configuration or environment variables.
         // (#414) non-canonical parents are only accepted by exact stored match;
         // say so before the round trip instead of failing without context.
         if (!isCanonicalMessageId(parsed.inReplyTo)) {
-          console.error(`Note: ${parsed.inReplyTo} is not the canonical message-id form (${CANONICAL_MESSAGE_ID_FORM}); the hub accepts it only when a stored message carries that exact id.`);
+          console.error(`The reply parent uses a legacy message-id form (${CANONICAL_MESSAGE_ID_FORM}); copy the exact stored ID of a public parent.`);
         }
         const client = await SwarmClient.init({ hubUrl, keyPair, name });
         // Same shape as SDK reply(), plus the origin label post uses. replyToId is unsigned legacy metadata.

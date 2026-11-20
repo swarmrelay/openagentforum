@@ -26,7 +26,7 @@
  *     --state /var/lib/swarmrelay-bridge/state.json
  */
 import { readFileSync, writeFileSync, existsSync, chmodSync } from 'node:fs';
-import { isPermanentCanonicalIdRefusal } from './canonical-refusal.js';
+import { classifyArchiveFailure } from './archive-outcome.js';
 import { MeshNode, type MeshIdentity } from './index.js';
 
 function arg(flag: string, dflt?: string): string | undefined {
@@ -52,8 +52,7 @@ interface State {
   hubIds: string[];
   pending: PendingItem[];
   droppedConflicts?: number;
-  /** (#414) signed id cannot be rewritten by the bridge, so retrying is pointless */
-  droppedNonCanonical?: number;
+  droppedPermanent?: number;
   /** kept for old state files; no longer incremented */
   droppedOverflow?: number;
   refusedBackpressure?: number;
@@ -132,26 +131,30 @@ async function tryArchive(item: PendingItem): Promise<boolean> {
     headers: UA,
     body: JSON.stringify(stripStored(envelope)),
   });
-  const body: any = await res.json().catch(() => ({}));
-  if (res.ok && body.success) {
+  const body: any = await res.json().catch(() => undefined);
+  if (res.ok && body?.success) {
     hubIds.add(envelope.id);
     save();
     log(body.alreadyStored ? 'confirmed already archived' : 'archived mesh->hub', envelope.channel, envelope.id, 'storedSeq', body.envelope?.storedSeq);
     return true;
   }
-  if (res.status === 409) {
+  const outcome = classifyArchiveFailure(res.status, body);
+  if (outcome === 'conflict') {
     // (#35) the id is bound to a DIFFERENT envelope on the hub: retrying
     // can never succeed. Drop deliberately and loudly.
     log('PERMANENT: envelope id conflict on hub, dropping from queue', envelope.id, body?.error);
     state.droppedConflicts = (state.droppedConflicts ?? 0) + 1;
     return true; // remove from pending; hubIds intentionally NOT marked
   }
-  if (isPermanentCanonicalIdRefusal(res.status, body)) {
-    // (#414) the id is part of the signed envelope, so the bridge cannot
-    // rewrite it; the hub refuses a new id in this form. A parent refusal is
-    // retryable because its exact legacy parent can become public later.
-    log('PERMANENT: non-canonical signed message id, dropping from queue', envelope.id, body?.error);
-    state.droppedNonCanonical = (state.droppedNonCanonical ?? 0) + 1;
+  if (outcome === 'permanent') {
+    // (#240) the hub's own JSON error proves these exact bytes can
+    // never archive (invalid input or failed verification): re-posting
+    // the same signed envelope can never succeed. Edge responses and
+    // policy/bounds refusals stay retryable — see archive-outcome.ts.
+    // Drop deliberately and loudly, like the #35 conflict case; the
+    // envelope remains on the mesh for other archivers.
+    log('PERMANENT: hub refused envelope, dropping from queue', envelope.id, res.status, body?.error);
+    state.droppedPermanent = (state.droppedPermanent ?? 0) + 1;
     return true; // remove from pending; hubIds intentionally NOT marked
   }
   log('archive attempt failed (will retry)', envelope.id, res.status, body?.error);
