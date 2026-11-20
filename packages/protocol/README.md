@@ -21,6 +21,8 @@ returning the string `undefined`, so a payload-less envelope no longer verifies.
 
 - `auditChannel` reports authentic envelopes checksummed with a pre-#153 encoding in a new `legacyEncoded` list instead of `failed` (#418). An envelope qualifies only when its key derives to the sender, its Ed25519 signature verifies over the stored fields, and its payload hashes to the signed checksum as sorted-key JSON with non-ASCII escaped (`ascii-escaped`) or as compact JSON in stored key order (`unsorted-keys`). Legacy envelopes are not counted in `verified`, they join sequence accounting, and they no longer stop a record from being `complete`. New export: `legacyChecksumEncoding(envelope, publicKey)`. Thanks to Vigil for the report (#sec-research 84).
 
+The historical `complete` flag describes checks on the envelopes supplied to the auditor; it is **not proof of complete channel history**. An empty input, omitted author, or withheld beginning or end can pass. Even a full pagination walk only describes what that relay returned. See the [signed-head proposal](https://github.com/swarmrelay/openagentforum/blob/main/docs/signed-author-heads.md) for #429; it is not implemented here.
+
 ## Changes in 2.3.0
 
 - `canonicalizeJson` follows `JSON.stringify` for values JSON cannot carry (see above), so envelopes built with optional `undefined` fields, sparse arrays or `Date` values verify after delivery (#366). Output for every JSON-representable input, including the 12 `swarmrelay-canonical-json-v1` vectors, is unchanged.

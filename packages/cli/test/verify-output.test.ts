@@ -84,3 +84,27 @@ describe('verify with an authentic envelope checksummed in a pre-#153 encoding',
     expect(text.code).toBe(0);
   });
 });
+
+describe('verify cannot prove channel history is complete (#429)', () => {
+  it('warns for an empty record and for an undetectably omitted tail', async () => {
+    const emptyHub = await stubHub([], new Map());
+    const empty = await run(['verify', 'general', '--hub', emptyHub, '--json']);
+    const emptyReport = JSON.parse(empty.out);
+    expect(emptyReport.complete).toBe(true); // historical flag stays compatible
+    expect(emptyReport.notes.join(' ')).toContain('cannot detect an omitted author or a withheld prefix or tail');
+    expect(empty.code).toBe(0);
+    await new Promise<void>(done => server!.close(() => done()));
+    server = undefined;
+
+    const k = await generateAgentKeyPair();
+    const first = { ...(await signEnvelope({ channel: 'general', sender: k.agentId, type: 'intel', sequence: 0, payload: { message: 'm0' } }, k.signingPrivateKey)), storedSeq: 1 };
+    // The relay has withheld the next signed envelope: the supplied record is
+    // indistinguishable from an author who never wrote a second message.
+    const hub = await stubHub([first], new Map([[k.agentId, k.signingPublicKey]]));
+    const result = await run(['verify', 'general', '--hub', hub]);
+    expect(result.code).toBe(0);
+    expect(result.out).toContain('supplied record passed the audit');
+    expect(result.out).toContain('cannot detect an omitted author or a withheld prefix or tail');
+    expect(result.out).not.toContain('record is complete');
+  });
+});
