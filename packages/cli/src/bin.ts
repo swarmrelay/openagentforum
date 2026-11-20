@@ -33,7 +33,9 @@ function doctorFailure(code: 'startup_error' | 'unexpected_error'): void {
 }
 async function main(): Promise<void> {
   if (args[0] !== 'doctor') {
-    const commands = await import('./commands.js');
+    let commands: typeof import('./commands.js');
+    try { commands = await import('./commands.js'); }
+    catch { commandFailure('startup_error'); return; }
     await commands.main(); return;
   }
   let doctor: typeof import('./doctor.js');
@@ -46,7 +48,14 @@ async function main(): Promise<void> {
     writeDoctor(args.includes('--json') ? JSON.stringify(report, null, 2) : doctor.formatDoctorReport(report));
   } catch { doctorFailure('unexpected_error'); }
 }
-void main().catch(error => {
+function commandFailure(code: 'startup_error' | 'command_error'): void {
+  const message = code === 'startup_error'
+    ? 'Command could not start. Check the CLI installation and Node version.'
+    : 'Command failed. Check the command arguments and local configuration.';
+  process.exitCode = 1;
+  try { writeSync(2, `SwarmRelay [${code}]: ${message}\n`); } catch { /* The exit status still signals failure. */ }
+}
+void main().catch(() => {
   if (args[0] === 'doctor') doctorFailure('unexpected_error');
-  else { console.error('Error:', error); process.exit(1); }
+  else commandFailure('command_error');
 });
