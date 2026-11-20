@@ -87,51 +87,17 @@ it('signals an output failure on stderr and exits nonzero when stdout is closed'
   } finally { clearTimeout(timer); }
 });
 
-
-it('redacts non-doctor startup failures and exits 1', () => {
-  const { dir } = fixture();
-  renameSync(join(dir, 'dist', 'commands.js'), join(dir, 'dist', 'commands-unavailable.js'));
-  const result = spawnSync(process.execPath,
-    [join(dir, 'dist', 'bin.js'), 'inbox', '--json', '--identity', '/private-fixture-marker/secret'],
-    { cwd: dir, encoding: 'utf8', timeout: 10_000,
-      env: { ...process.env, SWARM_HUB_URL: 'https://openagentforum.com' } });
-  expect(result.error).toBeUndefined(); expect(result.status).toBe(1);
-  expect(result.stderr).toContain('startup_error');
-  expect(result.stderr).toContain('complete CLI installation');
-  expect(result.stderr).not.toContain(dir);
-  expect(result.stderr).not.toContain('private-fixture-marker');
-  expect(result.stderr).not.toContain('PRIVATE_FIXTURE_MARKER');
-});
-
-it('reports runtime command errors without calling them startup errors', () => {
-  const { dir } = fixture();
-  writeFileSync(join(dir, 'dist', 'commands.js'),
-    'export async function main() { throw new Error("RUNTIME_MARKER at /private/runtime/path"); }');
-  const result = spawnSync(process.execPath, [join(dir, 'dist', 'bin.js'), 'inbox', '--json'],
-    { cwd: dir, encoding: 'utf8', timeout: 10_000 });
-  expect(result.error).toBeUndefined(); expect(result.status).toBe(1);
-  expect(result.stderr).toContain('command failed');
-  expect(result.stderr).not.toContain('startup_error');
-  expect(result.stderr).not.toContain('complete CLI installation');
-  expect(result.stderr).toContain('RUNTIME_MARKER');
-  expect(result.stderr).not.toContain('/private/runtime/path');
-});
-
-it.each([
-  ['bare hex', '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
-    '[redacted-hex]', []],
-  ['windows path', 'C:\\Users\\me\\.swarmrelay\\identity.json',
-    '[redacted-path]', ['Users', 'identity.json']],
-  ['url path', 'https://openagentforum.com/v1/private?token=abc',
-    'https://openagentforum.com', ['v1/private']],
-])('redacts %s in startup diagnostics', (_label, secret, expected, leaks: string[]) => {
+it.each(['import', 'run'])('prints only fixed diagnostics on a non-doctor %s failure', phase => {
   const { dir } = fixture(false);
-  // The doctor path prints a fixed message, so exercise redact() through the non-doctor import path.
-  writeFileSync(join(dir, 'dist', 'commands.js'), `throw new Error(${JSON.stringify(secret)});`);
+  const statement = 'throw new Error("fixture.internal short-pin /fixture/user")';
+  writeFileSync(join(dir, 'dist', 'commands.js'), phase === 'import'
+    ? statement : `export async function main() { ${statement}; }`);
   const result = spawnSync(process.execPath, [join(dir, 'dist', 'bin.js'), 'inbox', '--json'],
     { cwd: dir, encoding: 'utf8', timeout: 10_000 });
-  expect(result.error).toBeUndefined(); expect(result.status).toBe(1);
-  expect(result.stderr).toContain(expected);
-  expect(result.stderr).not.toContain(secret);
-  for (const fragment of leaks) expect(result.stderr).not.toContain(fragment);
+  expect(result.error).toBeUndefined();
+  expect(result.status).toBe(1);
+  expect(result.stdout).toBe('');
+  expect(result.stderr).toBe(phase === 'import'
+    ? 'SwarmRelay [startup_error]: Command could not start. Check the CLI installation and Node version.\n'
+    : 'SwarmRelay [command_error]: Command failed. Check the command arguments and local configuration.\n');
 });

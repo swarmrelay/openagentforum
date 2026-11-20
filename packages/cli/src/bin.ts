@@ -35,7 +35,7 @@ async function main(): Promise<void> {
   if (args[0] !== 'doctor') {
     let commands: typeof import('./commands.js');
     try { commands = await import('./commands.js'); }
-    catch (error) { commandFailure(error); return; }
+    catch { commandFailure('startup_error'); return; }
     await commands.main(); return;
   }
   let doctor: typeof import('./doctor.js');
@@ -48,43 +48,14 @@ async function main(): Promise<void> {
     writeDoctor(args.includes('--json') ? JSON.stringify(report, null, 2) : doctor.formatDoctorReport(report));
   } catch { doctorFailure('unexpected_error'); }
 }
-function redact(text: string): string {
-  const origins: string[] = [];
-  let out = text.replace(/\bhttps?:\/\/[^\s"']+/gi, match => {
-    try { origins.push(new URL(match).origin); return `%%URL${origins.length - 1}%%`; }
-    catch { return '[redacted-url]'; }
-  });
-  out = out
-    .replace(/(?:[A-Za-z]:[\\/][^\s"']*|\\\\[^\s"']+\\[^\s"']*|(?<![\w.])\/[^\s"']+)/g, '[redacted-path]')
-    .replace(/\b[a-fA-F0-9]{32,}\b/gi, '[redacted-hex]')
-    .replace(/\b(?:sk|pk|token|secret|key)[-_:][A-Za-z0-9+/=_-]{8,}/gi, '[redacted-secret]')
-    .replace(/\b[A-Za-z0-9+/_-]{40,}={0,2}\b/g, '[redacted-blob]');
-  return out
-    .replace(/%%URL(\d+)%%/g, (_, index) => origins[Number(index)] || '[redacted-url]')
-    .slice(0, 240);
+function commandFailure(code: 'startup_error' | 'command_error'): void {
+  const message = code === 'startup_error'
+    ? 'Command could not start. Check the CLI installation and Node version.'
+    : 'Command failed. Check the command arguments and local configuration.';
+  process.exitCode = 1;
+  try { writeSync(2, `SwarmRelay [${code}]: ${message}\n`); } catch { /* The exit status still signals failure. */ }
 }
-function commandFailure(error: unknown): void {
-  const detail = error instanceof Error ? redact(error.message) : '';
-  const lines = [
-    'SwarmRelay: command could not start (startup_error, read-only diagnostics).',
-    detail ? `detail: ${detail}` : '',
-    'Check the complete CLI installation and Node version. Capture stdout, stderr and the exit code.',
-    'Never share keys, tokens or private paths.',
-  ].filter(Boolean);
-  try { writeSync(2, lines.join('\n') + '\n'); } catch { /* Exit status still signals failure. */ }
-  process.exit(1);
-}
-function runtimeFailure(error: unknown): void {
-  const detail = error instanceof Error ? redact(error.message) : '';
-  const lines = [
-    'SwarmRelay: command failed (read-only diagnostics).',
-    detail ? `detail: ${detail}` : '',
-    'Capture stdout, stderr and the exit code. Never share keys, tokens or private paths.',
-  ].filter(Boolean);
-  try { writeSync(2, lines.join('\n') + '\n'); } catch { /* Exit status still signals failure. */ }
-  process.exit(1);
-}
-void main().catch(error => {
+void main().catch(() => {
   if (args[0] === 'doctor') doctorFailure('unexpected_error');
-  else runtimeFailure(error);
+  else commandFailure('command_error');
 });
