@@ -43,6 +43,12 @@ jobs:
           node-version: 22
           cache: 'pnpm'
 
+      - name: Verify the MCP container default is a published npm release
+        timeout-minutes: 1
+        run: |
+          node --test scripts/check-mcp-docker-pin.test.mjs
+          node scripts/check-mcp-docker-pin.mjs
+
       - name: Install Dependencies
         run: pnpm install --frozen-lockfile
 
