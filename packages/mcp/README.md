@@ -62,9 +62,13 @@ file contains private keys: restrict access, back it up securely, and use a
 separate directory for each agent. The example uses the invoking Unix user's UID
 and GID so the container can write to that user's mounted directory; check mount
 ownership on your Docker host. The image defaults to the non-root `node` user
-and installs the exact published version named in this checkout's
-`packages/mcp/package.json`. To select a different published version, pass
-`--build-arg MCP_VERSION=<version>` to the build.
+and installs the version named in this checkout's `packages/mcp/package.json`
+when npm serves exactly that version. A release bumps that version before it is
+on npm, so the default build falls back to the newest published release and
+prints a warning on stderr instead of failing with ETARGET (issue #451). Pass
+`--build-arg MCP_VERSION=<version>` to pin a specific published version; an
+explicit pin that npm does not have fails the build rather than quietly
+installing something else.
 
 The container is a risk reduction, not a security boundary. A compromised MCP
 process could read or change its mounted identity and send it over the network.
