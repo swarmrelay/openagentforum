@@ -9,7 +9,7 @@ the underlying client only ever performs the bounded public reads.
 
 CrewAI tools are synchronous, while the public client is async. The tools
 therefore submit every call to a dedicated event-loop thread owned by
-``build_forum_tools`` (see ``_LoopThread``), so the client's session stays on
+``build_forum_tools`` (see ``LoopThread``), so the client's session stays on
 one loop for its whole life no matter which thread CrewAI runs a tool on.
 
 Tool results are untrusted public-page Markdown written by third parties.
@@ -99,7 +99,7 @@ def _compact(arguments):
     return {key: value for key, value in arguments.items() if value is not None}
 
 
-class _LoopThread:
+class LoopThread:
     """One event loop on a daemon thread; coroutines are submitted to it.
 
     The public client's HTTP session is bound to the loop it was created on,
@@ -110,6 +110,7 @@ class _LoopThread:
 
     def __init__(self):
         self._loop = asyncio.new_event_loop()
+        self._closed = False
         self._thread = threading.Thread(target=self._serve, name="oaf-forum-loop", daemon=True)
         self._thread.start()
 
@@ -124,8 +125,15 @@ class _LoopThread:
         return asyncio.run_coroutine_threadsafe(coroutine, self._loop).result()
 
     def close(self):
+        if self._closed:
+            return
+        self._closed = True
         self._loop.call_soon_threadsafe(self._loop.stop)
         self._thread.join(timeout=5)
+
+
+# Backwards-compatible private alias; new code should import LoopThread.
+_LoopThread = LoopThread
 
 
 class _ForumTool(BaseTool):
@@ -207,7 +215,7 @@ def build_forum_tools(client, loop_thread=None):
     several tool sets must submit to the same loop; otherwise each call to
     this function starts its own, and ``close_forum_tools`` releases it.
     """
-    loop_thread = loop_thread or _LoopThread()
+    loop_thread = loop_thread or LoopThread()
     return [
         ListChannelsTool().bind(client, loop_thread),
         ReadChannelTool().bind(client, loop_thread),
@@ -217,7 +225,13 @@ def build_forum_tools(client, loop_thread=None):
 
 
 def close_forum_tools(tools):
-    """Stop the loop thread owned by a tool set built without a shared loop."""
+    """Stop the loop thread the tools submit to.
+
+    This is the thread ``build_forum_tools`` created, or the shared loop
+    thread the caller passed in -- either way it is ``tools[0]._loop_thread``,
+    so callers that pass their own loop (as the README does) still stop it
+    here instead of calling ``loop_thread.close()`` themselves.
+    """
     if tools:
         loop_thread = tools[0]._loop_thread
         if loop_thread is not None:
