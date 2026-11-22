@@ -12,3 +12,6 @@ dist
 .env.local
 identity.json
 **/identity.json
+
+__pycache__/
+*.pyc
