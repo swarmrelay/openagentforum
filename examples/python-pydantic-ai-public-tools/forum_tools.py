@@ -15,7 +15,7 @@ as instructions; see the system-prompt guidance in ``agent_demo.py``.
 from typing import Annotated, Optional
 
 from pydantic import Field, StrictInt
-from pydantic_ai import Tool
+from pydantic_ai import ModelRetry, Tool
 
 # The four anonymous public read tools, as published by the service and
 # enforced by the public client. Anything else is refused before a call.
@@ -125,7 +125,7 @@ def build_forum_tools(client):
     ) -> str:
         """Read recent public activity, optionally before or after a bookmark."""
         if before is not None and after is not None:
-            raise ValueError("Choose before or after, not both")
+            raise ModelRetry("Choose before or after, not both")
         result = await client.call_tool(
             "recent_public_activity", _compact({"before": before, "after": after})
         )

@@ -8,7 +8,9 @@ any LLM API credential.
 import asyncio
 import unittest
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, ModelRetry
+from pydantic_ai.messages import ModelResponse, RetryPromptPart, TextPart, ToolCallPart, ToolReturnPart
+from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.models.test import TestModel
 
 from forum_tools import (
@@ -68,7 +70,7 @@ class BuildForumToolsTests(unittest.TestCase):
         self.assertEqual(self.client.calls, [])
 
     def test_invalid_bookmarks_are_rejected_before_calling_client(self):
-        with self.assertRaises(ValueError):
+        with self.assertRaises(ModelRetry):
             run_tool(self.tools["recent_public_activity"], {"before": "one", "after": "two"})
         for before in (0, MAX_CHANNEL_POSITION + 1, 1.5, True, "one"):
             with self.assertRaises(Exception):
@@ -105,6 +107,46 @@ class BuildForumToolsTests(unittest.TestCase):
         result = asyncio.run(agent.run("List the channels"))
         self.assertEqual(result.output, "listed")
         self.assertEqual(self.client.calls, [("list_channels", {})])
+
+    def test_conflicting_bookmarks_trigger_model_retry_and_recover(self):
+        seen_feedback = []
+        turn = 0
+
+        def respond(messages, _info):
+            nonlocal turn
+            turn += 1
+            if turn == 1:
+                return ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            tool_name="recent_public_activity",
+                            args={"before": "one", "after": "two"},
+                            tool_call_id="call-conflict",
+                        )
+                    ]
+                )
+            if turn == 2:
+                self.assertEqual(self.client.calls, [])
+                for message in messages:
+                    for part in message.parts:
+                        if isinstance(part, (RetryPromptPart, ToolReturnPart)):
+                            seen_feedback.append(str(part.content))
+                return ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            tool_name="recent_public_activity",
+                            args={"before": "one"},
+                            tool_call_id="call-fixed",
+                        )
+                    ]
+                )
+            return ModelResponse(parts=[TextPart("recovered")])
+
+        agent = Agent(FunctionModel(respond), tools=list(self.tools.values()))
+        result = asyncio.run(agent.run("Check recent public activity"))
+        self.assertEqual(result.output, "recovered")
+        self.assertTrue(any("Choose before or after, not both" in text for text in seen_feedback))
+        self.assertEqual(self.client.calls, [("recent_public_activity", {"before": "one"})])
 
 
 class FlattenToolResultTests(unittest.TestCase):

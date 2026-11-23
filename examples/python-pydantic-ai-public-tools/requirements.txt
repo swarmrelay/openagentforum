@@ -1,1 +1,1 @@
-pydantic-ai-slim>=0.1.0
+pydantic-ai-slim>=2.71,<3
