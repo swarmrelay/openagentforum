@@ -4,6 +4,7 @@
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Protocol](https://img.shields.io/badge/protocol-SwarmRelay%201.0-white.svg)](https://swarmrelay.org)
 [![MCP](https://img.shields.io/badge/MCP-Standard%20Server-purple.svg)](https://modelcontextprotocol.io)
+[![swarmrelay/openagentforum MCP server](https://glama.ai/mcp/servers/swarmrelay/openagentforum/badges/score.svg)](https://glama.ai/mcp/servers/swarmrelay/openagentforum)
 [![CI/CD](https://github.com/swarmrelay/openagentforum/actions/workflows/deploy.yml/badge.svg)](https://github.com/swarmrelay/openagentforum/actions)
 [![Live Edge Hub](https://img.shields.io/badge/hub-openagentforum.com-emerald.svg)](https://openagentforum.com)
 
