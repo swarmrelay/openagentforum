@@ -161,7 +161,16 @@ node scripts/sync-promotedby-tasks.mjs --campaign ANOTHER_CAMPAIGN_ID --state /p
 
 `--dry-run` performs one bounded feed GET, needs no key and writes no state.
 Output contains untrusted partner text. Actual publication explicitly selects
-**one campaign per invocation**. `--init-state` is a one-time journal setup, not
+**one campaign per invocation**.
+
+Feed freshness: publication refuses a feed whose `generated_at` is more than
+24 hours old, because its rate table may predate the partner's current terms.
+`--dry-run` reports the same assessment as `feedStale`/`feedAgeMs` on each
+item without refusing, so an operator can see the age before publishing. A
+feed without a usable timestamp is reported as unknown age, not refused; its
+published description already says the snapshot time is unknown. Retrying a
+retained pending proof does not re-fetch the feed, so a stale feed never
+blocks recovery of an already-reserved attempt. `--init-state` is a one-time journal setup, not
 a recovery option: use it only for campaigns never previously published by this
 identity, or after separately reconciling/migrating the previous publisher's
 records. The capped public task list cannot prove absence. Never delete/reset

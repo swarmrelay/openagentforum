@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { formatPromotedByTask, fetchOpportunities, fetchOpportunitiesFeed, partnerSigningIdentity, prepareHubTask, createHubTask,
-  syncPromotedByTasks, runPartnerCli } from './sync-promotedby-tasks.mjs';
+  syncPromotedByTasks, runPartnerCli, assessFeedFreshness, MAX_FEED_AGE_MS } from './sync-promotedby-tasks.mjs';
 import { openPartnerJournal } from './lib/partner-journal.mjs';
 import { partnerJson } from './lib/partner-http.mjs';
 import { generateAgentKeyPair, verifyTaskAction, sha256Hex, signProfileRegistration, verifyProfileRegistration } from '../packages/protocol/dist/index.js';
@@ -21,11 +21,11 @@ async function fixture(t) {
   t.after(() => rm(stateDir, { recursive: true, force: true }));
   const keys = await generateAgentKeyPair();
   const calls = [], committed = new Map();
-  const state = { fail: false, badAck: false, feed: [opportunity] };
+  const state = { fail: false, badAck: false, feed: [opportunity], generatedAt: undefined };
   const fetch = async (url, init = {}) => {
     calls.push({ url, ...init });
     assert.equal(init.redirect, 'error'); assert.equal(init.credentials, 'omit');
-    if (url === apiUrl && !init.method) return Response.json({ opportunities: state.feed });
+    if (url === apiUrl && !init.method) return Response.json({ generated_at: state.generatedAt, opportunities: state.feed });
     if (url === `${hubUrl}/v1/agents/${keys.agentId}/registration` && !init.method) {
       return Response.json({ hub: hubUrl, proofVersion: 2, revision: 1, agent: { publicKey: keys.signingPublicKey } });
     }
@@ -97,6 +97,65 @@ test('the feed timestamp reaches the formatter, and the array API is unchanged',
   assert.equal(feed.generatedAt, '2026-10-24T11:36:19.772Z');
   assert.deepEqual(feed.opportunities.map(o => o.id), [opportunity.id]);
   assert.deepEqual(await fetchOpportunities(apiUrl, transport), feed.opportunities);
+});
+test('feed freshness is assessed from generated_at, never invented', () => {
+  const now = Date.now();
+  const hourAgo = new Date(now - 60 * 60 * 1000).toISOString();
+  assert.deepEqual(assessFeedFreshness(hourAgo, now),
+    { generatedAt: hourAgo.slice(0, 16) + 'Z', ageMs: 60 * 60 * 1000, stale: false });
+  assert.equal(assessFeedFreshness(new Date(now - MAX_FEED_AGE_MS).toISOString(), now).stale, false);
+  assert.equal(assessFeedFreshness(new Date(now - MAX_FEED_AGE_MS - 1).toISOString(), now).stale, true);
+  assert.equal(assessFeedFreshness(new Date(now + 60 * 60 * 1000).toISOString(), now).stale, false);
+  assert.equal(assessFeedFreshness(new Date(now + 60 * 60 * 1000).toISOString(), now).ageMs, 0);
+  for (const bad of [undefined, null, NaN, -1, 1.5, '', 'not a date', {}, Infinity]) {
+    assert.deepEqual(assessFeedFreshness(bad, now), { generatedAt: null, ageMs: null, stale: false });
+  }
+  assert.equal(MAX_FEED_AGE_MS, 24 * 60 * 60 * 1000);
+});
+test('the feed carries its freshness assessment', async () => {
+  const fresh = await fetchOpportunitiesFeed(apiUrl,
+    async () => Response.json({ generated_at: new Date(Date.now() - 60 * 60 * 1000).toISOString(), opportunities: [opportunity] }));
+  assert.equal(fresh.freshness.stale, false);
+  assert.ok(fresh.freshness.ageMs >= 60 * 60 * 1000 && fresh.freshness.ageMs < 61 * 60 * 1000);
+
+  const stale = await fetchOpportunitiesFeed(apiUrl,
+    async () => Response.json({ generated_at: new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString(), opportunities: [opportunity] }));
+  assert.equal(stale.freshness.stale, true);
+  assert.ok(stale.freshness.ageMs > MAX_FEED_AGE_MS);
+
+  const undated = await fetchOpportunitiesFeed(apiUrl, async () => Response.json({ opportunities: [opportunity] }));
+  assert.deepEqual(undated.freshness, { generatedAt: null, ageMs: null, stale: false });
+});
+test('a stale feed never publishes a new task', async t => {
+  const f = await fixture(t);
+  f.state.generatedAt = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
+  await assert.rejects(syncPromotedByTasks({ ...f.options, initialize: true }), /stale/);
+  assert.equal(f.calls.length, 1);
+  assert.equal(f.committed.size, 0);
+  assert.ok(!(await readdir(f.stateDir)).some(n => n.endsWith('.intent.json')));
+});
+test('dry-run reports feed age without refusing, and recovery is not blocked by a stale feed', async t => {
+  const f = await fixture(t);
+  f.state.generatedAt = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
+  const [dry] = await syncPromotedByTasks({ apiUrl, hubUrl, fetch: f.options.fetch, dryRun: true });
+  assert.equal(dry.status, 'dry_run');
+  assert.equal(dry.feedStale, true);
+  assert.ok(dry.feedAgeMs > MAX_FEED_AGE_MS);
+
+  const fresh = await fixture(t);
+  const [freshDry] = await syncPromotedByTasks({ apiUrl, hubUrl, fetch: fresh.options.fetch, dryRun: true });
+  assert.equal(freshDry.feedStale, false);
+  assert.equal(freshDry.feedAgeMs, null);
+
+  // A pending proof from when the feed was fresh still recovers after it goes stale.
+  const g = await fixture(t); g.state.fail = true;
+  await assert.rejects(syncPromotedByTasks({ ...g.options, initialize: true }));
+  const first = g.calls.find(c => c.method === 'POST').body;
+  g.state.fail = false;
+  g.state.generatedAt = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
+  await syncPromotedByTasks({ ...g.options, retryPending: true });
+  assert.equal(g.calls.filter(c => c.method === 'POST')[1].body, first);
+  assert.equal(g.committed.size, 1);
 });
 test('identity is derived from the private key, not an unset public-key property', async () => {
   const keys = await generateAgentKeyPair();
