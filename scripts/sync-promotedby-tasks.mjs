@@ -16,13 +16,34 @@ export const DEFAULT_HUB_URL = 'https://openagentforum.com';
 const CAMPAIGN = /^[a-zA-Z0-9_-]{1,128}$/;
 const CAPABILITY = /^[a-zA-Z0-9][a-zA-Z0-9_.:+-]{0,63}$/;
 const cents = value => Number.isSafeInteger(value) && value >= 0;
+/** Feed timestamps arrive as ISO strings or epoch milliseconds; anything else is unusable. */
+const feedTimestampMs = value => {
+  const ms = typeof value === 'string' ? Date.parse(value) : value;
+  return Number.isSafeInteger(ms) && ms >= 0 ? ms : null;
+};
 /** Render a feed timestamp as a UTC minute, or null when it is not usable. */
 const snapshotIso = value => {
-  const ms = typeof value === 'string' ? Date.parse(value) : value;
-  if (!Number.isSafeInteger(ms) || ms < 0) return null;
+  const ms = feedTimestampMs(value);
+  if (ms === null) return null;
   const date = new Date(ms);
   return Number.isNaN(date.getTime()) ? null : date.toISOString().slice(0, 16) + 'Z';
 };
+/**
+ * A feed older than this is never published from: its rate table may predate
+ * the partner's current terms, and a task published from it would advertise
+ * rates the partner no longer honors. Unknown age is reported, not refused:
+ * a feed without a usable timestamp degrades to "snapshot time unknown" in
+ * the published description, as before.
+ */
+export const MAX_FEED_AGE_MS = 24 * 60 * 60 * 1000;
+export function assessFeedFreshness(generatedAt, now = Date.now()) {
+  const ms = feedTimestampMs(generatedAt);
+  if (ms === null) return { generatedAt: null, ageMs: null, stale: false };
+  const date = new Date(ms);
+  if (Number.isNaN(date.getTime())) return { generatedAt: null, ageMs: null, stale: false };
+  const ageMs = Math.max(0, now - ms); // partner clock skew can put generated_at slightly ahead
+  return { generatedAt: date.toISOString().slice(0, 16) + 'Z', ageMs, stale: ageMs > MAX_FEED_AGE_MS };
+}
 const clip = (value, length) => String(value).slice(0, length).toWellFormed();
 
 export function formatPromotedByTask(opportunity, snapshotAt) {
@@ -79,6 +100,7 @@ export async function fetchOpportunitiesFeed(apiUrl = DEFAULT_PROMOTEDBY_URL, tr
   }
   return {
     generatedAt: data.generated_at,
+    freshness: assessFeedFreshness(data.generated_at),
     opportunities: data.opportunities.filter(item => item.status === 'live'),
   };
 }
@@ -136,7 +158,8 @@ export async function syncPromotedByTasks(options = {}) {
   if (options.dryRun) {
     const feed = await fetchOpportunitiesFeed(apiUrl, transport);
     return feed.opportunities.filter(o => !options.campaignId || o.id === options.campaignId)
-      .map(o => ({ id: o.id, status: 'dry_run', payload: formatPromotedByTask(o, feed.generatedAt) }));
+      .map(o => ({ id: o.id, status: 'dry_run', feedStale: feed.freshness.stale, feedAgeMs: feed.freshness.ageMs,
+        payload: formatPromotedByTask(o, feed.generatedAt) }));
   }
   if (typeof options.campaignId !== 'string' || !CAMPAIGN.test(options.campaignId)) throw new Error('Writing requires one explicit --campaign ID');
   const identity = await partnerSigningIdentity(options.privateKeyHex ?? process.env.PROMOTEDBY_SIGNING_KEY,
@@ -153,6 +176,7 @@ export async function syncPromotedByTasks(options = {}) {
     } else {
       if (options.retryPending) throw new Error('No pending proof for this campaign');
       const feed = await fetchOpportunitiesFeed(apiUrl, transport);
+      if (feed.freshness.stale) throw new Error('Partner feed is stale; re-check with the partner before publishing');
       const opportunity = feed.opportunities.find(o => o.id === options.campaignId);
       if (!opportunity) throw new Error('Selected live campaign unavailable');
       const registration = await partnerJson(`${hubUrl}/v1/agents/${identity.agentId}/registration`, {}, { fetch: transport, maxBytes: 32768 });
