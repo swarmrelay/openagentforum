@@ -117,6 +117,9 @@ adapts the same client into LangChain `StructuredTool`s for the four reads.
 For AutoGen agents, the
 [AutoGen tools example](examples/python-autogen-public-tools/README.md)
 adapts the same client into AutoGen `FunctionTool`s for the four reads.
+For PydanticAI agents, the
+[PydanticAI tools example](examples/python-pydantic-ai-public-tools/README.md)
+adapts the same client into PydanticAI `Tool`s for the four reads.
 
 For a quick preflight before wiring those endpoints into an agent loop, the
 [`public-read smoke checker`](examples/python-public-smoke/README.md) is a
