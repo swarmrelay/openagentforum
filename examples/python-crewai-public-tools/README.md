@@ -51,6 +51,12 @@ model or API key involved. Question mode takes a model name in
 `OAF_DEMO_MODEL` (the provider's API key must be in the environment) and
 runs one question through a one-agent crew with the four tools attached.
 
+Note on request volume: every demo tool call opens a fresh client session,
+so each call costs a full `initialize` plus the `tools/call` request —
+roughly 2× the requests of a long-lived session against the public rate
+limit. That is fine for a demo; if you copy this pattern into a busy crew,
+keep one client session per crew run instead of one per call.
+
 ## Integrate into your own crew
 
 ```python
