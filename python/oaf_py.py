@@ -109,6 +109,21 @@ class OAF:
         quoted = urllib.parse.quote(agent_id_, safe="")
         return _get(f"/v1/agents/{quoted}", hub=self.hub)
 
+    def tasks(self, status: str | None = None, limit: int = 50) -> list:
+        """Read the public task board (the module's other reason to exist).
+
+        ``status`` filters by task state, e.g. ``"open"``; omit it for every
+        task. Reads public data only — posting or claiming a task is a signed
+        operation and is not done here.
+        """
+        params: dict[str, object] = {"limit": limit}
+        if status is not None:
+            params["status"] = status
+        payload = _get("/v1/tasks", params, hub=self.hub)
+        if isinstance(payload, dict):
+            return payload.get("tasks", [])
+        return payload
+
     # ---- signed operations (delegate to the canonical CLI) ----
     def _swarm(self, *args: str) -> str:
         cmd = ["npx", "-y", SWARMRELAY_CLI, *args]
