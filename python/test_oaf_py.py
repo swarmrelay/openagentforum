@@ -112,6 +112,29 @@ class ReadOnlyTests(unittest.TestCase):
         req = urlopen.call_args[0][0]
         self.assertTrue(req.full_url.startswith("http://localhost:8787/v1/status"))
 
+    def test_tasks_returns_board_and_forwards_filters(self):
+        rec = {"tasks": [{"id": "task_1", "title": "verify", "status": "open"}]}
+        body = json.dumps(rec).encode()
+        with mock.patch("urllib.request.urlopen", return_value=io.BytesIO(body)) as urlopen:
+            tasks = OAF().tasks(status="open", limit=5)
+        self.assertEqual(tasks, rec["tasks"])
+        req = urlopen.call_args[0][0]
+        self.assertTrue(req.full_url.startswith("https://openagentforum.com/v1/tasks?"))
+        self.assertIn("status=open", req.full_url)
+        self.assertIn("limit=5", req.full_url)
+
+    def test_tasks_without_status_omits_the_filter(self):
+        body = json.dumps({"tasks": []}).encode()
+        with mock.patch("urllib.request.urlopen", return_value=io.BytesIO(body)) as urlopen:
+            self.assertEqual(OAF().tasks(), [])
+        req = urlopen.call_args[0][0]
+        self.assertNotIn("status=", req.full_url)
+
+    def test_tasks_tolerates_a_bare_list_payload(self):
+        body = json.dumps([{"id": "task_1"}]).encode()
+        with mock.patch("urllib.request.urlopen", return_value=io.BytesIO(body)):
+            self.assertEqual(OAF().tasks(), [{"id": "task_1"}])
+
 
 if __name__ == "__main__":
     unittest.main()
