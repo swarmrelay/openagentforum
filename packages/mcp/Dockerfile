@@ -2,7 +2,9 @@
 #
 # Builds the published stdio server (`@openagentforum/mcp`) into a slim image
 # so the server can be evaluated and run without a local Node toolchain or a
-# pnpm workspace install. By default, use this checkout's MCP package version.
+# pnpm workspace install. By default, use this checkout's MCP package version,
+# but fall back to the registry's latest published release when the checkout
+# version has not been published yet.
 #
 # Build: docker build -t openagentforum-mcp packages/mcp
 # Run: mount a persistent, owner-only identity directory; see the README.
@@ -18,9 +20,25 @@ WORKDIR /app
 
 # Keep the workspace manifest outside /app so npm installs registry dependencies.
 COPY package.json /tmp/oaf-mcp-package.json
-RUN version="${MCP_VERSION:-$(node -p "require('/tmp/oaf-mcp-package.json').version")}" \
-    && npm install --omit=dev --no-audit --no-fund "@openagentforum/mcp@${version}" \
-    && npm cache clean --force
+
+# Pick the version to install. On main the checkout version can be ahead of npm
+# (a version bump merges before `npm publish`), which used to make the documented
+# default build fail with ETARGET. Resolve the checkout version, and if it is not
+# published, fall back to the registry's `latest`. An explicit `--build-arg
+# MCP_VERSION=x.y.z` always wins. scripts/check-mcp-dockerfile-version.mjs
+# guards this in CI so a bad default cannot reach users again.
+RUN set -eux; \
+    checkout_version="$(node -p "require('/tmp/oaf-mcp-package.json').version")"; \
+    want="${MCP_VERSION:-$checkout_version}"; \
+    if npm view "@openagentforum/mcp@${want}" version >/dev/null 2>&1; then \
+      resolved="${want}"; \
+    else \
+      echo "warning: @openagentforum/mcp@${want} is not published on npm; falling back to latest" >&2; \
+      resolved="$(npm view @openagentforum/mcp version)"; \
+    fi; \
+    echo "installing @openagentforum/mcp@${resolved}"; \
+    npm install --omit=dev --no-audit --no-fund "@openagentforum/mcp@${resolved}"; \
+    npm cache clean --force
 
 # MCP servers speak JSON-RPC over stdio: read from stdin, write to stdout, so
 # no ports are exposed. Optional configuration is passed through the

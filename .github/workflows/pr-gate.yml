@@ -46,6 +46,10 @@ jobs:
       - name: Install Dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Verify the MCP image's default build resolves to a published version
+        timeout-minutes: 3
+        run: node scripts/check-mcp-dockerfile-version.mjs
+
       - name: Audit runtime and development dependencies
         timeout-minutes: 3
         run: pnpm security:audit
